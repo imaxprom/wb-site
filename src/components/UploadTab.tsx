@@ -4,18 +4,24 @@ import { useState, useCallback, useEffect } from "react";
 import { useData } from "@/components/DataProvider";
 import { formatNumber } from "@/lib/utils";
 import { getApiKey } from "@/lib/wb-api";
-import Link from "next/link";
 
 type SyncState = "idle" | "loading" | "success" | "error";
 
-export default function UploadPage() {
+export default function UploadTab() {
   const { stock, orders, products, uploadDate, clearAllData, syncFromWB } = useData();
   const hasData = stock.length > 0 || orders.length > 0;
   const [hasKey, setHasKey] = useState(false);
-  const [days, setDays] = useState(30);
+  const [days, setDays] = useState(() => {
+    const validValues = [28, 35, 42, 49, 56];
+    if (typeof window !== "undefined") {
+      const saved = Number(localStorage.getItem("wb-upload-days"));
+      if (validValues.includes(saved)) return saved;
+      localStorage.setItem("wb-upload-days", "28");
+    }
+    return 28;
+  });
   const [syncState, setSyncState] = useState<SyncState>("idle");
   const [syncMessage, setSyncMessage] = useState("");
-  const isLoading = syncState === "loading";
 
   useEffect(() => {
     setHasKey(!!getApiKey());
@@ -34,11 +40,12 @@ export default function UploadPage() {
     }
   }, [syncFromWB, days]);
 
+  const isLoading = syncState === "loading";
+
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold">Загрузка данных</h2>
-        <p className="text-sm text-[var(--text-muted)] mt-1">
+        <p className="text-base text-[var(--text-muted)]">
           Загрузите данные из Wildberries API
         </p>
       </div>
@@ -46,7 +53,7 @@ export default function UploadPage() {
       {/* WB API section */}
       <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
         <h3 className="font-medium mb-1">Загрузка из WB API</h3>
-        <p className="text-xs text-[var(--text-muted)] mb-4">
+        <p className="text-sm text-[var(--text-muted)] mb-4">
           Автоматическая загрузка карточек, остатков и заказов из Wildberries
         </p>
 
@@ -54,10 +61,8 @@ export default function UploadPage() {
           <div className="bg-[var(--warning)]/10 border border-[var(--warning)]/30 rounded-lg p-3 text-sm">
             <p className="font-medium text-[var(--warning)]">API-ключ не задан</p>
             <p className="text-[var(--text-muted)] mt-1">
-              Добавьте ключ в{" "}
-              <Link href="/settings" className="text-[var(--accent)] hover:underline">
-                Настройках
-              </Link>
+              Добавьте ключ на вкладке{" "}
+              <span className="text-[var(--accent)]">Настройки отгрузки</span>
             </p>
           </div>
         ) : (
@@ -73,15 +78,31 @@ export default function UploadPage() {
 
               <div className="flex items-center gap-2 text-sm">
                 <span className="text-[var(--text-muted)]">Заказы за</span>
-                <input
-                  type="number"
+                <select
                   value={days}
-                  onChange={(e) => setDays(Math.max(1, Math.min(90, Number(e.target.value) || 30)))}
-                  className="w-16 bg-[var(--bg)] border border-[var(--border)] rounded px-2 py-1.5 text-center text-sm focus:outline-none focus:border-[var(--accent)]"
-                  min="1"
-                  max="90"
-                />
-                <span className="text-[var(--text-muted)]">дней</span>
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    setDays(v);
+                    localStorage.setItem("wb-upload-days", String(v));
+                  }}
+                  className="bg-[var(--bg)] border border-[var(--border)] rounded px-3 py-1.5 text-sm focus:outline-none focus:border-[var(--accent)]"
+                >
+                  <option value={28}>4 недели (28 дней)</option>
+                  <option value={35}>5 недель (35 дней)</option>
+                  <option value={42}>6 недель (42 дня)</option>
+                  <option value={49}>7 недель (49 дней)</option>
+                  <option value={56}>8 недель (56 дней)</option>
+                </select>
+                <span className="text-[var(--text-muted)]">
+                  {(() => {
+                    const now = new Date();
+                    const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days);
+                    const to = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+                    const fmt = (d: Date) =>
+                      `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}`;
+                    return `${fmt(from)} – ${fmt(to)}`;
+                  })()}
+                </span>
               </div>
             </div>
 
@@ -112,31 +133,45 @@ export default function UploadPage() {
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-medium">Текущие данные</h3>
             <button
-              onClick={clearAllData}
+              onClick={() => {
+                if (
+                  confirm(
+                    "Очистить данные API (остатки, заказы, карточки)?\n\nНастройки (имена артикулов, кол-во в коробе) НЕ будут затронуты."
+                  )
+                ) {
+                  clearAllData();
+                }
+              }}
               className="text-sm text-[var(--danger)] hover:text-[var(--danger)]/80 transition-colors"
             >
-              Очистить всё
+              Очистить данные API
             </button>
           </div>
-          <div className="grid grid-cols-3 gap-4 text-sm">
+          <div className="grid grid-cols-3 gap-4 text-base">
             <div>
               <p className="text-[var(--text-muted)]">Заказы</p>
-              <p className="text-lg font-bold">{formatNumber(orders.length)}</p>
-              <p className="text-xs text-[var(--text-muted)]">штук</p>
+              <p className="text-xl font-bold" style={{ fontVariantNumeric: "tabular-nums" }}>
+                {formatNumber(orders.length)}
+              </p>
+              <p className="text-sm text-[var(--text-muted)]">штук</p>
             </div>
             <div>
               <p className="text-[var(--text-muted)]">Остатки</p>
-              <p className="text-lg font-bold">{formatNumber(stock.reduce((s, i) => s + i.totalOnWarehouses, 0))}</p>
-              <p className="text-xs text-[var(--text-muted)]">штук</p>
+              <p className="text-xl font-bold" style={{ fontVariantNumeric: "tabular-nums" }}>
+                {formatNumber(stock.reduce((s, i) => s + i.totalOnWarehouses, 0))}
+              </p>
+              <p className="text-sm text-[var(--text-muted)]">штук</p>
             </div>
             <div>
               <p className="text-[var(--text-muted)]">Товары</p>
-              <p className="text-lg font-bold">{products.length}</p>
-              <p className="text-xs text-[var(--text-muted)]">артикулов</p>
+              <p className="text-xl font-bold" style={{ fontVariantNumeric: "tabular-nums" }}>
+                {products.length}
+              </p>
+              <p className="text-sm text-[var(--text-muted)]">артикулов</p>
             </div>
           </div>
           {uploadDate && (
-            <p className="text-xs text-[var(--text-muted)] mt-3">
+            <p className="text-sm text-[var(--text-muted)] mt-3">
               Загружено: {new Date(uploadDate).toLocaleString("ru-RU")}
             </p>
           )}
