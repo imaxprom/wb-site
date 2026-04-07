@@ -213,6 +213,69 @@ export default function ReconciliationTab() {
                   </tr>
                 );
               })}
+              {/* Итоговая строка сверки */}
+              {(() => {
+                const moneyMetrics = metrics.filter((m) => !m.isQty);
+                const totalApi = moneyMetrics.reduce((sum, m) => sum + w.apiWeekly[m.key], 0);
+                const totalExcel = moneyMetrics.reduce((sum, m) => sum + w.excelLk[m.key], 0);
+                const totalDaily = moneyMetrics.reduce((sum, m) => sum + w.daily7[m.key], 0);
+                const diffApiExcel = totalApi - totalExcel;
+                const diffApiDaily = totalApi - totalDaily;
+                const pctApiExcel = Math.abs(totalExcel) > 0 ? (Math.abs(diffApiExcel) / Math.abs(totalExcel)) * 100 : 0;
+                const pctApiDaily = Math.abs(totalDaily) > 0 ? (Math.abs(diffApiDaily) / Math.abs(totalDaily)) * 100 : 0;
+
+                const diffColor = (pct: number) =>
+                  pct < 1 ? "text-[var(--success)]" : pct < 5 ? "text-[var(--warning)]" : "text-[var(--danger)]";
+                const diffBg = (pct: number) =>
+                  pct < 1 ? "bg-[var(--success)]/5" : pct < 5 ? "bg-[var(--warning)]/5" : "bg-[var(--danger)]/5";
+
+                return (
+                  <>
+                    <tr style={{ borderTop: "2px solid var(--border)" }} className="font-bold">
+                      <td className="text-sm py-3">Итого (все статьи)</td>
+                      <td className="num py-3">{RUB(totalApi)}</td>
+                      <td className="num py-3">
+                        {w.hasExcel ? RUB(totalExcel) : <span className="text-[var(--text-muted)]">—</span>}
+                      </td>
+                      <td className="num py-3">
+                        {w.hasExcel ? (
+                          <span className={`text-xs font-bold ${diffColor(pctApiExcel)}`}>
+                            {Math.abs(diffApiExcel) <= 1 ? "✅" : `${diffApiExcel >= 0 ? "+" : ""}${RUB(diffApiExcel)} (${pctApiExcel.toFixed(1)}%)`}
+                          </span>
+                        ) : (
+                          <span className="text-[var(--text-muted)]">—</span>
+                        )}
+                      </td>
+                      <td className="num py-3">
+                        {w.hasDaily ? RUB(totalDaily) : <span className="text-[var(--text-muted)]">—</span>}
+                      </td>
+                      <td className="num py-3">
+                        {w.hasDaily ? (
+                          <span className={`text-xs font-bold ${diffColor(pctApiDaily)}`}>
+                            {Math.abs(diffApiDaily) <= 1 ? "✅" : `${diffApiDaily >= 0 ? "+" : ""}${RUB(diffApiDaily)} (${pctApiDaily.toFixed(1)}%)`}
+                          </span>
+                        ) : (
+                          <span className="text-[var(--text-muted)]">—</span>
+                        )}
+                      </td>
+                    </tr>
+                    {w.hasExcel && (
+                      <tr className={`font-bold ${diffBg(pctApiExcel)}`}>
+                        <td colSpan={2} className="text-sm py-3">
+                          Разница API vs Excel
+                        </td>
+                        <td colSpan={4} className="num py-3">
+                          <span className={`text-base font-bold ${diffColor(pctApiExcel)}`}>
+                            {Math.abs(diffApiExcel) <= 1
+                              ? "✅ Разница = 0 ₽"
+                              : `${diffApiExcel >= 0 ? "+" : ""}${RUB(diffApiExcel)} (${pctApiExcel.toFixed(2)}%)`}
+                          </span>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                );
+              })()}
             </tbody>
           </table>
 
