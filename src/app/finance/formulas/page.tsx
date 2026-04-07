@@ -132,7 +132,7 @@ export default function FormulasPage() {
 
       {/* Row 1: Dependency map (left) + Verification (right) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Dependency map — 2 cols */}
+        {/* Dependency map — left */}
         <div className="lg:col-span-2 bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-4">
           <h2 className="text-sm font-bold text-white mb-2">🗺 Карта зависимостей</h2>
           <div className="font-mono text-[11px] leading-relaxed space-y-0.5">
@@ -151,7 +151,28 @@ export default function FormulasPage() {
           </div>
         </div>
 
+        {/* Metrics — right */}
+        <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-4">
+          <h2 className="text-sm font-bold text-white mb-2">📈 Показатели эффективности</h2>
+          <div className="space-y-3">
+            {METRICS.map((m) => (
+              <div key={m.title}>
+                <h3 className="text-white font-semibold text-xs">{m.title}</h3>
+                <div className="mt-1 bg-[var(--bg)] border border-[var(--border)] rounded-lg px-2 py-1.5">
+                  <code className="text-[var(--accent)] text-[11px] font-mono">{m.formula}</code>
+                </div>
+                {m.good && (
+                  <div className="mt-1 flex flex-wrap gap-1 text-[10px]">
+                    <span className="px-1.5 py-0.5 rounded bg-[var(--success)]/10 text-[var(--success)]">{m.good} ✅</span>
+                    <span className="px-1.5 py-0.5 rounded bg-[var(--warning)]/10 text-[var(--warning)]">{m.warn} ⚠️</span>
+                    <span className="px-1.5 py-0.5 rounded bg-[var(--danger)]/10 text-[var(--danger)]">{m.bad} ❌</span>
+                  </div>
+                )}
               </div>
+            ))}
+          </div>
+        </div>
+      </div>
 
       {/* Row 2: Formulas grid — 2 cols on md, 3 on xl */}
       <div>
@@ -174,29 +195,8 @@ export default function FormulasPage() {
         </div>
       </div>
 
-      {/* Row 3: Metrics (left) + Nuances (right) */}
+      {/* Row 3: Nuances */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Metrics */}
-        <div>
-          <h2 className="text-sm font-bold text-white mb-3">📈 Показатели эффективности</h2>
-          <div className="grid grid-cols-2 gap-3">
-            {METRICS.map((m) => (
-              <div key={m.title} className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-3">
-                <h3 className="text-white font-semibold text-xs">{m.title}</h3>
-                <div className="mt-1.5 bg-[var(--bg)] border border-[var(--border)] rounded-lg px-2 py-1.5">
-                  <code className="text-[var(--accent)] text-[11px] font-mono">{m.formula}</code>
-                </div>
-                {m.good && (
-                  <div className="mt-1.5 flex flex-wrap gap-1 text-[10px]">
-                    <span className="px-1.5 py-0.5 rounded bg-[var(--success)]/10 text-[var(--success)]">{m.good} ✅</span>
-                    <span className="px-1.5 py-0.5 rounded bg-[var(--warning)]/10 text-[var(--warning)]">{m.warn} ⚠️</span>
-                    <span className="px-1.5 py-0.5 rounded bg-[var(--danger)]/10 text-[var(--danger)]">{m.bad} ❌</span>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
 
         {/* Nuances */}
         <div>
