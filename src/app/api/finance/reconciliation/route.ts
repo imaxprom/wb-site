@@ -23,6 +23,7 @@ interface WeekMetrics {
   rebill: number;
   acquiring: number;
   compensation: number;
+  corrections: number;
 }
 
 const EMPTY_METRICS: WeekMetrics = {
@@ -30,6 +31,7 @@ const EMPTY_METRICS: WeekMetrics = {
   ppvz: 0, ppvzReturns: 0, logistics: 0, deliveryCount: 0,
   returnCount: 0, storage: 0, penalties: 0, acceptance: 0,
   deductions: 0, rebill: 0, acquiring: 0, compensation: 0,
+  corrections: 0,
 };
 
 /**
@@ -54,7 +56,13 @@ function getFinanceMetrics(db: Database.Database, dateFrom: string, dateTo: stri
       COALESCE(SUM(CASE WHEN supplier_oper_name = 'Продажа' THEN retail_price_withdisc_rub ELSE 0 END), 0) as sales,
       COALESCE(SUM(CASE WHEN supplier_oper_name = 'Возврат' THEN retail_price_withdisc_rub ELSE 0 END), 0) as returns,
       COALESCE(SUM(CASE WHEN supplier_oper_name = 'Продажа' THEN ppvz_for_pay ELSE 0 END), 0) as ppvz,
-      COALESCE(SUM(CASE WHEN supplier_oper_name = 'Возврат' THEN ppvz_for_pay ELSE 0 END), 0) as ppvzReturns
+      COALESCE(SUM(CASE WHEN supplier_oper_name = 'Возврат' THEN ppvz_for_pay ELSE 0 END), 0) as ppvzReturns,
+      COALESCE(SUM(CASE WHEN supplier_oper_name NOT IN (
+        'Продажа','Возврат','Логистика','Хранение','Штраф','Удержание',
+        'Обработка товара','Возмещение за выдачу и возврат товаров на ПВЗ',
+        'Возмещение издержек по перевозке/по складским операциям с товаром',
+        'Компенсация скидки по программе лояльности'
+      ) THEN COALESCE(ppvz_for_pay, 0) + COALESCE(delivery_rub, 0) ELSE 0 END), 0) as corrections
     FROM realization
     WHERE ${saleDateFilter} ${sourceFilter}
   `).get(dateFrom, dateTo) as Record<string, number>;
@@ -92,6 +100,7 @@ function getFinanceMetrics(db: Database.Database, dateFrom: string, dateTo: stri
     rebill: Math.round(svcRow.rebill),
     acquiring: Math.round(svcRow.acquiring),
     compensation: Math.round(svcRow.compensation),
+    corrections: Math.round(salesRow.corrections),
   };
 }
 
@@ -141,6 +150,7 @@ function getExcelMetrics(db: Database.Database, dateFrom: string, dateTo: string
     rebill: Math.round(row.rebill),
     acquiring: Math.round(row.acquiring),
     compensation: Math.round(row.compensation),
+    corrections: 0,
   };
 }
 

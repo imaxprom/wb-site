@@ -19,6 +19,7 @@ interface WeekMetrics {
   rebill: number;
   acquiring: number;
   compensation: number;
+  corrections: number;
 }
 
 interface WeekData {
@@ -105,6 +106,7 @@ export default function ReconciliationTab() {
     { key: "rebill", label: "Возмещение издержек по перевозке" },
     { key: "acquiring", label: "Эквайринг / Комиссии за организацию платежей" },
     { key: "compensation", label: "Компенсация скидки по программе лояльности" },
+    { key: "corrections", label: "Корректировки (прочие статьи)" },
   ];
 
   const w = selectedWeek;
