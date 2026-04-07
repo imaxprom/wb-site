@@ -38,7 +38,7 @@ export function WarehouseBreakdown({ calculation }: WarehouseBreakdownProps) {
             <th>Размер</th>
             {calculation.regionConfigs.flatMap((r) =>
               r.warehouses.map((wh) => (
-                <th key={`${r.id}-${wh}`} className="num text-xs">
+                <th key={`${r.id}-${wh}`} className="num">
                   {wh.length > 15 ? wh.substring(0, 15) + "..." : wh}
                 </th>
               ))

@@ -6,6 +6,14 @@ export interface Product {
   sizes: SizeConfig[];
 }
 
+export interface ProductOverride {
+  customName: string;
+  perBox: Record<string, number>; // barcode → perBox
+  disabledSizes?: Record<string, boolean>; // barcode → true if excluded from shipment calc
+}
+
+export type ProductOverrides = Record<string, ProductOverride>; // articleWB → override
+
 export interface SizeConfig {
   size: string;
   barcode: string;
@@ -18,6 +26,15 @@ export interface RegionConfig {
   shortName: string;
   percentage: number;
   warehouses: string[];
+}
+
+export interface RegionGroup {
+  id: string;
+  name: string;
+  shortName: string;
+  districts: string[]; // названия ФО: ['Центральный федеральный округ', ...]
+  warehouses: string[];
+  manualPercentage: number; // ручной %
 }
 
 export interface StockItem {
@@ -42,7 +59,7 @@ export interface OrderRecord {
   federalDistrict: string;
   region: string;
   articleSeller: string;
-  articleWB: number;
+  articleWB: string;
   barcode: string;
   category: string;
   subject: string;
@@ -66,6 +83,11 @@ export interface ShipmentRow {
   totalOrders30d: number;
   planBoxes: number;
   reserveBoxes: number;
+}
+
+export interface ShipmentRowExtended extends ShipmentRow {
+  articleWB: string;
+  articleName: string;
 }
 
 export interface RegionShipment {
@@ -107,4 +129,21 @@ export interface UploadedData {
   orders: OrderRecord[];
   products: Product[];
   uploadDate: string;
+}
+
+export interface AppSettings {
+  buyoutRate: number;
+  regions: RegionConfig[];
+  regionMode?: "manual" | "auto";
+  buyoutMode?: "manual" | "auto";
+  regionGroups?: RegionGroup[];
+  boxLengthCm?: number;
+  boxWidthCm?: number;
+  boxHeightCm?: number;
+  uploadDays?: number;
+  maxArticlesPerBox?: number;
+  shipmentsPerMonth?: number;
+  minUnits?: number;
+  roundTo?: number;
+  packingVariant?: string;
 }

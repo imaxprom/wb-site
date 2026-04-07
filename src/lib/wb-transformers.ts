@@ -16,7 +16,7 @@ export function transformCards(cards: WBCard[]): Product[] {
     }));
 
     return {
-      name: card.title || `${card.brand} ${card.vendorCode}`.trim(),
+      name: card.vendorCode || "",
       articleWB: String(card.nmID),
       brand: card.brand || "",
       category: "",
@@ -48,9 +48,11 @@ export function transformStocks(items: WBStockItem[]): StockItem[] {
       });
     }
     const entry = byBarcode.get(key)!;
+    // Актуальный остаток = quantity (свободное) + inWayFromClient (возвраты скоро упадут в остаток)
+    const actualQty = (item.quantity || 0) + (item.inWayFromClient || 0);
     entry.warehouses[item.warehouseName] =
-      (entry.warehouses[item.warehouseName] || 0) + item.quantityFull;
-    entry.totalQty += item.quantityFull;
+      (entry.warehouses[item.warehouseName] || 0) + actualQty;
+    entry.totalQty += actualQty;
     entry.inTransitTo += item.inWayToClient;
     entry.inTransitFrom += item.inWayFromClient;
   }
@@ -80,7 +82,7 @@ export function transformOrders(orders: WBOrder[]): OrderRecord[] {
     federalDistrict: o.oblastOkrugName || "",
     region: o.regionName || "",
     articleSeller: o.supplierArticle,
-    articleWB: o.nmId,
+    articleWB: String(o.nmId),
     barcode: o.barcode,
     category: o.category,
     subject: o.subject,

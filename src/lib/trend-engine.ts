@@ -6,6 +6,7 @@
  */
 
 import type { OrderRecord } from "@/types";
+import { TREND } from "./constants";
 
 export interface WeeklyData {
   week: number;       // 1-4
@@ -32,40 +33,22 @@ function toLocalISO(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-/** Get funnel correction factor for the last week (if available) */
-function getFunnelCorrection(): { factor: number; startDate: string; endDate: string } | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = localStorage.getItem("wb-funnel-correction");
-    if (!raw) return null;
-    const data = JSON.parse(raw);
-    if (data.factor && data.startDate && data.endDate && data.factor > 0.5 && data.factor < 2.0) {
-      return { factor: data.factor, startDate: data.startDate, endDate: data.endDate };
-    }
-  } catch { /* ignore */ }
-  return null;
-}
 
 /**
  * Разбивает заказы по баркоду на недели по 7 дней.
- * Количество недель определяется из настроек загрузки (не из данных).
+ * Количество недель определяется из loadedDays (передаётся параметром).
  * Период: [сегодня − loadedDays .. сегодня] включительно.
  */
 export function getWeeklyOrders(
   orders: OrderRecord[],
-  barcode: string
+  barcode: string,
+  loadedDays: number = 28
 ): WeeklyData[] {
   // Фильтр: только этот баркод (все заказы, включая отменённые)
   const filtered = orders.filter(
     (o) => o.barcode === barcode
   );
 
-  // Количество недель из настроек загрузки (localStorage), не из данных
-  let loadedDays = 28; // default 4 weeks
-  if (typeof window !== "undefined") {
-    const saved = localStorage.getItem("wb-upload-days");
-    if (saved) loadedDays = Number(saved);
-  }
   const numWeeks = Math.max(1, Math.floor(loadedDays / 7));
 
   // Начало периода = сегодня - loadedDays (сегодня — неполный день, не учитываем)
@@ -74,9 +57,6 @@ export function getWeeklyOrders(
 
   const fmtDate = (d: Date) =>
     `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}`;
-
-  // Funnel correction temporarily disabled — raw data must match first
-  const correction = getFunnelCorrection(); // returns null since localStorage is disabled above
 
   const weeks: WeeklyData[] = [];
 
@@ -94,20 +74,10 @@ export function getWeeklyOrders(
       return d >= startStr && d < endStr;
     }).length;
 
-    // Apply funnel correction to the last week if it overlaps with correction period
-    let correctedCount = count;
-    if (correction && w === numWeeks - 1) {
-      // Check if this week overlaps with the funnel correction period
-      const weekEndStr = toLocalISO(new Date(weekEnd.getFullYear(), weekEnd.getMonth(), weekEnd.getDate() - 1));
-      if (startStr <= correction.endDate && weekEndStr >= correction.startDate) {
-        correctedCount = Math.round(count * correction.factor);
-      }
-    }
-
     weeks.push({
       week: w + 1,
       label: `Нед. ${w + 1}`,
-      orders: correctedCount,
+      orders: count,
       dateRange: `${fmtDate(weekStart)} – ${fmtDate(new Date(weekEnd.getFullYear(), weekEnd.getMonth(), weekEnd.getDate() - 1))}`,
     });
   }
@@ -158,6 +128,7 @@ function linearRegression(points: { x: number; y: number }[]): {
  * Рассчитать тренд и прогноз
  */
 export function calculateTrend(weekly: WeeklyData[], buyoutRate: number = 1): TrendResult {
+  const numWeeks = weekly.length;
   const totalRaw = weekly.reduce((s, w) => s + w.orders, 0);
 
   // Фильтруем нулевые недели (out of stock / аномалия)
@@ -170,7 +141,7 @@ export function calculateTrend(weekly: WeeklyData[], buyoutRate: number = 1): Tr
       slope: 0,
       slopePercent: 0,
       direction: "flat",
-      forecast: totalRaw / 4,
+      forecast: totalRaw / numWeeks,
       forecastMonth: totalRaw,
       totalRaw,
       multiplier: 1,
@@ -182,43 +153,54 @@ export function calculateTrend(weekly: WeeklyData[], buyoutRate: number = 1): Tr
   const points = nonZero.map((w) => ({ x: w.week, y: w.orders }));
   const { a, b, r2 } = linearRegression(points);
 
-  // Прогноз на неделю 5 (следующая)
-  const forecastWeek5 = Math.max(0, a + b * 5);
+  // Прогноз на следующую неделю (N+1)
+  const forecastNext = Math.max(0, a + b * (numWeeks + 1));
 
-  // Прогноз на месяц: среднее недель 5-8
-  const forecastMonth = Math.max(
-    0,
-    [5, 6, 7, 8].reduce((s, x) => s + Math.max(0, a + b * x), 0)
-  );
+  // Прогноз на следующие N недель (такой же период как загруженный)
+  const forecastWeeks: number[] = [];
+  for (let i = 1; i <= numWeeks; i++) {
+    forecastWeeks.push(Math.max(0, a + b * (numWeeks + i)));
+  }
+  const forecastPeriod = forecastWeeks.reduce((s, v) => s + v, 0);
 
-  // Среднее значение за 4 недели
-  const avgWeekly = totalRaw / 4;
+  // Последние 4 недели (для сравнения и множителя)
+  const last4 = weekly.slice(-4);
+  const last4Total = last4.reduce((s, w) => s + w.orders, 0);
+  // Прогноз на следующие 4 недели
+  const lastWeekNum = numWeeks;
+  const forecast4 = [1, 2, 3, 4].reduce((s, i) => s + Math.max(0, a + b * (lastWeekNum + i)), 0);
+
+  // Среднее значение за все недели
+  const avgWeekly = totalRaw / numWeeks;
 
   // Slope percent
   const slopePercent = avgWeekly > 0 ? (b / avgWeekly) * 100 : 0;
 
   // Direction
+  const pct = TREND.DIRECTION_THRESHOLD * 100;
   let direction: "up" | "down" | "flat" = "flat";
-  if (slopePercent > 5) direction = "up";
-  else if (slopePercent < -5) direction = "down";
+  if (slopePercent > pct) direction = "up";
+  else if (slopePercent < -pct) direction = "down";
 
   // Confidence
   let confidence: "high" | "medium" | "low" = "low";
-  if (r2 > 0.7) confidence = "high";
-  else if (r2 > 0.4) confidence = "medium";
+  if (r2 > TREND.R2_HIGH) confidence = "high";
+  else if (r2 > TREND.R2_MEDIUM) confidence = "medium";
 
-  // Multiplier: how forecastMonth compares to totalRaw
-  const multiplier = totalRaw > 0 ? forecastMonth / totalRaw : 1;
+  // Multiplier: сравниваем прогноз следующей 1 недели со средней неделей
+  // Прогнозируем на 1 неделю вперёд, а не на 4 — данные обновляются еженедельно
+  const avgWeekLast4 = last4Total / last4.length;
+  const multiplier = avgWeekLast4 > 0 ? forecastNext / avgWeekLast4 : 1;
 
   return {
     weekly,
     slope: b,
     slopePercent,
     direction,
-    forecast: forecastWeek5,
-    forecastMonth,
+    forecast: forecastNext,
+    forecastMonth: forecastPeriod,
     totalRaw,
-    multiplier: Math.max(0.1, Math.min(3, multiplier)), // clamp 0.1x – 3x
+    multiplier: Math.max(TREND.MULTIPLIER_MIN, Math.min(TREND.MULTIPLIER_MAX, multiplier)),
     r2,
     confidence,
   };
@@ -230,11 +212,12 @@ export function calculateTrend(weekly: WeeklyData[], buyoutRate: number = 1): Tr
 export function getProductTrend(
   orders: OrderRecord[],
   barcodes: string[],
-  buyoutRate: number = 0.75
+  buyoutRate: number = 0.75,
+  loadedDays: number = 28
 ): TrendResult {
   // Объединяем все заказы по всем баркодам товара
   // Определяем количество недель из первого баркода
-  const firstBw = barcodes.length > 0 ? getWeeklyOrders(orders, barcodes[0]) : [];
+  const firstBw = barcodes.length > 0 ? getWeeklyOrders(orders, barcodes[0], loadedDays) : [];
   const numWeeks = firstBw.length || 1;
 
   const allWeekly: WeeklyData[] = Array.from({ length: numWeeks }, (_, i) => ({
@@ -245,7 +228,7 @@ export function getProductTrend(
   }));
 
   for (const barcode of barcodes) {
-    const bw = getWeeklyOrders(orders, barcode);
+    const bw = getWeeklyOrders(orders, barcode, loadedDays);
     for (let i = 0; i < Math.min(bw.length, numWeeks); i++) {
       allWeekly[i].orders += bw[i].orders;
       if (!allWeekly[i].dateRange && bw[i].dateRange) {

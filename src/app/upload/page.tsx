@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useData } from "@/components/DataProvider";
 import { formatNumber } from "@/lib/utils";
-import { getApiKey } from "@/lib/wb-api";
+
 import Link from "next/link";
 
 type SyncState = "idle" | "loading" | "success" | "error";
@@ -18,7 +18,7 @@ export default function UploadPage() {
   const isLoading = syncState === "loading";
 
   useEffect(() => {
-    setHasKey(!!getApiKey());
+    fetch("/api/settings/apikey").then(r => r.json()).then(d => setHasKey(!!d.hasKey)).catch(() => setHasKey(false));
   }, []);
 
   const loadAll = useCallback(async () => {

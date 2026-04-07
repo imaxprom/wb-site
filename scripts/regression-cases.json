@@ -1,0 +1,42 @@
+[
+  {
+    "id": "001",
+    "date": "2026-03-28",
+    "description": "UTC сдвиг дат в trend-engine (toISOString → toLocalISO)",
+    "checkType": "page-text",
+    "shouldNotContain": "NaN",
+    "notes": "Баг: toISOString() конвертировал даты в UTC, сдвигая фильтры на 1 день. Фикс: toLocalISO() форматирует в локальном часовом поясе."
+  },
+  {
+    "id": "002",
+    "date": "2026-03-28",
+    "description": "Диапазон дат отображается рядом с селектом периода",
+    "checkType": "page-text",
+    "shouldContain": "–",
+    "notes": "Добавлен диапазон дат (DD.MM – DD.MM) рядом с селектом на вкладке 'Загрузка данных'."
+  },
+  {
+    "id": "003",
+    "date": "2026-03-29",
+    "description": "stocks dateFrom=2019 (получать ВСЕ остатки, не только за 7 дней)",
+    "checkType": "page-text",
+    "shouldNotContain": "NaN",
+    "notes": "WB API supplier/stocks фильтрует по lastChangeDate. С dateFrom=7 дней терялись склады с неизменным остатком. Фикс: dateFrom=2019-01-01."
+  },
+  {
+    "id": "004",
+    "date": "2026-03-29",
+    "description": "countOrdersByBarcode считает ВСЕ заказы (включая отмены)",
+    "checkType": "page-text",
+    "shouldNotContain": "NaN",
+    "notes": "Баг: countOrdersByBarcode фильтровал isCancel, потом ещё умножал на buyoutRate — двойное занижение. Фикс: считаем все заказы."
+  },
+  {
+    "id": "005",
+    "date": "2026-03-29",
+    "description": "Регионы авто-режим итого = 100%",
+    "checkType": "page-text",
+    "shouldContain": "100",
+    "notes": "СНГ-заказы без ФО распределяются по складу отправления. Все мелкие склады добавлены в группы."
+  }
+]

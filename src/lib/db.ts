@@ -177,6 +177,7 @@ export interface PnlResult {
   acceptance: number;
   other_services: number;
   jam: number;
+  rebill: number;
   total_services: number;
   cogs: number;
   ad_spend: number;
@@ -219,7 +220,8 @@ export function getPnl(dateFrom: string, dateTo: string, nmId?: number): PnlResu
         acceptance: svcRow.acceptance,
         other_services: other,
         jam,
-        total_services: commission + svcRow.logistics + adRow.total + other + jam,
+        rebill: svcRow.rebill || 0,
+        total_services: commission + svcRow.logistics + adRow.total + other + jam + (svcRow.rebill || 0),
         cogs,
         ad_spend: adRow.total,
         orders_sum: ordRow.total,
@@ -358,7 +360,8 @@ export function getPnl(dateFrom: string, dateTo: string, nmId?: number): PnlResu
     acceptance: svcRow.acceptance,
     other_services: other,
     jam,
-    total_services: commission + svcRow.logistics + adRow.total + other + jam,
+    rebill: svcRow.rebill || 0,
+    total_services: commission + svcRow.logistics + adRow.total + other + jam + (svcRow.rebill || 0),
     cogs: salesRow.cogs - returnsRow.cogs,
     ad_spend: adRow.total,
     orders_sum: ordRow.total,

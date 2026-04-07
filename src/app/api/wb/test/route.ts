@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getWbApiKey } from "@/lib/wb-api-key";
 
 /** All WB API scopes with a lightweight test endpoint for each */
 const SCOPES = [
@@ -79,7 +80,8 @@ const SCOPES = [
 ];
 
 export async function GET(req: NextRequest) {
-  const apiKey = req.headers.get("x-wb-api-key");
+  // Read API key from header or server file
+  let apiKey = req.headers.get("x-wb-api-key") || getWbApiKey();
   if (!apiKey) return NextResponse.json({ error: "API key missing" }, { status: 401 });
 
   const results: { name: string; ok: boolean }[] = [];

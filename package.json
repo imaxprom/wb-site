@@ -9,14 +9,21 @@
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.2.2",
+    "@types/adm-zip": "^0.5.8",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.5.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "adm-zip": "^0.5.16",
+    "better-sqlite3": "^12.8.0",
     "clsx": "^2.1.1",
     "idb": "^8.0.3",
     "lucide-react": "^0.577.0",
     "next": "^16.2.1",
     "postcss": "^8.5.8",
+    "puppeteer": "^24.40.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "recharts": "^3.8.0",
@@ -25,5 +32,8 @@
     "typescript": "^5.9.3",
     "xlsx": "^0.18.5",
     "xlsx-js-style": "^1.2.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1"
   }
 }

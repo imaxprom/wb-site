@@ -1,0 +1,34 @@
+[
+  {
+    "time": "2026-04-04T03:53:49",
+    "serviceId": "mphub-website",
+    "action": "restart",
+    "result": "failed",
+    "details": "Restart failed for MpHub Website",
+    "aiResponse": null
+  },
+  {
+    "time": "2026-04-04T03:54:18",
+    "serviceId": "mphub-website",
+    "action": "restart",
+    "result": "failed",
+    "details": "Restart failed for MpHub Website",
+    "aiResponse": null
+  },
+  {
+    "time": "2026-04-04T03:54:26",
+    "serviceId": "mphub-website",
+    "action": "ai_diagnosis",
+    "result": "done",
+    "details": "Claude diagnosis for MpHub Website",
+    "aiResponse": "**Severity: noise**\n\nThe service is not actually failing — the logs show it repeatedly starting successfully (\"Ready in ~80-130ms\") with no errors. The \"Status: error / PID: None\" likely means the process monitor (launchd) sees it as crashed because Next.js dev server keeps restarting in a loop (file watcher triggering restarts due to your uncommitted changes), or the launchd plist expects a long-running process but the PID tracking is stale.\n\n**Fix:** Restart the launchd service to reset the status:\n\n```bash\nlaunchctl kickstart -k gui/$(id -u)/com.mphub.website\n```"
+  },
+  {
+    "time": "2026-04-04T08:40:49",
+    "serviceId": "reviews-sync",
+    "action": "restart",
+    "result": "failed",
+    "details": "Restart failed for Reviews Sync",
+    "aiResponse": null
+  }
+]

@@ -1,0 +1,172 @@
+[
+  {
+    "id": "wb-parser-bot",
+    "name": "WB Parser Bot",
+    "description": "Telegram-бот для отслеживания позиций товаров IMSI в поисковой выдаче Wildberries. Парсит каждые 10 минут, отправляет алерты при изменении позиций.",
+    "project": "WB Parser",
+    "type": "python",
+    "scriptPath": "/Users/octopus/Projects/wb-parser/bot.py",
+    "plistLabel": "com.octopus.wb-parser",
+    "logPath": "/Users/octopus/Projects/wb-parser/data/bot.log",
+    "internalSchedule": {
+      "type": "interval",
+      "intervalMin": 10,
+      "source": "APScheduler в bot.py"
+    },
+    "lifecycle": "active"
+  },
+  {
+    "id": "daily-sync",
+    "name": "Daily Sync",
+    "description": "Синхронизация финансовых данных из WB API для дашборда. Обновляет P&L, артикулы, рекламу.",
+    "project": "Финансовый дашборд",
+    "type": "node",
+    "scriptPath": "/Users/octopus/Projects/website/scripts/daily-sync.js",
+    "plistLabel": "com.wb-parser.daily-sync",
+    "logPath": "/Users/octopus/Projects/website/data/daily-sync.log",
+    "lifecycle": "active"
+  },
+  {
+    "id": "weekly-sync",
+    "name": "Weekly Report Sync",
+    "description": "Скачивает еженедельные Excel-отчёты из ЛК WB → weekly_reports.db. Финальные данные для P&L. Пн-Ср каждый час 10:00-23:00.",
+    "project": "Финансовый дашборд",
+    "type": "node",
+    "scriptPath": "/Users/octopus/Projects/website/scripts/sync-weekly-report.js",
+    "plistLabel": "com.wb-parser.weekly-sync",
+    "logPath": "/Users/octopus/Projects/website/data/weekly-sync.log",
+    "internalSchedule": {
+      "type": "calendar",
+      "days": "Пн-Ср",
+      "hours": "10-23",
+      "source": "launchd StartCalendarInterval"
+    },
+    "lifecycle": "active"
+  },
+  {
+    "id": "mphub-website",
+    "name": "MpHub Website",
+    "description": "Сайт MpHub (Next.js) — финансовый дашборд, P&L, отгрузка, мониторинг. Автоперезапуск при падении.",
+    "project": "Финансовый дашборд",
+    "type": "node",
+    "scriptPath": "/Users/octopus/Projects/website/node_modules/.bin/next",
+    "plistLabel": "com.mphub.website",
+    "logPath": "/Users/octopus/Projects/website/data/website.log",
+    "lifecycle": "active"
+  },
+  {
+    "id": "openclaw-gateway",
+    "name": "OpenClaw Gateway",
+    "description": "Основной шлюз системы AI-агентов. Обрабатывает все входящие/исходящие сообщения.",
+    "project": "OpenClaw",
+    "type": "system",
+    "plistLabel": "ai.openclaw.gateway",
+    "logPath": null,
+    "lifecycle": "active"
+  },
+  {
+    "id": "openclaw-backup",
+    "name": "Backup Bot",
+    "description": "Автоматическое резервное копирование данных и конфигураций.",
+    "project": "OpenClaw",
+    "type": "system",
+    "plistLabel": "ai.openclaw.backup-bot",
+    "logPath": null,
+    "lifecycle": "active"
+  },
+  {
+    "id": "limits-monitor",
+    "name": "Limits Monitor",
+    "description": "Мониторинг лимитов API и использования ресурсов агентами.",
+    "project": "OpenClaw",
+    "type": "bash",
+    "scriptPath": "/Users/octopus/.openclaw/scripts/limits-monitor.sh",
+    "plistLabel": "com.openclaw.limits-monitor",
+    "logPath": "/tmp/limits-monitor-stdout.log",
+    "lifecycle": "active"
+  },
+  {
+    "id": "openclaw-watchdog",
+    "name": "Watchdog",
+    "description": "Следит за здоровьем системы агентов, перезапускает упавшие сервисы.",
+    "project": "OpenClaw",
+    "type": "system",
+    "plistLabel": "ai.openclaw.watchdog",
+    "logPath": null,
+    "lifecycle": "active"
+  },
+  {
+    "id": "openclaw-log-rotate",
+    "name": "Log Rotate",
+    "description": "Ротация логов для предотвращения переполнения диска.",
+    "project": "OpenClaw",
+    "type": "system",
+    "plistLabel": "ai.openclaw.log-rotate",
+    "logPath": null,
+    "lifecycle": "active"
+  },
+  {
+    "id": "shipment-sync",
+    "name": "Shipment Sync",
+    "description": "Автосинхронизация данных отгрузки из WB API. Карточки, остатки, заказы. 5 раз в день.",
+    "project": "Финансовый дашборд",
+    "type": "bash",
+    "scriptPath": "/Users/octopus/Projects/website/scripts/shipment-sync.sh",
+    "plistLabel": "com.mphub.shipment-sync",
+    "logPath": "/Users/octopus/Projects/website/data/shipment-sync.log",
+    "internalSchedule": {
+      "type": "calendar",
+      "hours": "09,12,15,18,21",
+      "source": "launchd StartCalendarInterval"
+    },
+    "lifecycle": "active"
+  },
+  {
+    "id": "reviews-sync",
+    "name": "Reviews Sync",
+    "description": "Автосинхронизация отзывов из WB Feedbacks API + обогащение ценой и регионом из Orders API. Каждые 10 минут.",
+    "project": "Отзывы",
+    "type": "node",
+    "scriptPath": "/Users/octopus/Projects/website/scripts/reviews-sync.js",
+    "plistLabel": "com.wb-parser.reviews-sync",
+    "logPath": "/Users/octopus/Projects/website/data/reviews-sync.log",
+    "internalSchedule": {
+      "type": "interval",
+      "intervalMin": 10,
+      "source": "launchd StartInterval"
+    },
+    "lifecycle": "active"
+  },
+  {
+    "id": "reviews-complaints",
+    "name": "Reviews Auto-Complaints",
+    "description": "Автоматическая подача жалоб на негативные отзывы через WB Cabinet API. Каждые 30 минут.",
+    "project": "Отзывы",
+    "type": "node",
+    "scriptPath": "/Users/octopus/Projects/website/scripts/reviews-complaints.js",
+    "plistLabel": "com.wb-parser.reviews-complaints",
+    "logPath": "/Users/octopus/Projects/website/data/reviews-complaints.log",
+    "internalSchedule": {
+      "type": "interval",
+      "intervalMin": 30,
+      "source": "launchd StartInterval"
+    },
+    "lifecycle": "active"
+  },
+  {
+    "id": "mphub-watchdog",
+    "name": "MpHub Watchdog",
+    "description": "Авто-ремонт упавших сервисов. Перезапускает, анализирует ошибки через Claude Code, шлёт алерты в Telegram.",
+    "project": "Финансовый дашборд",
+    "type": "python",
+    "scriptPath": "/Users/octopus/Projects/website/scripts/mphub-watchdog.py",
+    "plistLabel": "com.mphub.watchdog",
+    "logPath": "/Users/octopus/Projects/website/data/watchdog.log",
+    "internalSchedule": {
+      "type": "interval",
+      "intervalMin": 5,
+      "source": "launchd StartInterval"
+    },
+    "lifecycle": "active"
+  }
+]

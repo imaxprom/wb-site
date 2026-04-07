@@ -1,13 +1,16 @@
 import type {
   Product,
   RegionConfig,
+  RegionGroup,
   StockItem,
   OrderRecord,
   ShipmentCalculation,
   ShipmentRow,
   RegionShipment,
+  ProductOverride,
 } from "@/types";
 import { sortBySize } from "./size-utils";
+import { getWeeklyOrders, calculateTrend, type TrendResult } from "./trend-engine";
 
 const DEFAULT_REGIONS: RegionConfig[] = [
   {
@@ -55,11 +58,117 @@ export function getDefaultRegions(): RegionConfig[] {
   return DEFAULT_REGIONS.map((r) => ({ ...r, warehouses: [...r.warehouses] }));
 }
 
+// ─── Region Groups (8 ФО) ────────────────────────────────────
+
+export const ALL_DISTRICTS = [
+  'Центральный федеральный округ',
+  'Приволжский федеральный округ',
+  'Сибирский федеральный округ',
+  'Южный федеральный округ',
+  'Северо-Западный федеральный округ',
+  'Уральский федеральный округ',
+  'Дальневосточный федеральный округ',
+  'Северо-Кавказский федеральный округ',
+];
+
+const DEFAULT_REGION_GROUPS: RegionGroup[] = [
+  {
+    id: 'central-nw',
+    name: 'Центр + Северо-Запад',
+    shortName: 'ЦФО+СЗФО',
+    districts: ['Центральный федеральный округ', 'Северо-Западный федеральный округ'],
+    warehouses: ['Рязань (Тюшевское)', 'Тула', 'Подольск', 'Коледино', 'Электросталь', 'Котовск', 'Владимир', 'Воронеж', 'СЦ Брест'],
+    manualPercentage: 0.35,
+  },
+  {
+    id: 'south-caucasus',
+    name: 'Юг + Кавказ',
+    shortName: 'ЮФО+СКФО',
+    districts: ['Южный федеральный округ', 'Северо-Кавказский федеральный округ'],
+    warehouses: ['Невинномысск', 'Краснодар', 'Волгоград', 'СЦ Ереван'],
+    manualPercentage: 0.15,
+  },
+  {
+    id: 'volga',
+    name: 'Приволжский',
+    shortName: 'ПФО',
+    districts: ['Приволжский федеральный округ'],
+    warehouses: ['Казань', 'Самара (Новосемейкино)', 'Сарапул'],
+    manualPercentage: 0.20,
+  },
+  {
+    id: 'east',
+    name: 'Урал + Сибирь + ДВ',
+    shortName: 'УФО+СФО+ДФО',
+    districts: ['Уральский федеральный округ', 'Сибирский федеральный округ', 'Дальневосточный федеральный округ'],
+    warehouses: ['Екатеринбург - Испытателей 14г', 'Екатеринбург - Перспективный 12', 'Екатеринбург - Перспективная 14', 'Актобе', 'Атакент', 'Астана Карагандинское шоссе'],
+    manualPercentage: 0.30,
+  },
+];
+
+export function getDefaultRegionGroups(): RegionGroup[] {
+  return DEFAULT_REGION_GROUPS.map((g) => ({
+    ...g,
+    districts: [...g.districts],
+    warehouses: [...g.warehouses],
+  }));
+}
+
+/** Конвертирует RegionGroup[] в RegionConfig[] для совместимости с V1/V2/V3 */
+export function toRegionConfigs(
+  groups: RegionGroup[],
+  mode: 'manual' | 'auto',
+  orders: OrderRecord[]
+): RegionConfig[] {
+  if (mode === 'manual' || orders.length === 0) {
+    return groups.map((g) => ({
+      id: g.id,
+      name: g.name,
+      shortName: g.shortName,
+      percentage: g.manualPercentage,
+      warehouses: g.warehouses,
+    }));
+  }
+  // Auto: считаем реальные проценты по ФО
+  // Считаем ВСЕ заказы (включая отменённые) — отмена = заказ со склада, потребность была
+  // Заказы без ФО (СНГ) привязываем к группе по складу отправления
+  const total = orders.length;
+
+  // Build warehouse→group lookup
+  const warehouseToGroup = new Map<string, string>();
+  for (const g of groups) {
+    for (const wh of g.warehouses) {
+      warehouseToGroup.set(wh, g.id);
+    }
+  }
+
+  return groups.map((g) => {
+    const groupOrders = orders.filter((o) => {
+      // Match by federal district
+      if (o.federalDistrict && g.districts.includes(o.federalDistrict)) return true;
+      // No FD (CIS orders) → match by warehouse
+      if (!o.federalDistrict || o.federalDistrict === '') {
+        return warehouseToGroup.get(o.warehouse) === g.id;
+      }
+      return false;
+    }).length;
+    return {
+      id: g.id,
+      name: g.name,
+      shortName: g.shortName,
+      percentage: total > 0 ? groupOrders / total : g.manualPercentage,
+      warehouses: g.warehouses,
+    };
+  });
+}
+
 export function countOrdersByBarcode(
   orders: OrderRecord[],
   barcode: string
 ): number {
-  return orders.filter((o) => o.barcode === barcode && !o.isCancel).length;
+  // Count ALL orders (including cancelled) — cancellation = demand from warehouse
+  // buyoutRate already accounts for non-delivery
+  return orders.filter((o) => o.barcode === barcode).length;
 }
 
 export function getStockForBarcode(
@@ -105,53 +214,58 @@ function calculateBoxes(
   return { boxes, pieces: boxes * perBox };
 }
 
+/** Shared row-building logic for V1 and V2 */
+function buildShipmentRows(
+  product: Product,
+  stock: StockItem[],
+  orders: OrderRecord[],
+  buyoutRate: number,
+  regionConfigs: RegionConfig[],
+  override?: ProductOverride,
+  orderMultiplier: number = 1
+): ShipmentRow[] {
+  const disabledSizes = override?.disabledSizes || {};
+  return product.sizes
+    .filter((sc) => !disabledSizes[sc.barcode])
+    .map((sizeConfig) => {
+      const perBox = override?.perBox[sizeConfig.barcode] ?? sizeConfig.perBox;
+      const sc = { ...sizeConfig, perBox };
+      const orderCount = countOrdersByBarcode(orders, sc.barcode);
+      const totalOrders30d = orderCount * buyoutRate * orderMultiplier;
+
+      const regionShipments: RegionShipment[] = regionConfigs.map((region) => {
+        const plan = totalOrders30d * region.percentage;
+        const { total: fact, breakdown } = getFactForRegion(stock, sc.barcode, region.warehouses);
+        const { boxes, pieces } = calculateBoxes(plan, fact, sc.perBox);
+        return { regionId: region.id, plan, fact, boxes, pieces, warehouseBreakdown: breakdown };
+      });
+
+      const totalOnWB = regionShipments.reduce((sum, r) => sum + r.fact, 0);
+      const planBoxes = regionShipments.reduce((sum, r) => sum + r.boxes, 0);
+
+      return {
+        size: sc.size,
+        barcode: sc.barcode,
+        perBox: sc.perBox,
+        regions: regionShipments,
+        totalOnWB,
+        totalOrders30d,
+        planBoxes,
+        reserveBoxes: planBoxes * 1.5,
+      };
+    });
+}
+
 export function calculateShipment(
   product: Product,
   stock: StockItem[],
   orders: OrderRecord[],
   buyoutRate: number = 0.75,
-  regions?: RegionConfig[]
+  regions?: RegionConfig[],
+  override?: ProductOverride
 ): ShipmentCalculation {
   const regionConfigs = regions || getDefaultRegions();
-
-  const rows: ShipmentRow[] = product.sizes.map((sizeConfig) => {
-    const orderCount = countOrdersByBarcode(orders, sizeConfig.barcode);
-    const totalOrders30d = orderCount * buyoutRate;
-
-    const regionShipments: RegionShipment[] = regionConfigs.map((region) => {
-      const plan = totalOrders30d * region.percentage;
-      const { total: fact, breakdown } = getFactForRegion(
-        stock,
-        sizeConfig.barcode,
-        region.warehouses
-      );
-      const { boxes, pieces } = calculateBoxes(plan, fact, sizeConfig.perBox);
-
-      return {
-        regionId: region.id,
-        plan,
-        fact,
-        boxes,
-        pieces,
-        warehouseBreakdown: breakdown,
-      };
-    });
-
-    const totalOnWB = regionShipments.reduce((sum, r) => sum + r.fact, 0);
-    const planBoxes = regionShipments.reduce((sum, r) => sum + r.boxes, 0);
-
-    return {
-      size: sizeConfig.size,
-      barcode: sizeConfig.barcode,
-      perBox: sizeConfig.perBox,
-      regions: regionShipments,
-      totalOnWB,
-      totalOrders30d,
-      planBoxes,
-      reserveBoxes: planBoxes * 1.5,
-    };
-  });
-
+  const rows = buildShipmentRows(product, stock, orders, buyoutRate, regionConfigs, override);
   const sortedRows = sortShipmentRows(rows);
 
   return {
@@ -193,4 +307,197 @@ export function getOrderStats(orders: OrderRecord[]) {
   }
 
   return { total, cancels, cancelRate, bySize, byRegion, byWarehouse, byDate };
+}
+
+// ─── Auto Region Percentages (from real orders) ─────────────
+
+/** Map of federalDistrict names to region IDs */
+const DISTRICT_TO_REGION: Record<string, string> = {
+  "Центральный федеральный округ": "central",
+  "Центральный": "central",
+  "ЦФО": "central",
+  "Южный федеральный округ": "south",
+  "Южный": "south",
+  "ЮФО": "south",
+  "Северо-Кавказский федеральный округ": "south", // объединяем с южным
+  "Приволжский федеральный округ": "volga",
+  "Приволжский": "volga",
+  "ПФО": "volga",
+  "Уральский федеральный округ": "ural",
+  "Уральский": "ural",
+  "УФО": "ural",
+  "Сибирский федеральный округ": "ural", // объединяем с уральским
+  "Дальневосточный федеральный округ": "ural",
+  "Северо-Западный федеральный округ": "central", // объединяем с центральным
+};
+
+export interface AutoRegionPercent {
+  regionId: string;
+  orderCount: number;
+  percentage: number;
+}
+
+/**
+ * Рассчитывает реальное распределение заказов по регионам.
+ * Возвращает проценты на основе фактических заказов.
+ */
+// ─── Auto Buyout Rate (per article) ─────────────────────────
+
+export interface ArticleBuyoutRate {
+  articleWB: string;
+  totalOrders: number;
+  cancelledOrders: number;
+  buyoutRate: number; // 0-1
+}
+
+/**
+ * Рассчитывает реальный % выкупа по каждому артикулу.
+ * Если заказов < minOrders — возвращает fallback (общий %).
+ */
+export function calcBuyoutByArticle(
+  orders: OrderRecord[],
+  fallbackRate: number = 0.75,
+  minOrders: number = 30
+): Map<string, number> {
+  const stats = new Map<string, { total: number; cancelled: number }>();
+
+  for (const o of orders) {
+    const key = String(o.articleWB);
+    const s = stats.get(key) || { total: 0, cancelled: 0 };
+    s.total++;
+    if (o.isCancel) s.cancelled++;
+    stats.set(key, s);
+  }
+
+  const result = new Map<string, number>();
+  for (const [articleWB, s] of stats) {
+    if (s.total < minOrders) {
+      result.set(articleWB, fallbackRate);
+    } else {
+      result.set(articleWB, (s.total - s.cancelled) / s.total);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Get all article buyout rates as array (for display).
+ */
+export function getAllBuyoutRates(
+  orders: OrderRecord[],
+  fallbackRate: number = 0.75,
+  minOrders: number = 30
+): ArticleBuyoutRate[] {
+  const stats = new Map<string, { total: number; cancelled: number }>();
+
+  for (const o of orders) {
+    const key = String(o.articleWB);
+    const s = stats.get(key) || { total: 0, cancelled: 0 };
+    s.total++;
+    if (o.isCancel) s.cancelled++;
+    stats.set(key, s);
+  }
+
+  const result: ArticleBuyoutRate[] = [];
+  for (const [articleWB, s] of stats) {
+    result.push({
+      articleWB,
+      totalOrders: s.total,
+      cancelledOrders: s.cancelled,
+      buyoutRate: s.total < minOrders ? fallbackRate : (s.total - s.cancelled) / s.total,
+    });
+  }
+
+  return result.sort((a, b) => b.totalOrders - a.totalOrders);
+}
+
+// ─── Auto Region Percentages (from real orders) ─────────────
+
+export function calcAutoRegionPercents(
+  orders: OrderRecord[],
+  regions: RegionConfig[]
+): AutoRegionPercent[] {
+  const counts: Record<string, number> = {};
+  for (const r of regions) counts[r.id] = 0;
+
+  let total = 0;
+  for (const o of orders) {
+    if (o.isCancel) continue;
+    const regionId = DISTRICT_TO_REGION[o.federalDistrict] || DISTRICT_TO_REGION[o.federalDistrict.split(" ")[0]] || null;
+    if (regionId && counts[regionId] !== undefined) {
+      counts[regionId]++;
+      total++;
+    }
+  }
+
+  return regions.map((r) => ({
+    regionId: r.id,
+    orderCount: counts[r.id] || 0,
+    percentage: total > 0 ? (counts[r.id] || 0) / total : r.percentage,
+  }));
+}
+
+// ─── V2: Shipment with Trend Dynamics ─────────────────────
+
+export interface ShipmentCalculationV2 extends ShipmentCalculation {
+  trend: TrendResult;
+  rowsV1: ShipmentRow[];    // Original V1 rows for comparison
+}
+
+export function calculateShipmentV2(
+  product: Product,
+  stock: StockItem[],
+  orders: OrderRecord[],
+  buyoutRate: number = 0.75,
+  regions?: RegionConfig[],
+  override?: ProductOverride,
+  loadedDays: number = 28
+): ShipmentCalculationV2 {
+  const regionConfigs = regions || getDefaultRegions();
+  const disabledSizes = override?.disabledSizes || {};
+  const activeSizes = product.sizes.filter((sc) => !disabledSizes[sc.barcode]);
+
+  // Get product-level trend
+  const barcodes = activeSizes.map((s) => s.barcode);
+  const firstBw = barcodes.length > 0 ? getWeeklyOrders(orders, barcodes[0], loadedDays) : [];
+  const numWeeks = firstBw.length || 1;
+  const allWeekly = Array.from({ length: numWeeks }, (_, i) => ({
+    week: i + 1,
+    label: `Нед. ${i + 1}`,
+    orders: 0,
+    dateRange: "",
+  }));
+  for (const barcode of barcodes) {
+    const bw = getWeeklyOrders(orders, barcode, loadedDays);
+    for (let i = 0; i < Math.min(bw.length, numWeeks); i++) {
+      allWeekly[i].orders += bw[i].orders;
+      if (!allWeekly[i].dateRange && bw[i].dateRange) {
+        allWeekly[i].dateRange = bw[i].dateRange;
+      }
+    }
+  }
+  const trend = calculateTrend(allWeekly, buyoutRate);
+
+  // V1 rows (for comparison) — multiplier = 1
+  const v1Rows = buildShipmentRows(product, stock, orders, buyoutRate, regionConfigs, override);
+
+  // V2 rows (adjusted by trend multiplier)
+  const rows = buildShipmentRows(product, stock, orders, buyoutRate, regionConfigs, override, trend.multiplier);
+
+  const sortedRows = sortShipmentRows(rows);
+  const sortedV1 = sortShipmentRows(v1Rows);
+
+  return {
+    product,
+    buyoutRate,
+    regionConfigs,
+    rows: sortedRows,
+    rowsV1: sortedV1,
+    trend,
+    totals: {
+      totalOnWB: rows.reduce((s, r) => s + r.totalOnWB, 0),
+      totalOrders: rows.reduce((s, r) => s + r.totalOrders30d, 0),
+    },
+  };
 }

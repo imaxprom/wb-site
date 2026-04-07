@@ -1,34 +1,14 @@
 /**
  * Client-side functions to call our /api/wb/* proxy routes.
- * The API key is passed from localStorage via header.
+ * API key is stored server-side in data/wb-api-key.txt.
+ * Server routes read it directly — no need to send from client.
  */
 
-const API_KEY_STORAGE = "wb-api-key";
-
-export function getApiKey(): string {
-  if (typeof window === "undefined") return "";
-  return localStorage.getItem(API_KEY_STORAGE) || "";
-}
-
-export function saveApiKey(key: string): void {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(API_KEY_STORAGE, key.trim());
-}
-
-export function removeApiKey(): void {
-  if (typeof window === "undefined") return;
-  localStorage.removeItem(API_KEY_STORAGE);
-}
-
 async function wbFetch<T>(url: string, options?: RequestInit): Promise<T> {
-  const key = getApiKey();
-  if (!key) throw new Error("API-ключ не задан");
-
   const res = await fetch(url, {
     ...options,
     headers: {
       "Content-Type": "application/json",
-      "x-wb-api-key": key,
       ...options?.headers,
     },
   });
@@ -73,6 +53,13 @@ export async function fetchStocks(): Promise<WBStockItem[]> {
 /** Fetch orders for the last N days (default 30) */
 export async function fetchOrders(days: number = 30): Promise<WBOrder[]> {
   return wbFetch<WBOrder[]>(`/api/wb/orders?days=${days}`);
+}
+
+/** Fetch Sales Funnel data for last 7 days (accurate order counts) */
+export async function fetchFunnel(start: string, end: string): Promise<{ days: { date: string; orderCount: number }[]; total: number }> {
+  return wbFetch<{ days: { date: string; orderCount: number }[]; total: number }>(
+    `/api/wb/funnel?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
+  );
 }
 
 /** Fetch list of WB warehouses/offices */

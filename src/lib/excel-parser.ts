@@ -62,7 +62,7 @@ export function parseOrdersSheet(workbook: XLSX.WorkBook, sheetName: string): Or
       federalDistrict: String(row["oblastOkrugName"] || ""),
       region: String(row["regionName"] || ""),
       articleSeller: String(row["supplierArticle"] || ""),
-      articleWB: Number(row["nmId"] || 0),
+      articleWB: String(row["nmId"] || ""),
       barcode: String(row["barcode"] || ""),
       category: String(row["category"] || ""),
       subject: String(row["subject"] || ""),
@@ -90,7 +90,7 @@ export function detectProducts(stock: StockItem[]): Product[] {
 
     if (!productMap.has(key)) {
       productMap.set(key, {
-        name: `${item.subject} ${item.articleSeller}`.trim(),
+        name: item.articleSeller.trim(),
         brand: item.brand,
         category: item.subject,
         sizes: [],

@@ -2,9 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { useData } from "@/components/DataProvider";
-import { StatCard } from "@/components/StatCard";
 import { ProductsTable } from "@/components/ProductsTable";
-import { formatNumber } from "@/lib/utils";
 import type { Product } from "@/types";
 import Link from "next/link";
 
@@ -47,31 +45,6 @@ export default function ProductsPage() {
           Карточки товаров из Wildberries
         </p>
       </div>
-
-      {/* Summary stats */}
-      {products.length > 0 && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard
-            title="Товаров"
-            value={activeProducts.length}
-            subtitle={emptyProducts.length > 0 ? `+ ${emptyProducts.length} без остатков` : undefined}
-          />
-          <StatCard
-            title="Размеров"
-            value={products.reduce((n, p) => n + p.sizes.length, 0)}
-          />
-          <StatCard
-            title="На складах"
-            value={formatNumber(stock.reduce((s, i) => s + i.totalOnWarehouses, 0))}
-            subtitle="штук"
-          />
-          <StatCard
-            title="Заказов"
-            value={formatNumber(orders.length)}
-            subtitle="загружено"
-          />
-        </div>
-      )}
 
       {/* Active products table */}
       {activeProducts.length > 0 ? (

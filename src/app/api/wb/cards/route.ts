@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiError } from "@/lib/api-utils";
 
 export async function POST(req: NextRequest) {
   const apiKey = req.headers.get("x-wb-api-key");
@@ -43,9 +44,6 @@ export async function POST(req: NextRequest) {
     const data = await res.json();
     return NextResponse.json(data);
   } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Unknown error" },
-      { status: 500 }
-    );
+    return apiError(err);
   }
 }

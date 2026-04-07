@@ -1,0 +1,108 @@
+{
+  "suppliers": [
+    "Беликова"
+  ],
+  "brands": [
+    "IMSI"
+  ],
+  "subjects": [
+    "Трусы"
+  ],
+  "articles": [
+    {
+      "nm_id": 580062620,
+      "sa_name": "sl-8338-mc-5",
+      "brand": "IMSI",
+      "subject": "Трусы"
+    },
+    {
+      "nm_id": 398657691,
+      "sa_name": "sl-8338-mc-9",
+      "brand": "IMSI",
+      "subject": "Трусы"
+    },
+    {
+      "nm_id": 322000486,
+      "sa_name": "sl-8369*6605-mc-9",
+      "brand": "IMSI",
+      "subject": "Трусы"
+    },
+    {
+      "nm_id": 165140159,
+      "sa_name": "sl8369*6328-mc-7",
+      "brand": "IMSI",
+      "subject": "Трусы"
+    },
+    {
+      "nm_id": 388156471,
+      "sa_name": "sl8369*6606-b3-g2-w2",
+      "brand": "IMSI",
+      "subject": "Трусы"
+    },
+    {
+      "nm_id": 178439058,
+      "sa_name": "sl8369*6606-b3-w2-a2",
+      "brand": "IMSI",
+      "subject": "Трусы"
+    },
+    {
+      "nm_id": 431925632,
+      "sa_name": "sl8369*6606-b4-g4",
+      "brand": "IMSI",
+      "subject": "Трусы"
+    },
+    {
+      "nm_id": 431926725,
+      "sa_name": "sl8369*6606-b4-w4",
+      "brand": "IMSI",
+      "subject": "Трусы"
+    },
+    {
+      "nm_id": 386566779,
+      "sa_name": "sl8369*6606-black7",
+      "brand": "IMSI",
+      "subject": "Трусы"
+    },
+    {
+      "nm_id": 333768802,
+      "sa_name": "sl8369*6606-grey7",
+      "brand": "IMSI",
+      "subject": "Трусы"
+    },
+    {
+      "nm_id": 431927756,
+      "sa_name": "sl8369*6606-w4-g4",
+      "brand": "IMSI",
+      "subject": "Трусы"
+    },
+    {
+      "nm_id": 399612115,
+      "sa_name": "st-8187*8189-mc-8",
+      "brand": "IMSI",
+      "subject": "Трусы"
+    },
+    {
+      "nm_id": 163785912,
+      "sa_name": "st8187-mc-7",
+      "brand": "IMSI",
+      "subject": "Трусы"
+    }
+  ],
+  "sizes": [
+    "101-103",
+    "189-195",
+    "201-203",
+    "203-205",
+    "40-42 (L)",
+    "42-44 (XL)",
+    "44-46 (XXL)",
+    "46-48 (XXXL)",
+    "48-50 (3XL)",
+    "48-50 (4XL)",
+    "48-50(3XL)",
+    "50-52 (4XL)",
+    "50-52 (5XL)",
+    "52-54 (5XL)",
+    "52-54 (6XL)"
+  ]
+}

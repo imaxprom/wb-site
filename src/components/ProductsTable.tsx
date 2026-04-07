@@ -21,24 +21,24 @@ export function ProductsTable({
 
   return (
     <div className={`bg-[var(--bg-card)] rounded-xl border border-[var(--border)] overflow-x-auto ${className}`}>
-      <table className="data-table" style={{ tableLayout: "fixed", minWidth: 700 }}>
+      <table className="data-table" style={{ tableLayout: "fixed", minWidth: 800 }}>
         <colgroup>
-          <col style={{ width: "12%" }} />
-          <col style={{ width: "30%" }} />
-          <col style={{ width: "12%" }} />
-          <col style={{ width: "10%" }} />
-          <col style={{ width: "14%" }} />
-          <col style={{ width: "14%" }} />
+          <col style={{ width: "11%" }} />
+          <col style={{ width: "17%" }} />
+          <col style={{ width: "42%" }} />
           <col style={{ width: "8%" }} />
+          <col style={{ width: "8%" }} />
+          <col style={{ width: "8%" }} />
+          <col style={{ width: "6%" }} />
         </colgroup>
         <thead>
           <tr>
             <th>Артикул WB</th>
-            <th>Название</th>
-            <th>Бренд</th>
-            <th className="num">Размеров</th>
-            <th className="num">На складах</th>
-            <th className="num">Заказов 30д</th>
+            <th>Артикул продавца</th>
+            <th style={{ textAlign: "left" }}>Наименование продавца</th>
+            <th style={{ textAlign: "center" }}>На складах</th>
+            <th style={{ textAlign: "center" }}>Заказов 30д</th>
+            <th style={{ textAlign: "center" }}>Размеров</th>
             <th></th>
           </tr>
         </thead>

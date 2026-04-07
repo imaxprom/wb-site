@@ -1,0 +1,2199 @@
+[
+  {
+    "nm_id": 322000486,
+    "article": "SL-8369*6605-MC-9",
+    "sales_qty": 7170,
+    "returns_qty": 26,
+    "net_qty": 7144,
+    "revenue": 5426022.0,
+    "ppvz": 5397943.0,
+    "cogs_total": 2621355.0,
+    "cogs_unit": 367.0,
+    "logistics": 892949.0,
+    "log_per_unit": 125.0,
+    "ad_allocated": 323759.0,
+    "tax": 156230.0,
+    "profit": 1394128.0,
+    "margin": 25.7,
+    "buyout_rate": 86.5,
+    "profit_per_unit": 195.0,
+    "avg_price": 760.0,
+    "daily": [
+      {
+        "date": "2026-03-02",
+        "orders": 363,
+        "cancels": 52,
+        "sales": 336,
+        "revenue": 408979.0
+      },
+      {
+        "date": "2026-03-03",
+        "orders": 398,
+        "cancels": 48,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-04",
+        "orders": 477,
+        "cancels": 84,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-05",
+        "orders": 394,
+        "cancels": 55,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-06",
+        "orders": 340,
+        "cancels": 50,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-07",
+        "orders": 389,
+        "cancels": 57,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-08",
+        "orders": 390,
+        "cancels": 70,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-09",
+        "orders": 498,
+        "cancels": 54,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-10",
+        "orders": 442,
+        "cancels": 80,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-11",
+        "orders": 387,
+        "cancels": 54,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-12",
+        "orders": 385,
+        "cancels": 44,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-13",
+        "orders": 345,
+        "cancels": 43,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-14",
+        "orders": 410,
+        "cancels": 78,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-15",
+        "orders": 406,
+        "cancels": 61,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-16",
+        "orders": 386,
+        "cancels": 59,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-17",
+        "orders": 375,
+        "cancels": 55,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-18",
+        "orders": 317,
+        "cancels": 32,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-19",
+        "orders": 314,
+        "cancels": 28,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-20",
+        "orders": 332,
+        "cancels": 42,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-21",
+        "orders": 359,
+        "cancels": 22,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-22",
+        "orders": 402,
+        "cancels": 28,
+        "sales": 0,
+        "revenue": 0
+      }
+    ]
+  },
+  {
+    "nm_id": 165140159,
+    "article": "SL8369*6328-MC-7",
+    "sales_qty": 7695,
+    "returns_qty": 36,
+    "net_qty": 7659,
+    "revenue": 4637345.0,
+    "ppvz": 4451171.0,
+    "cogs_total": 2106895.0,
+    "cogs_unit": 275.0,
+    "logistics": 1013033.0,
+    "log_per_unit": 132.0,
+    "ad_allocated": 276700.0,
+    "tax": 131900.0,
+    "profit": 918660.0,
+    "margin": 19.8,
+    "buyout_rate": 84.3,
+    "profit_per_unit": 120.0,
+    "avg_price": 605.0,
+    "daily": [
+      {
+        "date": "2026-03-02",
+        "orders": 459,
+        "cancels": 83,
+        "sales": 341,
+        "revenue": 316313.0
+      },
+      {
+        "date": "2026-03-03",
+        "orders": 513,
+        "cancels": 95,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-04",
+        "orders": 479,
+        "cancels": 79,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-05",
+        "orders": 444,
+        "cancels": 82,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-06",
+        "orders": 457,
+        "cancels": 84,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-07",
+        "orders": 383,
+        "cancels": 60,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-08",
+        "orders": 393,
+        "cancels": 50,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-09",
+        "orders": 482,
+        "cancels": 80,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-10",
+        "orders": 502,
+        "cancels": 82,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-11",
+        "orders": 446,
+        "cancels": 79,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-12",
+        "orders": 461,
+        "cancels": 93,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-13",
+        "orders": 355,
+        "cancels": 71,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-14",
+        "orders": 434,
+        "cancels": 66,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-15",
+        "orders": 429,
+        "cancels": 63,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-16",
+        "orders": 403,
+        "cancels": 66,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-17",
+        "orders": 393,
+        "cancels": 65,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-18",
+        "orders": 362,
+        "cancels": 53,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-19",
+        "orders": 335,
+        "cancels": 43,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-20",
+        "orders": 308,
+        "cancels": 28,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-21",
+        "orders": 326,
+        "cancels": 27,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-22",
+        "orders": 368,
+        "cancels": 25,
+        "sales": 0,
+        "revenue": 0
+      }
+    ]
+  },
+  {
+    "nm_id": 398657691,
+    "article": "SL-8338-MC-9",
+    "sales_qty": 5316,
+    "returns_qty": 31,
+    "net_qty": 5285,
+    "revenue": 3777565.0,
+    "ppvz": 3750982.0,
+    "cogs_total": 1959950.0,
+    "cogs_unit": 371.0,
+    "logistics": 734761.0,
+    "log_per_unit": 139.0,
+    "ad_allocated": 225399.0,
+    "tax": 108696.0,
+    "profit": 714305.0,
+    "margin": 18.9,
+    "buyout_rate": 86.5,
+    "profit_per_unit": 135.0,
+    "avg_price": 715.0,
+    "daily": [
+      {
+        "date": "2026-03-02",
+        "orders": 277,
+        "cancels": 42,
+        "sales": 295,
+        "revenue": 334038.0
+      },
+      {
+        "date": "2026-03-03",
+        "orders": 311,
+        "cancels": 59,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-04",
+        "orders": 367,
+        "cancels": 52,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-05",
+        "orders": 279,
+        "cancels": 44,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-06",
+        "orders": 240,
+        "cancels": 31,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-07",
+        "orders": 244,
+        "cancels": 40,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-08",
+        "orders": 271,
+        "cancels": 38,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-09",
+        "orders": 354,
+        "cancels": 54,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-10",
+        "orders": 363,
+        "cancels": 56,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-11",
+        "orders": 309,
+        "cancels": 40,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-12",
+        "orders": 275,
+        "cancels": 34,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-13",
+        "orders": 275,
+        "cancels": 40,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-14",
+        "orders": 282,
+        "cancels": 41,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-15",
+        "orders": 265,
+        "cancels": 34,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-16",
+        "orders": 251,
+        "cancels": 38,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-17",
+        "orders": 204,
+        "cancels": 30,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-18",
+        "orders": 217,
+        "cancels": 25,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-19",
+        "orders": 198,
+        "cancels": 16,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-20",
+        "orders": 181,
+        "cancels": 19,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-21",
+        "orders": 214,
+        "cancels": 13,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-22",
+        "orders": 222,
+        "cancels": 10,
+        "sales": 0,
+        "revenue": 0
+      }
+    ]
+  },
+  {
+    "nm_id": 386566779,
+    "article": "SL8369*6606-Black7",
+    "sales_qty": 1416,
+    "returns_qty": 6,
+    "net_qty": 1410,
+    "revenue": 933015.0,
+    "ppvz": 924507.0,
+    "cogs_total": 387325.0,
+    "cogs_unit": 275.0,
+    "logistics": 179151.0,
+    "log_per_unit": 127.0,
+    "ad_allocated": 55671.0,
+    "tax": 26827.0,
+    "profit": 273429.0,
+    "margin": 29.3,
+    "buyout_rate": 84.3,
+    "profit_per_unit": 194.0,
+    "avg_price": 662.0,
+    "daily": [
+      {
+        "date": "2026-03-02",
+        "orders": 71,
+        "cancels": 12,
+        "sales": 72,
+        "revenue": 75473.0
+      },
+      {
+        "date": "2026-03-03",
+        "orders": 74,
+        "cancels": 12,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-04",
+        "orders": 90,
+        "cancels": 14,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-05",
+        "orders": 83,
+        "cancels": 17,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-06",
+        "orders": 72,
+        "cancels": 14,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-07",
+        "orders": 91,
+        "cancels": 16,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-08",
+        "orders": 75,
+        "cancels": 12,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-09",
+        "orders": 89,
+        "cancels": 14,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-10",
+        "orders": 75,
+        "cancels": 15,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-11",
+        "orders": 75,
+        "cancels": 17,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-12",
+        "orders": 72,
+        "cancels": 11,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-13",
+        "orders": 63,
+        "cancels": 7,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-14",
+        "orders": 73,
+        "cancels": 13,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-15",
+        "orders": 74,
+        "cancels": 7,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-16",
+        "orders": 72,
+        "cancels": 17,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-17",
+        "orders": 64,
+        "cancels": 8,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-18",
+        "orders": 62,
+        "cancels": 9,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-19",
+        "orders": 75,
+        "cancels": 14,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-20",
+        "orders": 64,
+        "cancels": 6,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-21",
+        "orders": 68,
+        "cancels": 7,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-22",
+        "orders": 76,
+        "cancels": 3,
+        "sales": 0,
+        "revenue": 0
+      }
+    ]
+  },
+  {
+    "nm_id": 163785912,
+    "article": "ST8187-MC-7",
+    "sales_qty": 871,
+    "returns_qty": 2,
+    "net_qty": 869,
+    "revenue": 555544.0,
+    "ppvz": 547759.0,
+    "cogs_total": 196795.0,
+    "cogs_unit": 226.0,
+    "logistics": 86633.0,
+    "log_per_unit": 100.0,
+    "ad_allocated": 33148.0,
+    "tax": 15946.0,
+    "profit": 215236.0,
+    "margin": 38.7,
+    "buyout_rate": 87.6,
+    "profit_per_unit": 248.0,
+    "avg_price": 639.0,
+    "daily": [
+      {
+        "date": "2026-03-02",
+        "orders": 39,
+        "cancels": 6,
+        "sales": 35,
+        "revenue": 35105.0
+      },
+      {
+        "date": "2026-03-03",
+        "orders": 38,
+        "cancels": 5,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-04",
+        "orders": 40,
+        "cancels": 7,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-05",
+        "orders": 34,
+        "cancels": 4,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-06",
+        "orders": 28,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-07",
+        "orders": 49,
+        "cancels": 5,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-08",
+        "orders": 50,
+        "cancels": 7,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-09",
+        "orders": 61,
+        "cancels": 11,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-10",
+        "orders": 58,
+        "cancels": 4,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-11",
+        "orders": 57,
+        "cancels": 14,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-12",
+        "orders": 54,
+        "cancels": 6,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-13",
+        "orders": 38,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-14",
+        "orders": 67,
+        "cancels": 13,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-15",
+        "orders": 48,
+        "cancels": 4,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-16",
+        "orders": 37,
+        "cancels": 5,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-17",
+        "orders": 39,
+        "cancels": 5,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-18",
+        "orders": 42,
+        "cancels": 3,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-19",
+        "orders": 45,
+        "cancels": 8,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-20",
+        "orders": 48,
+        "cancels": 3,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-21",
+        "orders": 41,
+        "cancels": 3,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-22",
+        "orders": 45,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      }
+    ]
+  },
+  {
+    "nm_id": 178439058,
+    "article": "SL8369*6606-B3-W2-A2",
+    "sales_qty": 743,
+    "returns_qty": 2,
+    "net_qty": 741,
+    "revenue": 487658.0,
+    "ppvz": 480921.0,
+    "cogs_total": 200840.0,
+    "cogs_unit": 271.0,
+    "logistics": 54081.0,
+    "log_per_unit": 73.0,
+    "ad_allocated": 29098.0,
+    "tax": 13999.0,
+    "profit": 181868.0,
+    "margin": 37.3,
+    "buyout_rate": 83.7,
+    "profit_per_unit": 245.0,
+    "avg_price": 658.0,
+    "daily": [
+      {
+        "date": "2026-03-02",
+        "orders": 39,
+        "cancels": 11,
+        "sales": 28,
+        "revenue": 29758.0
+      },
+      {
+        "date": "2026-03-03",
+        "orders": 35,
+        "cancels": 6,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-04",
+        "orders": 39,
+        "cancels": 7,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-05",
+        "orders": 38,
+        "cancels": 5,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-06",
+        "orders": 23,
+        "cancels": 3,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-07",
+        "orders": 33,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-08",
+        "orders": 49,
+        "cancels": 14,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-09",
+        "orders": 70,
+        "cancels": 10,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-10",
+        "orders": 58,
+        "cancels": 12,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-11",
+        "orders": 60,
+        "cancels": 10,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-12",
+        "orders": 37,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-13",
+        "orders": 49,
+        "cancels": 8,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-14",
+        "orders": 55,
+        "cancels": 9,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-15",
+        "orders": 58,
+        "cancels": 7,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-16",
+        "orders": 45,
+        "cancels": 13,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-17",
+        "orders": 29,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-18",
+        "orders": 30,
+        "cancels": 7,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-19",
+        "orders": 43,
+        "cancels": 8,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-20",
+        "orders": 32,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-21",
+        "orders": 39,
+        "cancels": 6,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-22",
+        "orders": 27,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      }
+    ]
+  },
+  {
+    "nm_id": 431925632,
+    "article": "SL8369*6606-B4-G4",
+    "sales_qty": 607,
+    "returns_qty": 4,
+    "net_qty": 603,
+    "revenue": 418139.0,
+    "ppvz": 412430.0,
+    "cogs_total": 194204.0,
+    "cogs_unit": 322.0,
+    "logistics": 75454.0,
+    "log_per_unit": 125.0,
+    "ad_allocated": 24949.0,
+    "tax": 12004.0,
+    "profit": 105819.0,
+    "margin": 25.3,
+    "buyout_rate": 87.1,
+    "profit_per_unit": 175.0,
+    "avg_price": 693.0,
+    "daily": [
+      {
+        "date": "2026-03-02",
+        "orders": 33,
+        "cancels": 1,
+        "sales": 34,
+        "revenue": 36300.0
+      },
+      {
+        "date": "2026-03-03",
+        "orders": 34,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-04",
+        "orders": 37,
+        "cancels": 5,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-05",
+        "orders": 29,
+        "cancels": 5,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-06",
+        "orders": 33,
+        "cancels": 6,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-07",
+        "orders": 32,
+        "cancels": 4,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-08",
+        "orders": 31,
+        "cancels": 4,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-09",
+        "orders": 28,
+        "cancels": 4,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-10",
+        "orders": 36,
+        "cancels": 6,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-11",
+        "orders": 39,
+        "cancels": 6,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-12",
+        "orders": 36,
+        "cancels": 4,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-13",
+        "orders": 47,
+        "cancels": 8,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-14",
+        "orders": 34,
+        "cancels": 7,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-15",
+        "orders": 27,
+        "cancels": 6,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-16",
+        "orders": 32,
+        "cancels": 5,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-17",
+        "orders": 29,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-18",
+        "orders": 29,
+        "cancels": 3,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-19",
+        "orders": 25,
+        "cancels": 3,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-20",
+        "orders": 26,
+        "cancels": 3,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-21",
+        "orders": 28,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-22",
+        "orders": 32,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      }
+    ]
+  },
+  {
+    "nm_id": 580062620,
+    "article": "SL-8338-MC-5",
+    "sales_qty": 542,
+    "returns_qty": 2,
+    "net_qty": 540,
+    "revenue": 304247.0,
+    "ppvz": 286823.0,
+    "cogs_total": 121480.0,
+    "cogs_unit": 225.0,
+    "logistics": 63501.0,
+    "log_per_unit": 118.0,
+    "ad_allocated": 18154.0,
+    "tax": 8602.0,
+    "profit": 75086.0,
+    "margin": 24.7,
+    "buyout_rate": 84.3,
+    "profit_per_unit": 139.0,
+    "avg_price": 563.0,
+    "daily": [
+      {
+        "date": "2026-03-02",
+        "orders": 22,
+        "cancels": 5,
+        "sales": 29,
+        "revenue": 24646.0
+      },
+      {
+        "date": "2026-03-03",
+        "orders": 30,
+        "cancels": 7,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-04",
+        "orders": 28,
+        "cancels": 7,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-05",
+        "orders": 25,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-06",
+        "orders": 32,
+        "cancels": 10,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-07",
+        "orders": 41,
+        "cancels": 10,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-08",
+        "orders": 35,
+        "cancels": 3,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-09",
+        "orders": 49,
+        "cancels": 5,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-10",
+        "orders": 22,
+        "cancels": 3,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-11",
+        "orders": 32,
+        "cancels": 4,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-12",
+        "orders": 32,
+        "cancels": 9,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-13",
+        "orders": 35,
+        "cancels": 7,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-14",
+        "orders": 27,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-15",
+        "orders": 34,
+        "cancels": 4,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-16",
+        "orders": 25,
+        "cancels": 5,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-17",
+        "orders": 22,
+        "cancels": 3,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-18",
+        "orders": 28,
+        "cancels": 5,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-19",
+        "orders": 28,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-20",
+        "orders": 26,
+        "cancels": 4,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-21",
+        "orders": 33,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-22",
+        "orders": 36,
+        "cancels": 4,
+        "sales": 0,
+        "revenue": 0
+      }
+    ]
+  },
+  {
+    "nm_id": 431926725,
+    "article": "SL8369*6606-B4-W4",
+    "sales_qty": 282,
+    "returns_qty": 6,
+    "net_qty": 276,
+    "revenue": 187866.0,
+    "ppvz": 184830.0,
+    "cogs_total": 88320.0,
+    "cogs_unit": 320.0,
+    "logistics": 40118.0,
+    "log_per_unit": 145.0,
+    "ad_allocated": 11210.0,
+    "tax": 5389.0,
+    "profit": 38745.0,
+    "margin": 20.6,
+    "buyout_rate": 83.3,
+    "profit_per_unit": 140.0,
+    "avg_price": 681.0,
+    "daily": [
+      {
+        "date": "2026-03-02",
+        "orders": 21,
+        "cancels": 6,
+        "sales": 19,
+        "revenue": 19367.0
+      },
+      {
+        "date": "2026-03-03",
+        "orders": 21,
+        "cancels": 3,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-04",
+        "orders": 23,
+        "cancels": 4,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-05",
+        "orders": 23,
+        "cancels": 4,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-06",
+        "orders": 14,
+        "cancels": 3,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-07",
+        "orders": 4,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-08",
+        "orders": 9,
+        "cancels": 5,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-09",
+        "orders": 7,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-10",
+        "orders": 11,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-11",
+        "orders": 5,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-12",
+        "orders": 10,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-13",
+        "orders": 7,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-14",
+        "orders": 11,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-15",
+        "orders": 9,
+        "cancels": 4,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-16",
+        "orders": 18,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-17",
+        "orders": 14,
+        "cancels": 3,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-18",
+        "orders": 11,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-19",
+        "orders": 18,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-20",
+        "orders": 8,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-21",
+        "orders": 6,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-22",
+        "orders": 13,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      }
+    ]
+  },
+  {
+    "nm_id": 333768802,
+    "article": "SL8369*6606-Grey7",
+    "sales_qty": 215,
+    "returns_qty": 1,
+    "net_qty": 214,
+    "revenue": 140399.0,
+    "ppvz": 135327.0,
+    "cogs_total": 73880.0,
+    "cogs_unit": 345.0,
+    "logistics": 29513.0,
+    "log_per_unit": 138.0,
+    "ad_allocated": 8377.0,
+    "tax": 3999.0,
+    "profit": 19557.0,
+    "margin": 13.9,
+    "buyout_rate": 86.7,
+    "profit_per_unit": 91.0,
+    "avg_price": 656.0,
+    "daily": [
+      {
+        "date": "2026-03-02",
+        "orders": 20,
+        "cancels": 2,
+        "sales": 15,
+        "revenue": 15146.0
+      },
+      {
+        "date": "2026-03-03",
+        "orders": 11,
+        "cancels": 3,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-04",
+        "orders": 14,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-05",
+        "orders": 7,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-06",
+        "orders": 9,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-07",
+        "orders": 12,
+        "cancels": 3,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-08",
+        "orders": 13,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-09",
+        "orders": 17,
+        "cancels": 6,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-10",
+        "orders": 6,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-11",
+        "orders": 9,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-12",
+        "orders": 10,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-13",
+        "orders": 13,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-14",
+        "orders": 14,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-15",
+        "orders": 13,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-16",
+        "orders": 6,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-17",
+        "orders": 18,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-18",
+        "orders": 13,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-19",
+        "orders": 9,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-20",
+        "orders": 15,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-21",
+        "orders": 9,
+        "cancels": 3,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-22",
+        "orders": 17,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      }
+    ]
+  },
+  {
+    "nm_id": 431927756,
+    "article": "SL8369*6606-W4-G4",
+    "sales_qty": 182,
+    "returns_qty": 2,
+    "net_qty": 180,
+    "revenue": 121872.0,
+    "ppvz": 120517.0,
+    "cogs_total": 58464.0,
+    "cogs_unit": 325.0,
+    "logistics": 27334.0,
+    "log_per_unit": 152.0,
+    "ad_allocated": 7272.0,
+    "tax": 3502.0,
+    "profit": 23946.0,
+    "margin": 19.6,
+    "buyout_rate": 85.2,
+    "profit_per_unit": 133.0,
+    "avg_price": 677.0,
+    "daily": [
+      {
+        "date": "2026-03-02",
+        "orders": 10,
+        "cancels": 1,
+        "sales": 12,
+        "revenue": 12116.0
+      },
+      {
+        "date": "2026-03-03",
+        "orders": 9,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-04",
+        "orders": 8,
+        "cancels": 3,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-05",
+        "orders": 6,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-06",
+        "orders": 9,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-07",
+        "orders": 7,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-08",
+        "orders": 7,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-09",
+        "orders": 16,
+        "cancels": 4,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-10",
+        "orders": 5,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-11",
+        "orders": 13,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-12",
+        "orders": 7,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-13",
+        "orders": 7,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-14",
+        "orders": 5,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-15",
+        "orders": 13,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-16",
+        "orders": 12,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-17",
+        "orders": 8,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-18",
+        "orders": 7,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-19",
+        "orders": 5,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-20",
+        "orders": 12,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-21",
+        "orders": 13,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-22",
+        "orders": 4,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      }
+    ]
+  },
+  {
+    "nm_id": 399612115,
+    "article": "ST-8187*8189-MC-8",
+    "sales_qty": 120,
+    "returns_qty": 0,
+    "net_qty": 120,
+    "revenue": 73030.0,
+    "ppvz": 69053.0,
+    "cogs_total": 31200.0,
+    "cogs_unit": 260.0,
+    "logistics": 15850.0,
+    "log_per_unit": 132.0,
+    "ad_allocated": 4358.0,
+    "tax": 2067.0,
+    "profit": 12785.0,
+    "margin": 17.5,
+    "buyout_rate": 89.5,
+    "profit_per_unit": 107.0,
+    "avg_price": 609.0,
+    "daily": [
+      {
+        "date": "2026-03-02",
+        "orders": 6,
+        "cancels": 1,
+        "sales": 4,
+        "revenue": 3696.0
+      },
+      {
+        "date": "2026-03-03",
+        "orders": 12,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-04",
+        "orders": 8,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-05",
+        "orders": 5,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-06",
+        "orders": 8,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-07",
+        "orders": 8,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-08",
+        "orders": 8,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-09",
+        "orders": 9,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-10",
+        "orders": 8,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-11",
+        "orders": 7,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-12",
+        "orders": 7,
+        "cancels": 2,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-13",
+        "orders": 9,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-14",
+        "orders": 5,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-15",
+        "orders": 6,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-16",
+        "orders": 7,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-17",
+        "orders": 3,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-18",
+        "orders": 3,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-19",
+        "orders": 3,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-20",
+        "orders": 3,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-21",
+        "orders": 4,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-22",
+        "orders": 4,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      }
+    ]
+  },
+  {
+    "nm_id": 388156471,
+    "article": "SL8369*6606-B3-G2-W2",
+    "sales_qty": 59,
+    "returns_qty": 0,
+    "net_qty": 59,
+    "revenue": 38824.0,
+    "ppvz": 39129.0,
+    "cogs_total": 18535.0,
+    "cogs_unit": 314.0,
+    "logistics": 10523.0,
+    "log_per_unit": 178.0,
+    "ad_allocated": 2317.0,
+    "tax": 1123.0,
+    "profit": 6631.0,
+    "margin": 17.1,
+    "buyout_rate": 71.4,
+    "profit_per_unit": 112.0,
+    "avg_price": 658.0,
+    "daily": [
+      {
+        "date": "2026-03-02",
+        "orders": 3,
+        "cancels": 1,
+        "sales": 7,
+        "revenue": 7352.0
+      },
+      {
+        "date": "2026-03-03",
+        "orders": 2,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-04",
+        "orders": 2,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-05",
+        "orders": 4,
+        "cancels": 4,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-06",
+        "orders": 1,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-07",
+        "orders": 2,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-08",
+        "orders": 2,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-09",
+        "orders": 3,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-10",
+        "orders": 4,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-11",
+        "orders": 1,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-12",
+        "orders": 1,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-13",
+        "orders": 3,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-14",
+        "orders": 0,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-15",
+        "orders": 1,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-16",
+        "orders": 1,
+        "cancels": 1,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-17",
+        "orders": 1,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-18",
+        "orders": 1,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-19",
+        "orders": 0,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-20",
+        "orders": 1,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-21",
+        "orders": 2,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      },
+      {
+        "date": "2026-03-22",
+        "orders": 0,
+        "cancels": 0,
+        "sales": 0,
+        "revenue": 0
+      }
+    ]
+  }
+]

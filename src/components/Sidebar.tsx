@@ -3,15 +3,18 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
-  { href: "/analytics", label: "Аналитика", icon: "📈" },
-  { href: "/", label: "Дашборд", icon: "📊" },
-  { href: "/products", label: "Товары", icon: "🏷️" },
-  { href: "/shipment", label: "Расчёт отгрузки", icon: "📦" },
-  { href: "/upload", label: "Загрузка данных", icon: "📁" },
-  { href: "/settings", label: "Настройки", icon: "⚙️" },
+  { href: "/analytics", label: "Аналитика" },
+  { href: "/reviews", label: "Отзывы", icon: MessageSquare },
+  { href: "/finance", label: "Финансы" },
+  { href: "/monitor", label: "Мониторинг" },
+  { href: "/shipment", label: "Расчёт отгрузки" },
+  { href: "/changelog", label: "Журнал" },
+  { href: "/docs", label: "База знаний" },
+  { href: "/settings", label: "Настройки" },
 ];
 
 export function Sidebar() {
@@ -43,36 +46,33 @@ export function Sidebar() {
           open ? "translate-x-0" : "-translate-x-full md:translate-x-0"
         )}
       >
-        <div className="p-5 border-b border-[var(--border)]">
-          <h1 className="text-lg font-bold text-white">WB Отгрузка</h1>
-          <p className="text-xs text-[var(--text-muted)] mt-1">Калькулятор отгрузки</p>
+        <div className="p-4 border-b border-[var(--border)]">
+          <img src="/logo-mphub.jpg" alt="MpHub" className="w-full h-auto rounded-lg" />
         </div>
 
         <nav className="flex-1 py-4">
           {NAV_ITEMS.map((item) => {
-            const isActive = pathname === item.href;
+            const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
             return (
               <Link
                 key={item.href}
                 href={item.href}
                 onClick={() => setOpen(false)}
                 className={cn(
-                  "flex items-center gap-3 px-5 py-3 text-sm transition-colors",
+                  "flex items-center px-5 py-3 text-base transition-colors",
                   isActive
                     ? "bg-[var(--accent)]/10 text-[var(--accent)] border-r-2 border-[var(--accent)]"
                     : "text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--bg-card-hover)]"
                 )}
               >
-                <span className="text-base">{item.icon}</span>
+                {item.icon && <item.icon size={18} className="mr-2 shrink-0" />}
                 {item.label}
               </Link>
             );
           })}
         </nav>
 
-        <div className="p-4 border-t border-[var(--border)] text-xs text-[var(--text-muted)]">
-          IMSI · Бренд нижнего белья
-        </div>
+
       </aside>
     </>
   );

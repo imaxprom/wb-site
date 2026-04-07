@@ -1,5 +1,5 @@
 import XLSX from "xlsx-js-style";
-import type { ShipmentCalculation } from "@/types";
+import type { ShipmentCalculation, ProductOverrides } from "@/types";
 import { sortBySize, sizeHasLetters } from "./size-utils";
 
 // --- Exact colors from the sample ---
@@ -84,6 +84,7 @@ function setDateCell(
 
 export function exportShipmentExcelV2(
   calculations: ShipmentCalculation[],
+  overrides: ProductOverrides = {},
   title: string = "ИП Беликова А.Л"
 ) {
   const wb = XLSX.utils.book_new();
@@ -199,7 +200,8 @@ export function exportShipmentExcelV2(
 
       // A: product name (first row only, will merge later)
       if (isFirst) {
-        setCell(ws, row, COL_A, `${calc.product.name}\nАртикул WB: ${calc.product.articleWB}`, {
+        const displayName = overrides[calc.product.articleWB]?.customName || calc.product.name;
+        setCell(ws, row, COL_A, `${displayName}\nАртикул WB: ${calc.product.articleWB}`, {
           font: F18, fill: blockFill, alignment: A_CENTER_CENTER,
           border: { left: bMedium, right: bMedium, top: bMedium, bottom: bMedium },
         });
@@ -211,8 +213,9 @@ export function exportShipmentExcelV2(
         border: { left: bMedium, right: bMedium, top: borderTop, bottom: borderBottom },
       });
 
-      // C: per box
-      setCell(ws, row, COL_C, sRow.perBox, {
+      // C: per box (with override)
+      const perBox = overrides[calc.product.articleWB]?.perBox[sRow.barcode] ?? sRow.perBox;
+      setCell(ws, row, COL_C, perBox, {
         font: F18, alignment: A_CENTER,
         border: { right: bMedium, top: borderTop, bottom: borderBottom },
       });

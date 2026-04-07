@@ -3,29 +3,34 @@
 import { useState, useCallback, useEffect } from "react";
 import { useData } from "@/components/DataProvider";
 import { formatNumber } from "@/lib/utils";
-import { getApiKey } from "@/lib/wb-api";
+// API key is stored server-side (data/wb-api-key.txt)
 
 type SyncState = "idle" | "loading" | "success" | "error";
 
 export default function UploadTab() {
-  const { stock, orders, products, uploadDate, clearAllData, syncFromWB } = useData();
+  const { stock, orders, products, uploadDate, clearAllData, syncFromWB, refreshData, settings, updateSettings } = useData();
   const hasData = stock.length > 0 || orders.length > 0;
-  const [hasKey, setHasKey] = useState(false);
-  const [days, setDays] = useState(() => {
-    const validValues = [28, 35, 42, 49, 56];
-    if (typeof window !== "undefined") {
-      const saved = Number(localStorage.getItem("wb-upload-days"));
-      if (validValues.includes(saved)) return saved;
-      localStorage.setItem("wb-upload-days", "28");
-    }
-    return 28;
-  });
+  const [hasKey, setHasKey] = useState(true); // Server reads key from /tmp/wb_token.txt
+
+  // uploadDays from settings (API), fallback 28
+  const validValues = [28, 35, 42, 49, 56];
+  const days = validValues.includes(settings.uploadDays ?? 0) ? (settings.uploadDays as number) : 28;
+
   const [syncState, setSyncState] = useState<SyncState>("idle");
   const [syncMessage, setSyncMessage] = useState("");
 
+  // Check if server has API key
   useEffect(() => {
-    setHasKey(!!getApiKey());
+    fetch("/api/auth/me").then((r) => {
+      if (r.ok) setHasKey(true);
+    }).catch(() => {});
   }, []);
+
+  const handleDaysChange = useCallback(async (v: number) => {
+    await updateSettings({ uploadDays: v } as Parameters<typeof updateSettings>[0]);
+    // Refresh data with new period
+    await refreshData();
+  }, [updateSettings, refreshData]);
 
   const loadAll = useCallback(async () => {
     setSyncState("loading");
@@ -50,11 +55,42 @@ export default function UploadTab() {
         </p>
       </div>
 
+      {/* Auto-sync schedule */}
+      <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-lg">🔄</span>
+          <h3 className="font-medium">Автообновление</h3>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          {["09:00", "12:00", "15:00", "18:00", "21:00"].map((t) => {
+            const [h] = t.split(":").map(Number);
+            const now = new Date();
+            const isPast = now.getHours() > h || (now.getHours() === h && now.getMinutes() > 0);
+            return (
+              <div
+                key={t}
+                className={`px-3 py-1.5 rounded-lg text-sm font-mono border ${
+                  isPast
+                    ? "border-[var(--border)] text-[var(--text-muted)]"
+                    : "border-[var(--accent)]/40 text-[var(--accent)] bg-[var(--accent)]/5"
+                }`}
+              >
+                {t}
+                {isPast && " ✓"}
+              </div>
+            );
+          })}
+        </div>
+        <p className="text-xs text-[var(--text-muted)] mt-2">
+          Данные обновляются автоматически 5 раз в день
+        </p>
+      </div>
+
       {/* WB API section */}
       <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
-        <h3 className="font-medium mb-1">Загрузка из WB API</h3>
+        <h3 className="font-medium mb-1">Ручная загрузка из WB API</h3>
         <p className="text-sm text-[var(--text-muted)] mb-4">
-          Автоматическая загрузка карточек, остатков и заказов из Wildberries
+          Загрузка карточек, остатков и заказов из Wildberries вручную
         </p>
 
         {!hasKey ? (
@@ -80,11 +116,7 @@ export default function UploadTab() {
                 <span className="text-[var(--text-muted)]">Заказы за</span>
                 <select
                   value={days}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    setDays(v);
-                    localStorage.setItem("wb-upload-days", String(v));
-                  }}
+                  onChange={(e) => handleDaysChange(Number(e.target.value))}
                   className="bg-[var(--bg)] border border-[var(--border)] rounded px-3 py-1.5 text-sm focus:outline-none focus:border-[var(--accent)]"
                 >
                   <option value={28}>4 недели (28 дней)</option>

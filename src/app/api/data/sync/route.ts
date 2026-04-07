@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
+import { apiError } from "@/lib/api-utils";
 import {
   initShipmentTables,
   saveOrders,
@@ -10,24 +9,11 @@ import {
 } from "@/lib/shipment-db";
 import { transformCards, transformStocks, transformOrders } from "@/lib/wb-transformers";
 import type { WBCard, WBStockItem, WBOrder, WBCardsResponse } from "@/lib/wb-api";
+import { getWbApiKey } from "@/lib/wb-api-key";
 
 function readApiKey(headerKey?: string | null): string {
   if (headerKey) return headerKey;
-  // Try /tmp/wb_token.txt
-  try {
-    const token = fs.readFileSync("/tmp/wb_token.txt", "utf-8").trim();
-    if (token) return token;
-  } catch {
-    // ignore
-  }
-  // Try data/wb-api-key.txt
-  try {
-    const token = fs.readFileSync(path.join(process.cwd(), "data", "wb-api-key.txt"), "utf-8").trim();
-    if (token) return token;
-  } catch {
-    // ignore
-  }
-  return "";
+  return getWbApiKey() || "";
 }
 
 async function fetchAllCards(apiKey: string): Promise<WBCard[]> {
@@ -73,7 +59,8 @@ async function fetchAllCards(apiKey: string): Promise<WBCard[]> {
 }
 
 async function fetchAllStocks(apiKey: string): Promise<WBStockItem[]> {
-  const dateFrom = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  // Use old dateFrom to get ALL stock (WB filters by lastChangeDate)
+  const dateFrom = "2019-01-01T00:00:00";
   const res = await fetch(
     `https://statistics-api.wildberries.ru/api/v1/supplier/stocks?dateFrom=${encodeURIComponent(dateFrom)}`,
     { headers: { Authorization: apiKey } }
@@ -124,36 +111,20 @@ export async function POST(req: NextRequest) {
     const stock = transformStocks(rawStocks);
     const allOrders = transformOrders(rawOrders);
 
-    // Trim orders: dateFrom <= date < today
-    const now = new Date();
-    const cutoffDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days);
-    const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const fmt = (d: Date) =>
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    const cutoffStr = fmt(cutoffDate);
-    const todayStr = fmt(todayDate);
-
-    const trimmedOrders = allOrders.filter((o) => {
-      const d = o.date.substring(0, 10);
-      return d >= cutoffStr && d < todayStr;
-    });
-
-    // Save to SQLite
+    // Save ALL orders to SQLite (accumulate, no trimming)
+    // Duplicates handled by INSERT OR IGNORE / ON CONFLICT in shipment-db
+    // Stock is always replaced (current state), products are upserted
     saveProducts(products);
     saveStock(stock);
-    saveOrders(trimmedOrders);
+    saveOrders(allOrders);
     setUploadDate(new Date().toISOString());
 
     return NextResponse.json({
-      orders: trimmedOrders.length,
+      orders: allOrders.length,
       stock: stock.length,
       products: products.length,
     });
   } catch (err) {
-    console.error("[sync] error:", err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Unknown error" },
-      { status: 500 }
-    );
+    return apiError(err);
   }
 }

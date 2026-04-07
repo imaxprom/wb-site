@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiError } from "@/lib/api-utils";
 
 export async function GET(req: NextRequest) {
   const apiKey = req.headers.get("x-wb-api-key");
@@ -6,7 +7,7 @@ export async function GET(req: NextRequest) {
 
   try {
     // Statistics API requires dateFrom; use a date far enough back to get everything
-    const dateFrom = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const dateFrom = "2019-01-01T00:00:00";
 
     const res = await fetch(
       `https://statistics-api.wildberries.ru/api/v1/supplier/stocks?dateFrom=${encodeURIComponent(dateFrom)}`,
@@ -26,9 +27,6 @@ export async function GET(req: NextRequest) {
     const data = await res.json();
     return NextResponse.json(data);
   } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Unknown error" },
-      { status: 500 }
-    );
+    return apiError(err);
   }
 }

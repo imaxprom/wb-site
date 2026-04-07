@@ -5,7 +5,8 @@
 
 import Database from "better-sqlite3";
 import path from "path";
-import type { OrderRecord, StockItem, Product } from "@/types";
+import type { OrderRecord, StockItem, Product, ProductOverride, ProductOverrides } from "@/types";
+import { hashPassword } from "./auth";
 
 const DB_PATH = path.join(process.cwd(), "data", "finance.db");
 
@@ -20,8 +21,58 @@ function getDb(): Database.Database {
   return db;
 }
 
+export interface UserRow {
+  id: number;
+  email: string;
+  password_hash: string;
+  name: string | null;
+  role: string;
+  created_at: string;
+}
+
 export function initShipmentTables(): void {
   const d = getDb();
+
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      name TEXT,
+      role TEXT DEFAULT 'user',
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS user_settings (
+      user_id INTEGER NOT NULL,
+      key TEXT NOT NULL,
+      value TEXT,
+      PRIMARY KEY(user_id, key),
+      FOREIGN KEY(user_id) REFERENCES users(id)
+    )
+  `);
+
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS product_overrides (
+      user_id INTEGER NOT NULL,
+      article_wb TEXT NOT NULL,
+      barcode TEXT NOT NULL,
+      custom_name TEXT,
+      per_box INTEGER,
+      disabled INTEGER DEFAULT 0,
+      PRIMARY KEY(user_id, article_wb, barcode),
+      FOREIGN KEY(user_id) REFERENCES users(id)
+    )
+  `);
+
+  // Insert default admin (password: "admin")
+  const adminHash = hashPassword("admin");
+  d.prepare(`
+    INSERT OR IGNORE INTO users (email, password_hash, name, role)
+    VALUES ('admin', ?, 'Администратор', 'admin')
+  `).run(adminHash);
 
   d.exec(`
     CREATE TABLE IF NOT EXISTS shipment_orders (
@@ -82,8 +133,10 @@ export function initShipmentTables(): void {
 
 export function saveOrders(orders: OrderRecord[]): void {
   const d = getDb();
+  // INSERT OR IGNORE — accumulate orders, never delete old ones
+  // If order with same (barcode, date, warehouse) exists — skip (data doesn't change)
   const stmt = d.prepare(`
-    INSERT INTO shipment_orders
+    INSERT OR IGNORE INTO shipment_orders
       (date, warehouse, federal_district, region, article_seller, article_wb,
        barcode, category, subject, brand, size, total_price, discount_percent,
        spp, finished_price, price_with_disc, is_cancel, cancel_date)
@@ -91,22 +144,6 @@ export function saveOrders(orders: OrderRecord[]): void {
       (@date, @warehouse, @federalDistrict, @region, @articleSeller, @articleWB,
        @barcode, @category, @subject, @brand, @size, @totalPrice, @discountPercent,
        @spp, @finishedPrice, @priceWithDisc, @isCancel, @cancelDate)
-    ON CONFLICT(barcode, date, warehouse) DO UPDATE SET
-      federal_district = excluded.federal_district,
-      region = excluded.region,
-      article_seller = excluded.article_seller,
-      article_wb = excluded.article_wb,
-      category = excluded.category,
-      subject = excluded.subject,
-      brand = excluded.brand,
-      size = excluded.size,
-      total_price = excluded.total_price,
-      discount_percent = excluded.discount_percent,
-      spp = excluded.spp,
-      finished_price = excluded.finished_price,
-      price_with_disc = excluded.price_with_disc,
-      is_cancel = excluded.is_cancel,
-      cancel_date = excluded.cancel_date
   `);
 
   const insert = d.transaction((rows: OrderRecord[]) => {
@@ -220,7 +257,7 @@ export function getOrders(dateFrom: string, dateTo: string): OrderRecord[] {
     federalDistrict: r.federal_district as string,
     region: r.region as string,
     articleSeller: r.article_seller as string,
-    articleWB: r.article_wb as number,
+    articleWB: String(r.article_wb ?? ""),
     barcode: r.barcode as string,
     category: r.category as string,
     subject: r.subject as string,
@@ -234,6 +271,45 @@ export function getOrders(dateFrom: string, dateTo: string): OrderRecord[] {
     isCancel: (r.is_cancel as number) === 1,
     cancelDate: r.cancel_date as string,
   }));
+}
+
+/**
+ * Get correction coefficient for last 7 days by comparing
+ * supplier/orders (incomplete) with Sales Funnel (accurate).
+ * Returns per-article multipliers for the last 7 days.
+ */
+export function getLastWeekCorrection(): Map<string, number> {
+  const d = getDb();
+  const corrections = new Map<string, number>();
+
+  try {
+    // Sales Funnel totals for last 7 days (accurate)
+    const funnelRow = d.prepare(`
+      SELECT SUM(order_count) as funnel_total
+      FROM orders_funnel
+      WHERE date >= date('now', '-7 days') AND date < date('now')
+    `).get() as { funnel_total: number } | undefined;
+
+    // supplier/orders totals for last 7 days
+    const ordersRow = d.prepare(`
+      SELECT COUNT(*) as orders_total
+      FROM shipment_orders
+      WHERE date >= date('now', '-7 days') AND date < date('now')
+    `).get() as { orders_total: number } | undefined;
+
+    const funnelTotal = funnelRow?.funnel_total || 0;
+    const ordersTotal = ordersRow?.orders_total || 0;
+
+    if (funnelTotal > 0 && ordersTotal > 0 && funnelTotal > ordersTotal) {
+      // Global correction coefficient
+      const globalCoeff = funnelTotal / ordersTotal;
+      corrections.set("__global__", globalCoeff);
+    }
+  } catch {
+    // If orders_funnel doesn't exist or error — no correction
+  }
+
+  return corrections;
 }
 
 export function getStock(): StockItem[] {
@@ -309,4 +385,96 @@ export function getUploadDate(): string | null {
 export function setUploadDate(date: string): void {
   const d = getDb();
   d.prepare(`INSERT INTO shipment_meta (key, value) VALUES ('uploadDate', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(date);
+}
+
+// --- User functions ---
+
+export function createUser(email: string, passwordHash: string, name: string, role: string): number {
+  const d = getDb();
+  const result = d.prepare(`
+    INSERT INTO users (email, password_hash, name, role)
+    VALUES (?, ?, ?, ?)
+  `).run(email, passwordHash, name, role);
+  return result.lastInsertRowid as number;
+}
+
+export function getUserByEmail(email: string): UserRow | null {
+  const d = getDb();
+  return (d.prepare(`SELECT * FROM users WHERE email = ?`).get(email) as UserRow) || null;
+}
+
+export function getUserById(id: number): UserRow | null {
+  const d = getDb();
+  return (d.prepare(`SELECT * FROM users WHERE id = ?`).get(id) as UserRow) || null;
+}
+
+// --- User settings ---
+
+export function getUserSettings(userId: number): Record<string, unknown> {
+  const d = getDb();
+  const rows = d.prepare(`SELECT key, value FROM user_settings WHERE user_id = ?`).all(userId) as { key: string; value: string }[];
+  const result: Record<string, unknown> = {};
+  for (const row of rows) {
+    try {
+      result[row.key] = JSON.parse(row.value);
+    } catch {
+      result[row.key] = row.value;
+    }
+  }
+  return result;
+}
+
+export function setUserSetting(userId: number, key: string, value: unknown): void {
+  const d = getDb();
+  d.prepare(`
+    INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?)
+    ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value
+  `).run(userId, key, JSON.stringify(value));
+}
+
+// --- Product overrides ---
+
+export function getUserOverrides(userId: number): ProductOverrides {
+  const d = getDb();
+  const rows = d.prepare(`
+    SELECT article_wb, barcode, custom_name, per_box, disabled
+    FROM product_overrides
+    WHERE user_id = ?
+  `).all(userId) as { article_wb: string; barcode: string; custom_name: string | null; per_box: number | null; disabled: number }[];
+
+  const result: ProductOverrides = {};
+  for (const row of rows) {
+    if (!result[row.article_wb]) {
+      result[row.article_wb] = { customName: row.custom_name || "", perBox: {}, disabledSizes: {} };
+    }
+    const override = result[row.article_wb];
+    if (row.custom_name) override.customName = row.custom_name;
+    if (row.per_box !== null) override.perBox[row.barcode] = row.per_box;
+    if (row.disabled) override.disabledSizes = { ...(override.disabledSizes || {}), [row.barcode]: true };
+  }
+  return result;
+}
+
+export function setUserOverride(
+  userId: number,
+  articleWB: string,
+  barcode: string,
+  data: Partial<Pick<ProductOverride, "customName"> & { perBox?: number; disabled?: boolean }>
+): void {
+  const d = getDb();
+  d.prepare(`
+    INSERT INTO product_overrides (user_id, article_wb, barcode, custom_name, per_box, disabled)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, article_wb, barcode) DO UPDATE SET
+      custom_name = COALESCE(excluded.custom_name, custom_name),
+      per_box = COALESCE(excluded.per_box, per_box),
+      disabled = COALESCE(excluded.disabled, disabled)
+  `).run(
+    userId,
+    articleWB,
+    barcode,
+    data.customName ?? null,
+    data.perBox !== undefined ? data.perBox : null,
+    data.disabled !== undefined ? (data.disabled ? 1 : 0) : null,
+  );
 }

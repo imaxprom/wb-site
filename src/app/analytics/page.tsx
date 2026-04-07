@@ -1,38 +1,93 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useEffect, useCallback } from "react";
 import { useData } from "@/components/DataProvider";
-import { getOrderStats } from "@/lib/calculation-engine";
+import { calculateShipment, calculateDeficit, getOrderStats } from "@/lib/calculation-engine";
 import { StatCard } from "@/components/StatCard";
-import { SizeBarChart, RegionPieChart, OrdersLineChart } from "@/components/Charts";
+import { RegionPieChart, OrdersLineChart } from "@/components/Charts";
+import { RegionalMatrix } from "@/components/RegionalMatrix";
+import DateRangePicker from "@/components/DateRangePicker";
 import { formatNumber, formatPercent } from "@/lib/utils";
 import Link from "next/link";
+import type { OrderRecord } from "@/types";
+
+function fmt(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 export default function AnalyticsPage() {
-  const { orders, stock, isLoaded } = useData();
+  const { stock, products, settings, overrides, isLoaded, uploadDate } = useData();
+
+  // Date range state — default 30 days ending yesterday
+  const [dateFrom, setDateFrom] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return fmt(d);
+  });
+  const [dateTo, setDateTo] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return fmt(d);
+  });
+  const [showPicker, setShowPicker] = useState(false);
+
+  // Local orders loaded by date range
+  const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [loadingOrders, setLoadingOrders] = useState(false);
+
+  const fetchOrders = useCallback(async (from: string, to: string) => {
+    setLoadingOrders(true);
+    try {
+      const res = await fetch(`/api/data/orders?from=${from}&to=${to}`);
+      const data = await res.json();
+      if (Array.isArray(data)) setOrders(data);
+    } catch (e) {
+      console.error("Failed to fetch orders:", e);
+    } finally {
+      setLoadingOrders(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (dateFrom && dateTo) fetchOrders(dateFrom, dateTo);
+  }, [dateFrom, dateTo, fetchOrders]);
 
   const stats = useMemo(() => {
     if (!orders.length) return null;
     return getOrderStats(orders);
   }, [orders]);
 
-  const warehouseTop = useMemo(() => {
-    if (!stats) return [];
-    return Object.entries(stats.byWarehouse)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10);
-  }, [stats]);
+  const calculations = useMemo(() => {
+    if (!products.length || !stock.length) return [];
+    return products.map((p) =>
+      calculateShipment(p, stock, orders, settings.buyoutRate, settings.regions, overrides[p.articleWB])
+    );
+  }, [products, stock, orders, settings, overrides]);
+
+  const totalDeficit = useMemo(() => {
+    return calculations.reduce(
+      (sum, calc) =>
+        sum + calc.rows.reduce((s, row) => s + calculateDeficit(row), 0),
+      0
+    );
+  }, [calculations]);
+
+
+  // Format date for display
+  const formatDisplayDate = (d: string) => {
+    const date = new Date(d);
+    return date.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" });
+  };
 
   if (!isLoaded) {
     return <div className="flex items-center justify-center h-screen text-[var(--text-muted)]">Загрузка...</div>;
   }
 
-  if (!orders.length) {
+  if (!orders.length && !stock.length && !loadingOrders) {
     return (
       <div className="flex flex-col items-center justify-center h-[80vh] text-center">
-        <p className="text-6xl mb-6">📈</p>
         <h2 className="text-2xl font-bold mb-2">Нет данных для анализа</h2>
-        <p className="text-[var(--text-muted)] mb-6">Загрузите файл с заказами</p>
+        <p className="text-[var(--text-muted)] mb-6">Загрузите данные из Wildberries API</p>
         <Link
           href="/upload"
           className="bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white px-6 py-3 rounded-lg font-medium transition-colors"
@@ -45,102 +100,82 @@ export default function AnalyticsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">Аналитика</h2>
-        <p className="text-sm text-[var(--text-muted)] mt-1">
-          Анализ заказов и остатков Wildberries
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold">Аналитика</h2>
+          <div className="relative">
+            <button
+              onClick={() => setShowPicker(!showPicker)}
+              className="flex items-center gap-2 text-sm text-[var(--text-muted)] mt-1.5 px-3 py-1.5 border border-[var(--border)] rounded-lg hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
+            >
+              {formatDisplayDate(dateFrom)} — {formatDisplayDate(dateTo)}
+              <svg className="w-4 h-4 opacity-40" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>
+            </button>
+            {showPicker && (
+              <div className="absolute left-0 top-full mt-2 z-50">
+                <DateRangePicker
+                  dateFrom={dateFrom}
+                  dateTo={dateTo}
+                  onChange={(from: string, to: string) => {
+                    setDateFrom(from);
+                    setDateTo(to);
+                  }}
+                  onClose={() => setShowPicker(false)}
+                />
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
-      {/* Summary stats */}
+      {loadingOrders && (
+        <div className="text-center py-4 text-[var(--text-muted)] text-sm animate-pulse">
+          Загрузка заказов...
+        </div>
+      )}
+
+      {/* Main stats */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-        <StatCard title="Всего заказов" value={formatNumber(stats!.total)} />
         <StatCard
-          title="Без отмен"
-          value={formatNumber(stats!.total - stats!.cancels)}
+          title="Заказы"
+          value={formatNumber(stats?.total || 0)}
+          color="warning"
+        />
+        <StatCard
+          title="Выкупы"
+          value={formatNumber((stats?.total || 0) - (stats?.cancels || 0))}
           color="success"
         />
         <StatCard
           title="Отмены"
-          value={formatNumber(stats!.cancels)}
-          subtitle={formatPercent(stats!.cancelRate)}
-          color={stats!.cancelRate > 0.15 ? "danger" : "warning"}
+          value={formatNumber(stats?.cancels || 0)}
+          subtitle={formatPercent(stats?.cancelRate || 0)}
+          color={stats && stats.cancelRate > 0.15 ? "danger" : "warning"}
         />
         <StatCard
-          title="Уник. размеров"
-          value={Object.keys(stats!.bySize).length}
-        />
-        <StatCard
-          title="Складов"
-          value={Object.keys(stats!.byWarehouse).length}
+          title="Остатки на складах"
+          value={formatNumber(stock.reduce((s, i) => s + i.totalOnWarehouses, 0)) + " шт"}
+          color="default"
         />
       </div>
 
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <SizeBarChart data={stats!.bySize} />
-        <RegionPieChart data={stats!.byRegion} />
-      </div>
-
-      <OrdersLineChart data={stats!.byDate} />
-
-      {/* Warehouse table */}
-      <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
-        <h3 className="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wide mb-4">
-          Топ-10 складов по заказам
-        </h3>
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Склад</th>
-              <th className="num">Заказов</th>
-              <th className="num">% от общего</th>
-            </tr>
-          </thead>
-          <tbody>
-            {warehouseTop.map(([wh, count], i) => (
-              <tr key={wh}>
-                <td className="text-[var(--text-muted)]">{i + 1}</td>
-                <td className="font-medium">{wh}</td>
-                <td className="num">{formatNumber(count)}</td>
-                <td className="num text-[var(--text-muted)]">
-                  {formatPercent(count / (stats!.total - stats!.cancels))}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Stock summary */}
-      {stock.length > 0 && (
-        <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
-          <h3 className="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wide mb-4">
-            Сводка по остаткам
-          </h3>
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <p className="text-[var(--text-muted)] text-sm">Всего на складах</p>
-              <p className="text-2xl font-bold">
-                {formatNumber(stock.reduce((s, i) => s + i.totalOnWarehouses, 0))}
-              </p>
-            </div>
-            <div>
-              <p className="text-[var(--text-muted)] text-sm">В пути к покупателям</p>
-              <p className="text-2xl font-bold text-[var(--warning)]">
-                {formatNumber(stock.reduce((s, i) => s + i.inTransitToCustomers, 0))}
-              </p>
-            </div>
-            <div>
-              <p className="text-[var(--text-muted)] text-sm">Возвраты в пути</p>
-              <p className="text-2xl font-bold text-[var(--accent)]">
-                {formatNumber(stock.reduce((s, i) => s + i.inTransitReturns, 0))}
-              </p>
-            </div>
+      {/* Region pie (1/4) + Regional matrix (3/4) */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-stretch">
+        {stats && (
+          <div className="h-full">
+            <RegionPieChart data={stats.byRegion} />
           </div>
-        </div>
-      )}
+        )}
+
+        {orders.length > 0 && (
+          <div className="lg:col-span-3 h-full">
+            <RegionalMatrix orders={orders} />
+          </div>
+        )}
+      </div>
+
+      {/* Orders chart */}
+      {stats && <OrdersLineChart data={stats.byDate} />}
     </div>
   );
 }

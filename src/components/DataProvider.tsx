@@ -2,8 +2,8 @@
 
 import React, { createContext, useContext, useReducer, useEffect, useCallback } from "react";
 import type { StockItem, OrderRecord, Product, ProductOverrides } from "@/types";
-import { loadSettings, saveSettings, loadOverrides, saveOverrides, type AppSettings } from "@/lib/store";
-import { getDefaultRegions } from "@/lib/calculation-engine";
+import type { AppSettings } from "@/types";
+import { getDefaultRegions, getDefaultRegionGroups } from "@/lib/calculation-engine";
 
 // --- State ---
 
@@ -22,7 +22,7 @@ const INITIAL_STATE: DataState = {
   orders: [],
   products: [],
   uploadDate: null,
-  settings: { buyoutRate: 0.75, regions: getDefaultRegions() },
+  settings: { buyoutRate: 0.75, regions: getDefaultRegions(), regionGroups: getDefaultRegionGroups(), buyoutMode: "auto", regionMode: "auto" },
   overrides: {},
   isLoaded: false,
 };
@@ -122,11 +122,15 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(dataReducer, INITIAL_STATE);
 
   const refreshData = useCallback(async () => {
-    const days = (() => {
-      if (typeof window === "undefined") return 28;
-      const saved = Number(localStorage.getItem("wb-upload-days"));
-      return [28, 35, 42, 49, 56].includes(saved) ? saved : 28;
-    })();
+    // Get uploadDays from settings API
+    const settingsRes = await fetch("/api/settings").catch(() => null);
+    let days = 28;
+    if (settingsRes?.ok) {
+      const raw = await settingsRes.json().catch(() => ({})) as Record<string, unknown>;
+      if (typeof raw.uploadDays === "number" && [28, 35, 42, 49, 56].includes(raw.uploadDays)) {
+        days = raw.uploadDays;
+      }
+    }
 
     const [ordersRes, stockRes, productsRes, metaRes] = await Promise.all([
       fetch(`/api/data/orders?days=${days}`),
@@ -167,14 +171,70 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   // Load data from server on mount
   useEffect(() => {
     let cancelled = false;
+
     async function init() {
-      const [settings, overrides] = await Promise.all([
-        Promise.resolve(loadSettings()),
-        loadOverrides(),
+      // Clean up legacy IndexedDB
+      if (typeof window !== "undefined") {
+        try {
+          const dbs = await indexedDB.databases?.() || [];
+          for (const db of dbs) {
+            if (db.name === "wb-shipment") {
+              indexedDB.deleteDatabase("wb-shipment");
+            }
+          }
+        } catch { /* ignore */ }
+      }
+
+      // 1. Fetch auth user (to confirm logged in)
+      const meRes = await fetch("/api/auth/me");
+      if (!meRes.ok) {
+        // Middleware will redirect, just stop loading
+        return;
+      }
+
+      // 2. Fetch settings and overrides from API
+      const [settingsRes, overridesRes] = await Promise.all([
+        fetch("/api/settings"),
+        fetch("/api/overrides"),
       ]);
+
       if (cancelled) return;
 
-      // Init state with settings/overrides first
+      let settings: AppSettings = {
+        buyoutRate: 0.75,
+        regions: getDefaultRegions(),
+        regionGroups: getDefaultRegionGroups(),
+        buyoutMode: "auto",
+        regionMode: "auto",
+      };
+
+      let overrides: ProductOverrides = {};
+      let uploadDays = 28;
+
+      if (settingsRes.ok) {
+        const raw = await settingsRes.json() as Record<string, unknown>;
+        if (typeof raw.uploadDays === "number") {
+          uploadDays = raw.uploadDays;
+        }
+        settings = {
+          buyoutRate: typeof raw.buyoutRate === "number" ? raw.buyoutRate : 0.75,
+          buyoutMode: (raw.buyoutMode as "manual" | "auto") || "auto",
+          regionMode: (raw.regionMode as "manual" | "auto") || "auto",
+          regions: (raw.regions as typeof settings.regions) || getDefaultRegions(),
+          regionGroups: (raw.regionGroups as typeof settings.regionGroups) || getDefaultRegionGroups(),
+          boxLengthCm: typeof raw.boxLengthCm === "number" ? raw.boxLengthCm : 60,
+          boxWidthCm: typeof raw.boxWidthCm === "number" ? raw.boxWidthCm : 40,
+          boxHeightCm: typeof raw.boxHeightCm === "number" ? raw.boxHeightCm : 40,
+        };
+      }
+
+      if (overridesRes.ok) {
+        overrides = await overridesRes.json() as ProductOverrides;
+      }
+
+      if (cancelled) return;
+
+      // Init state
       dispatch({
         type: "INIT",
         data: {
@@ -187,15 +247,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         },
       });
 
-      // Then load data from server API
+      // 3. Load data from server
       try {
-        const days = (() => {
-          if (typeof window === "undefined") return 28;
-          const saved = Number(localStorage.getItem("wb-upload-days"));
-          return [28, 35, 42, 49, 56].includes(saved) ? saved : 28;
-        })();
+        const days = [28, 35, 42, 49, 56].includes(uploadDays) ? uploadDays : 28;
 
-        const [ordersRes, stockRes, productsRes, metaRes] = await Promise.all([
+        const [ordersRes2, stockRes, productsRes, metaRes] = await Promise.all([
           fetch(`/api/data/orders?days=${days}`),
           fetch("/api/data/stock"),
           fetch("/api/data/products"),
@@ -205,7 +261,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         if (cancelled) return;
 
         const [orders, stock, products, meta] = await Promise.all([
-          ordersRes.ok ? (ordersRes.json() as Promise<OrderRecord[]>) : Promise.resolve([]),
+          ordersRes2.ok ? (ordersRes2.json() as Promise<OrderRecord[]>) : Promise.resolve([]),
           stockRes.ok ? (stockRes.json() as Promise<StockItem[]>) : Promise.resolve([]),
           productsRes.ok ? (productsRes.json() as Promise<Product[]>) : Promise.resolve([]),
           metaRes.ok ? (metaRes.json() as Promise<{ uploadDate: string | null }>) : Promise.resolve({ uploadDate: null }),
@@ -223,22 +279,20 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         console.warn("Failed to load data from server API:", err);
       }
     }
+
     init();
     return () => { cancelled = true; };
   }, []);
 
-  // Persist settings
-  const prevSettingsRef = React.useRef(state.settings);
-  useEffect(() => {
-    if (state.isLoaded && state.settings !== prevSettingsRef.current) {
-      prevSettingsRef.current = state.settings;
-      saveSettings(state.settings);
-    }
-  }, [state.isLoaded, state.settings]);
-
   const updateProductPerBox = useCallback(
     (articleWB: string, barcode: string, perBox: number) => {
       dispatch({ type: "UPDATE_OVERRIDE", articleWB, barcode, perBox });
+      // Persist to API
+      fetch("/api/overrides", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ articleWB, barcode, perBox }),
+      }).catch(console.warn);
     },
     []
   );
@@ -246,6 +300,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const updateCustomName = useCallback(
     (articleWB: string, customName: string) => {
       dispatch({ type: "UPDATE_OVERRIDE", articleWB, customName });
+      // Persist to API (empty barcode for customName)
+      fetch("/api/overrides", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ articleWB, barcode: "", customName }),
+      }).catch(console.warn);
     },
     []
   );
@@ -253,22 +313,25 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const toggleSizeDisabled = useCallback(
     (articleWB: string, barcode: string, disabled: boolean) => {
       dispatch({ type: "UPDATE_OVERRIDE", articleWB, barcode, disabled });
+      // Persist to API
+      fetch("/api/overrides", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ articleWB, barcode, disabled }),
+      }).catch(console.warn);
     },
     []
   );
 
-  // Persist overrides
-  const prevOverridesRef = React.useRef(state.overrides);
-  useEffect(() => {
-    if (state.isLoaded && state.overrides !== prevOverridesRef.current) {
-      prevOverridesRef.current = state.overrides;
-      saveOverrides(state.overrides);
-    }
-  }, [state.isLoaded, state.overrides]);
-
   const updateSettings = useCallback(
     (partial: Partial<AppSettings>) => {
       dispatch({ type: "UPDATE_SETTINGS", settings: partial });
+      // Persist to API
+      fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(partial),
+      }).catch(console.warn);
     },
     []
   );

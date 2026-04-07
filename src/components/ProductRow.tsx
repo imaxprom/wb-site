@@ -25,7 +25,10 @@ export const ProductRow = React.memo(function ProductRow({
   productStock,
   onToggle,
 }: ProductRowProps) {
-  const { updateProductPerBox } = useData();
+  const { overrides, updateProductPerBox, updateCustomName, toggleSizeDisabled } = useData();
+
+  const override = overrides[product.articleWB];
+  const customName = override?.customName || "";
 
   const { warehouseMap, allWarehouses } = useMemo(() => {
     const whMap = new Map<string, Map<string, number>>();
@@ -44,7 +47,13 @@ export const ProductRow = React.memo(function ProductRow({
     return { warehouseMap: whMap, allWarehouses: sorted };
   }, [productStock]);
 
-  const sortedSizes = useMemo(() => sortShipmentRows(product.sizes), [product.sizes]);
+  const sortedSizes = useMemo(() => {
+    // Apply perBox overrides
+    return sortShipmentRows(product.sizes).map((s) => ({
+      ...s,
+      perBox: override?.perBox[s.barcode] ?? s.perBox,
+    }));
+  }, [product.sizes, override]);
 
   const handlePerBoxChange = useCallback(
     (barcode: string, value: number) => {
@@ -53,6 +62,13 @@ export const ProductRow = React.memo(function ProductRow({
       }
     },
     [product.articleWB, updateProductPerBox]
+  );
+
+  const handleNameChange = useCallback(
+    (value: string) => {
+      updateCustomName(product.articleWB, value);
+    },
+    [product.articleWB, updateCustomName]
   );
 
   return (
@@ -67,10 +83,20 @@ export const ProductRow = React.memo(function ProductRow({
         <td className="font-medium" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
           {product.name}
         </td>
-        <td>{product.brand}</td>
-        <td className="num">{product.sizes.length}</td>
-        <td className="num">{formatNumber(totalOnWH)}</td>
-        <td className="num">{formatNumber(orderCount)}</td>
+        <td onClick={(e) => e.stopPropagation()}>
+          <input
+            type="text"
+            value={customName}
+            onChange={(e) => handleNameChange(e.target.value)}
+            onKeyDown={(e) => e.stopPropagation()}
+            onPaste={(e) => e.stopPropagation()}
+            placeholder="—"
+            className="w-full bg-transparent border-b border-transparent hover:border-[var(--border)] focus:border-[var(--accent)] px-1 py-0.5 text-base focus:outline-none"
+          />
+        </td>
+        <td style={{ textAlign: "center" }}>{formatNumber(totalOnWH)}</td>
+        <td style={{ textAlign: "center" }}>{formatNumber(orderCount)}</td>
+        <td style={{ textAlign: "center" }}>{product.sizes.length}</td>
         <td className="text-right text-[var(--text-muted)]">
           {isExpanded ? "▲" : "▼"}
         </td>
@@ -82,17 +108,18 @@ export const ProductRow = React.memo(function ProductRow({
             <div className="bg-[var(--bg)]/50 p-4 space-y-4 overflow-x-auto">
               {/* Size grid */}
               <div>
-                <h4 className="text-xs text-[var(--text-muted)] uppercase tracking-wide mb-2">
+                <h4 className="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wide mb-2">
                   Размерная сетка
                 </h4>
                 <div className="overflow-auto">
-                  <table className="data-table text-xs">
+                  <table className="data-table">
                     <thead>
                       <tr>
                         <th>Размер</th>
                         <th>Баркод</th>
                         <th className="num">На складах</th>
                         <th className="num">Шт/кор</th>
+                        <th className="text-center">Отгрузка</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -111,9 +138,31 @@ export const ProductRow = React.memo(function ProductRow({
                                 value={s.perBox}
                                 onChange={(e) => handlePerBoxChange(s.barcode, Number(e.target.value))}
                                 onClick={(e) => e.stopPropagation()}
-                                className="w-16 bg-[var(--bg)] border border-[var(--border)] rounded px-2 py-1 text-center text-xs focus:outline-none focus:border-[var(--accent)]"
+                                className="w-16 bg-[var(--bg)] border border-[var(--border)] rounded px-2 py-1 text-center text-sm focus:outline-none focus:border-[var(--accent)]"
                                 min="1"
                               />
+                            </td>
+                            <td className="text-center">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const isDisabled = override?.disabledSizes?.[s.barcode] || false;
+                                  toggleSizeDisabled(product.articleWB, s.barcode, !isDisabled);
+                                }}
+                                className={`w-10 h-5 rounded-full transition-colors relative ${
+                                  override?.disabledSizes?.[s.barcode]
+                                    ? "bg-[var(--border)]"
+                                    : "bg-[var(--success)]"
+                                }`}
+                              >
+                                <span
+                                  className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                                    override?.disabledSizes?.[s.barcode]
+                                      ? "left-0.5"
+                                      : "left-5"
+                                  }`}
+                                />
+                              </button>
                             </td>
                           </tr>
                         );
@@ -126,11 +175,11 @@ export const ProductRow = React.memo(function ProductRow({
               {/* Warehouse stock table */}
               {allWarehouses.length > 0 && (
                 <div>
-                  <h4 className="text-xs text-[var(--text-muted)] uppercase tracking-wide mb-2">
+                  <h4 className="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wide mb-2">
                     Остатки по складам
                   </h4>
                   <div className="overflow-x-auto">
-                    <table className="data-table text-xs">
+                    <table className="data-table">
                       <thead>
                         <tr>
                           <th>Размер</th>

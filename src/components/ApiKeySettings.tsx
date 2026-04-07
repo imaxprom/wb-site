@@ -1,13 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import {
-  getApiKey,
-  saveApiKey,
-  removeApiKey,
-  testApiKey,
-  type ScopeResult,
-} from "@/lib/wb-api";
+import { testApiKey, type ScopeResult } from "@/lib/wb-api";
 
 export function ApiKeySettings() {
   const [key, setKey] = useState("");
@@ -16,32 +10,51 @@ export function ApiKeySettings() {
   const [testing, setTesting] = useState(false);
   const [scopes, setScopes] = useState<ScopeResult[] | null>(null);
   const [testOk, setTestOk] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    const stored = getApiKey();
-    if (stored) {
-      setHasKey(true);
-      setMasked(maskKey(stored));
-    }
+    // Load key status from server
+    fetch("/api/settings/apikey")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.hasKey) {
+          setHasKey(true);
+          setMasked(data.masked);
+          // Auto-check on load
+          (async () => {
+            setTesting(true);
+            const result = await testApiKey();
+            setTestOk(result.ok);
+            setScopes(result.scopes);
+            setTesting(false);
+          })();
+        }
+      })
+      .catch(() => {});
   }, []);
 
-  function maskKey(k: string): string {
-    if (k.length <= 12) return "••••••••";
-    return "••••••••••••" + k.slice(-8);
-  }
-
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!key.trim()) return;
-    saveApiKey(key.trim());
-    setHasKey(true);
-    setMasked(maskKey(key.trim()));
-    setKey("");
-    setScopes(null);
-    setTestOk(null);
+    setSaving(true);
+    try {
+      const res = await fetch("/api/settings/apikey", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: key.trim() }),
+      });
+      if (res.ok) {
+        setHasKey(true);
+        setMasked(key.length > 12 ? "••••••••••••" + key.slice(-8) : "••••••••");
+        setKey("");
+        setScopes(null);
+        setTestOk(null);
+      }
+    } catch { /* ignore */ }
+    setSaving(false);
   };
 
-  const handleRemove = () => {
-    removeApiKey();
+  const handleRemove = async () => {
+    await fetch("/api/settings/apikey", { method: "DELETE" });
     setHasKey(false);
     setMasked("");
     setKey("");
@@ -65,7 +78,7 @@ export function ApiKeySettings() {
   return (
     <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
       <h3 className="font-medium mb-1">API-ключ Wildberries</h3>
-      <p className="text-xs text-[var(--text-muted)] mb-4">
+      <p className="text-sm text-[var(--text-muted)] mb-4">
         Единый ключ из кабинета продавца WB. При генерации выберите нужные доступы.
       </p>
 
@@ -90,47 +103,44 @@ export function ApiKeySettings() {
             </button>
           </div>
 
-          {/* Scope results grid */}
-          {scopes && (
-            <div className="space-y-3">
-              {testOk === false && (
-                <div className="rounded-lg p-3 text-sm bg-[var(--danger)]/10 text-[var(--danger)]">
-                  Ключ не принят ни одним API. Проверьте правильность ключа.
-                </div>
-              )}
+          <div className="space-y-3">
+            {testOk === false && scopes && (
+              <div className="rounded-lg p-3 text-sm bg-[var(--danger)]/10 text-[var(--danger)]">
+                Ключ не принят ни одним API. Проверьте правильность ключа.
+              </div>
+            )}
 
-              <div>
-                <p className="text-xs text-[var(--text-muted)] uppercase tracking-wide mb-2">
-                  Доступы ({granted.length} из {scopes.length})
-                </p>
+            <div>
+              <p className="text-sm text-[var(--text-muted)] uppercase tracking-wide mb-2">
+                Доступы {scopes ? `(${granted.length} из ${scopes.length})` : ""}
+              </p>
+              {testing && !scopes ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-                  {scopes.map((scope) => (
-                    <div
-                      key={scope.name}
-                      className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm ${
-                        scope.ok
-                          ? "border-[var(--success)]/30 bg-[var(--success)]/5 text-[var(--success)]"
-                          : "border-[var(--border)] bg-[var(--bg)] text-[var(--text-muted)]"
-                      }`}
-                    >
-                      <span className="text-xs">
-                        {scope.ok ? "✅" : "⛔"}
-                      </span>
-                      <span className={scope.ok ? "font-medium" : ""}>
-                        {scope.name}
-                      </span>
+                  {["Контент", "Аналитика", "Продвижение", "Возвраты", "Документы", "Статистика", "Финансы", "Цены и скидки"].map((name) => (
+                    <div key={name} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--bg)] text-[var(--text-muted)] text-sm">
+                      <span className="text-xs animate-spin">⏳</span>
+                      <span>{name}</span>
                     </div>
                   ))}
                 </div>
-              </div>
-
-              {denied.length > 0 && granted.length > 0 && (
-                <p className="text-xs text-[var(--text-muted)]">
-                  Для полного функционала рекомендуется включить: Контент, Статистика, Маркетплейс
-                </p>
-              )}
+              ) : scopes ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                  {scopes.map((scope) => (
+                    <div key={scope.name} className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm ${scope.ok ? "border-[var(--success)]/30 bg-[var(--success)]/5 text-[var(--success)]" : "border-[var(--border)] bg-[var(--bg)] text-[var(--text-muted)]"}`}>
+                      <span className="text-xs">{scope.ok ? "✅" : "⛔"}</span>
+                      <span className={scope.ok ? "font-medium" : ""}>{scope.name}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
-          )}
+
+            {denied.length > 0 && granted.length > 0 && (
+              <p className="text-sm text-[var(--text-muted)]">
+                Для полного функционала рекомендуем включить: Контент, Продвижение, Возвраты, Финансы, Статистика, Цены и скидки, Аналитика
+              </p>
+            )}
+          </div>
         </div>
       ) : (
         <div className="flex items-center gap-3">
@@ -144,10 +154,10 @@ export function ApiKeySettings() {
           />
           <button
             onClick={handleSave}
-            disabled={!key.trim()}
+            disabled={!key.trim() || saving}
             className="px-5 py-2.5 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white text-sm rounded-lg font-medium transition-colors disabled:opacity-50"
           >
-            Сохранить
+            {saving ? "Сохранение..." : "Сохранить"}
           </button>
         </div>
       )}

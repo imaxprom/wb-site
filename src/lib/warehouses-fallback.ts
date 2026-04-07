@@ -53,23 +53,4 @@ export const FALLBACK_WAREHOUSES: string[] = [
   "Подольск МП",
 ];
 
-const WH_CACHE_KEY = "wb-warehouses-cache";
 
-export function getCachedWarehouses(): string[] | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = localStorage.getItem(WH_CACHE_KEY);
-    if (!raw) return null;
-    const data = JSON.parse(raw);
-    // Cache for 7 days
-    if (Date.now() - data.ts > 7 * 24 * 60 * 60 * 1000) return null;
-    return data.list;
-  } catch {
-    return null;
-  }
-}
-
-export function setCachedWarehouses(list: string[]): void {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(WH_CACHE_KEY, JSON.stringify({ list, ts: Date.now() }));
-}

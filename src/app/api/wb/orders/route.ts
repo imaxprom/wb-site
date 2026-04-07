@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiError } from "@/lib/api-utils";
 
 export async function GET(req: NextRequest) {
   const apiKey = req.headers.get("x-wb-api-key");
@@ -6,7 +7,10 @@ export async function GET(req: NextRequest) {
 
   try {
     const days = Number(req.nextUrl.searchParams.get("days") || "30");
-    const dateFrom = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    // Request 7 extra days: WB API filters by lastChangeDate, not order date.
+    // Without buffer, orders from the first days are lost (~800/day missing).
+    const bufferDays = 7;
+    const dateFrom = new Date(Date.now() - (days + bufferDays) * 24 * 60 * 60 * 1000).toISOString();
 
     const res = await fetch(
       `https://statistics-api.wildberries.ru/api/v1/supplier/orders?dateFrom=${encodeURIComponent(dateFrom)}&flag=0`,
@@ -26,9 +30,6 @@ export async function GET(req: NextRequest) {
     const data = await res.json();
     return NextResponse.json(data);
   } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Unknown error" },
-      { status: 500 }
-    );
+    return apiError(err);
   }
 }

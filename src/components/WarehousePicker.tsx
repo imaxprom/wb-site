@@ -1,12 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { fetchWarehouses, getApiKey } from "@/lib/wb-api";
-import {
-  FALLBACK_WAREHOUSES,
-  getCachedWarehouses,
-  setCachedWarehouses,
-} from "@/lib/warehouses-fallback";
+import { FALLBACK_WAREHOUSES } from "@/lib/warehouses-fallback";
 
 interface WarehousePickerProps {
   regionName: string;
@@ -31,33 +26,15 @@ export function WarehousePicker({
     let cancelled = false;
 
     async function load() {
-      // Try cache first
-      const cached = getCachedWarehouses();
-      if (cached && cached.length > 0) {
-        if (!cancelled) {
-          setAllWarehouses(cached);
+      try {
+        const res = await fetch("/api/data/warehouses");
+        const data = await res.json();
+        if (!cancelled && data.warehouses?.length > 0) {
+          setAllWarehouses(data.warehouses);
           setLoading(false);
+          return;
         }
-        return;
-      }
-
-      // Try API
-      if (getApiKey()) {
-        try {
-          const wbList = await fetchWarehouses();
-          const names = wbList.map((w) => w.name).sort();
-          if (names.length > 0) {
-            setCachedWarehouses(names);
-            if (!cancelled) {
-              setAllWarehouses(names);
-              setLoading(false);
-            }
-            return;
-          }
-        } catch {
-          // fall through to fallback
-        }
-      }
+      } catch { /* fall through */ }
 
       // Fallback
       if (!cancelled) {
