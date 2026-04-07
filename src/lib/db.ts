@@ -159,7 +159,7 @@ export function getExcludeDailyFilter(d: Database.Database, dateCol: string = "s
   ).join(" OR ");
   const params = wfPeriods.flatMap(p => [p.date_from, p.date_to]);
 
-  return { sql: `AND NOT (${alias}.source = 'daily' AND (${ranges}))`, params };
+  return { sql: `AND NOT (${alias}.source IN ('daily', 'weekly') AND (${ranges}))`, params };
 }
 
 // ─── P&L Summary ───────────────────────────────────────────
