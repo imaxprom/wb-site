@@ -155,6 +155,21 @@ function getExcelMetrics(db: Database.Database, dateFrom: string, dateTo: string
 }
 
 /**
+ * Получить loyalty_compensation из weekly_reports.db для периода.
+ * В finance.db weekly_final строки «Компенсация скидки по программе лояльности»
+ * имеют additional_payment = 0, поэтому берём реальные данные из weekly_reports.db.
+ */
+function getLoyaltyCompensation(db: Database.Database | null, dateFrom: string, dateTo: string): number {
+  if (!db) return 0;
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(loyalty_compensation), 0) as lc
+    FROM weekly_rows
+    WHERE period_from = ? AND period_to = ?
+  `).get(dateFrom, dateTo) as { lc: number } | undefined;
+  return row ? Math.round(row.lc) : 0;
+}
+
+/**
  * GET /api/finance/reconciliation
  * Три столбца: API недельный | Excel ЛК | 7 дней ежедневный
  */
@@ -187,6 +202,12 @@ export async function GET(request: NextRequest) {
       hasDaily: boolean; hasExcel: boolean;
     }> = weeks.map(w => {
       const apiWeekly = getFinanceMetrics(finDb, w.date_from, w.date_to, "weekly_final");
+      // weekly_final в finance.db имеет additional_payment=0 для лояльности,
+      // берём реальную сумму из weekly_reports.db
+      const loyaltyFromWeekly = getLoyaltyCompensation(wkDb, w.date_from, w.date_to);
+      if (loyaltyFromWeekly !== 0) {
+        apiWeekly.compensation = loyaltyFromWeekly;
+      }
       const daily7 = getFinanceMetrics(finDb, w.date_from, w.date_to, "daily");
       const excelLk = wkDb ? getExcelMetrics(wkDb, w.date_from, w.date_to) : { ...EMPTY_METRICS };
       const hasDaily = daily7.sales > 0 || daily7.logistics > 0;
