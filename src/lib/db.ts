@@ -176,6 +176,7 @@ export interface PnlResult {
   penalty: number;
   acceptance: number;
   other_services: number;
+  jam: number;
   total_services: number;
   cogs: number;
   ad_spend: number;
@@ -200,8 +201,9 @@ export function getPnl(dateFrom: string, dateTo: string, nmId?: number): PnlResu
       const adRow = d.prepare(`SELECT COALESCE(SUM(amount), 0) as total FROM advertising WHERE date >= ? AND date <= ?`).get(dateFrom, dateTo) as Record<string, number>;
       const ordRow = d.prepare(`SELECT COALESCE(SUM(order_sum), 0) as total FROM orders_funnel WHERE date >= ? AND date <= ?`).get(dateFrom, dateTo) as Record<string, number>;
       const jamRow = d.prepare(`SELECT COALESCE(SUM(deduction), 0) as total FROM realization WHERE bonus_type_name LIKE '%Джем%' AND rr_dt >= ? AND rr_dt <= ?`).get(dateFrom, dateTo) as Record<string, number>;
+      const jam = jamRow.total || 0;
 
-      const other = svcRow.storage + svcRow.penalty + svcRow.acceptance + (jamRow.total || 0);
+      const other = svcRow.storage + svcRow.penalty + svcRow.acceptance;
 
       return {
         realization: salesRow.rpwd - returnsRow.rpwd,
@@ -216,7 +218,8 @@ export function getPnl(dateFrom: string, dateTo: string, nmId?: number): PnlResu
         penalty: svcRow.penalty,
         acceptance: svcRow.acceptance,
         other_services: other,
-        total_services: commission + svcRow.logistics + adRow.total + other,
+        jam,
+        total_services: commission + svcRow.logistics + adRow.total + other + jam,
         cogs,
         ad_spend: adRow.total,
         orders_sum: ordRow.total,
@@ -339,7 +342,7 @@ export function getPnl(dateFrom: string, dateTo: string, nmId?: number): PnlResu
     // weekly_reports.db может не существовать
   }
   
-  const other = svcRow.storage + svcRow.penalty + svcRow.acceptance + jam;
+  const other = svcRow.storage + svcRow.penalty + svcRow.acceptance;
 
   return {
     realization: salesRow.rpwd - returnsRow.rpwd,
@@ -354,7 +357,8 @@ export function getPnl(dateFrom: string, dateTo: string, nmId?: number): PnlResu
     penalty: svcRow.penalty,
     acceptance: svcRow.acceptance,
     other_services: other,
-    total_services: commission + svcRow.logistics + adRow.total + other,
+    jam,
+    total_services: commission + svcRow.logistics + adRow.total + other + jam,
     cogs: salesRow.cogs - returnsRow.cogs,
     ad_spend: adRow.total,
     orders_sum: ordRow.total,

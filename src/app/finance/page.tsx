@@ -224,6 +224,7 @@ export default function FinancePage() {
       cogs: pnl.cogs,
       total_services: pnl.total_services,
       other_services: pnl.other_services,
+      jam: pnl.jam || 0,
       storage: pnl.storage,
       penalty: pnl.penalty,
       acceptance: pnl.acceptance,
@@ -413,6 +414,7 @@ export default function FinancePage() {
           { name: "Комиссия", value: p.commission, color: "#F4A236" },
           { name: "Логистика", value: p.logistics, color: "#29B6F6" },
           { name: "Реклама", value: p.ad_spend, color: "#AB47BC" },
+          { name: "Джем", value: p.jam || 0, color: "#FF7043" },
           { name: "Остальные", value: p.other_services, color: "#666" },
         ];
         const taxItems = [
