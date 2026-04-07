@@ -199,8 +199,9 @@ export function getPnl(dateFrom: string, dateTo: string, nmId?: number): PnlResu
       // Реклама и заказы — из finance.db (отдельные таблицы)
       const adRow = d.prepare(`SELECT COALESCE(SUM(amount), 0) as total FROM advertising WHERE date >= ? AND date <= ?`).get(dateFrom, dateTo) as Record<string, number>;
       const ordRow = d.prepare(`SELECT COALESCE(SUM(order_sum), 0) as total FROM orders_funnel WHERE date >= ? AND date <= ?`).get(dateFrom, dateTo) as Record<string, number>;
+      const jamRow = d.prepare(`SELECT COALESCE(SUM(deduction), 0) as total FROM realization WHERE bonus_type_name LIKE '%Джем%' AND rr_dt >= ? AND rr_dt <= ?`).get(dateFrom, dateTo) as Record<string, number>;
 
-      const other = svcRow.storage + svcRow.penalty + svcRow.acceptance + (svcRow.rebill || 0);
+      const other = svcRow.storage + svcRow.penalty + svcRow.acceptance + (jamRow.total || 0);
 
       return {
         realization: salesRow.rpwd - returnsRow.rpwd,
@@ -338,7 +339,7 @@ export function getPnl(dateFrom: string, dateTo: string, nmId?: number): PnlResu
     // weekly_reports.db может не существовать
   }
   
-  const other = svcRow.storage + svcRow.penalty + svcRow.acceptance + jam + (svcRow.rebill || 0);
+  const other = svcRow.storage + svcRow.penalty + svcRow.acceptance + jam;
 
   return {
     realization: salesRow.rpwd - returnsRow.rpwd,
