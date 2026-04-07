@@ -159,12 +159,7 @@ export default function ReconciliationTab() {
                   {w.hasExcel ? "✅ загружен" : "— нет"}
                 </span>
               </span>
-              <span>
-                7 дней ежедневный:{" "}
-                <span className={w.hasDaily ? "text-[var(--success)]" : "text-[var(--text-muted)]"}>
-                  {w.hasDaily ? "✅ есть" : "— нет"}
-                </span>
-              </span>
+
             </div>
           </div>
 
@@ -175,8 +170,7 @@ export default function ReconciliationTab() {
                 <th className="num">API недельный</th>
                 <th className="num">Excel ЛК</th>
                 <th className="num">Разница API/Excel</th>
-                <th className="num">7 дней ежедневный</th>
-                <th className="num">Разница API/Daily</th>
+
               </tr>
             </thead>
             <tbody>
@@ -200,16 +194,7 @@ export default function ReconciliationTab() {
                         <span className="text-[var(--text-muted)]">—</span>
                       )}
                     </td>
-                    <td className="num">
-                      {w.hasDaily ? fmt(daily) : <span className="text-[var(--text-muted)]">—</span>}
-                    </td>
-                    <td className="num">
-                      {w.hasDaily && api ? (
-                        <DiffBadge a={api} b={daily} isQty={m.isQty} />
-                      ) : (
-                        <span className="text-[var(--text-muted)]">—</span>
-                      )}
-                    </td>
+
                   </tr>
                 );
               })}
@@ -246,25 +231,14 @@ export default function ReconciliationTab() {
                           <span className="text-[var(--text-muted)]">—</span>
                         )}
                       </td>
-                      <td className="num py-3">
-                        {w.hasDaily ? RUB(totalDaily) : <span className="text-[var(--text-muted)]">—</span>}
-                      </td>
-                      <td className="num py-3">
-                        {w.hasDaily ? (
-                          <span className={`text-xs font-bold ${diffColor(pctApiDaily)}`}>
-                            {Math.abs(diffApiDaily) <= 1 ? "✅" : `${diffApiDaily >= 0 ? "+" : ""}${RUB(diffApiDaily)} (${pctApiDaily.toFixed(1)}%)`}
-                          </span>
-                        ) : (
-                          <span className="text-[var(--text-muted)]">—</span>
-                        )}
-                      </td>
+
                     </tr>
                     {w.hasExcel && (
                       <tr className={`font-bold ${diffBg(pctApiExcel)}`}>
                         <td colSpan={2} className="text-sm py-3">
                           Разница API vs Excel
                         </td>
-                        <td colSpan={4} className="num py-3">
+                        <td colSpan={2} className="num py-3">
                           <span className={`text-base font-bold ${diffColor(pctApiExcel)}`}>
                             {Math.abs(diffApiExcel) <= 1
                               ? "✅ Разница = 0 ₽"
