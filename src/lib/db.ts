@@ -237,10 +237,18 @@ export function getPnl(dateFrom: string, dateTo: string, nmId?: number): PnlResu
   const excludeDaily = getExcludeDailyFilter(d, "sale_dt", "r");
   const excludeDailySvc = getExcludeDailyFilter(d, "rr_dt", "r");
 
-  // Sales/Returns by sale_dt
+  // weekly_final: фильтруем по date_from/date_to (период отчёта), т.к. sale_dt может быть из прошлого (коррекции)
+  // daily/weekly: фильтруем по sale_dt/rr_dt как раньше
+  const saleDateFilter = `((r.source = 'weekly_final' AND r.date_from >= ? AND r.date_to <= ?) OR (r.source != 'weekly_final' AND r.sale_dt >= ? AND r.sale_dt <= ?))`;
+  const svcDateFilter = `((r.source = 'weekly_final' AND r.date_from >= ? AND r.date_to <= ?) OR (r.source != 'weekly_final' AND r.rr_dt >= ? AND r.rr_dt <= ?))`;
+  // Параметры: dateFrom, dateTo передаются дважды (для каждой ветки OR)
+  const saleDateParams = [dateFrom, dateTo, dateFrom, dateTo];
+  const svcDateParams = [dateFrom, dateTo, dateFrom, dateTo];
+
+  // Sales/Returns
   const salesWhere = nmId ? "AND nm_id = ?" : "";
   const salesNmParams = nmId ? [nmId] : [];
-  const salesParams = [dateFrom, dateTo, ...salesNmParams, ...excludeDaily.params];
+  const salesParams = [...saleDateParams, ...salesNmParams, ...excludeDaily.params];
 
   const salesRow = d.prepare(`
     SELECT
@@ -251,7 +259,7 @@ export function getPnl(dateFrom: string, dateTo: string, nmId?: number): PnlResu
       COALESCE(SUM(quantity * COALESCE((SELECT cost FROM cogs WHERE cogs.barcode = r.barcode), ${DEFAULT_COGS_PER_UNIT})), 0) as cogs
     FROM realization r
     WHERE supplier_oper_name = 'Продажа'
-      AND sale_dt >= ? AND sale_dt <= ? ${salesWhere} ${excludeDaily.sql}
+      AND ${saleDateFilter} ${salesWhere} ${excludeDaily.sql}
   `).get(...salesParams) as Record<string, number>;
 
   const returnsRow = d.prepare(`
@@ -263,12 +271,12 @@ export function getPnl(dateFrom: string, dateTo: string, nmId?: number): PnlResu
       COALESCE(SUM(quantity * COALESCE((SELECT cost FROM cogs WHERE cogs.barcode = r.barcode), ${DEFAULT_COGS_PER_UNIT})), 0) as cogs
     FROM realization r
     WHERE supplier_oper_name = 'Возврат'
-      AND sale_dt >= ? AND sale_dt <= ? ${salesWhere} ${excludeDaily.sql}
+      AND ${saleDateFilter} ${salesWhere} ${excludeDaily.sql}
   `).get(...salesParams) as Record<string, number>;
 
-  // Services by rr_dt
+  // Services
   const svcWhere = nmId ? "AND nm_id = ?" : "";
-  const svcParams = [dateFrom, dateTo, ...salesNmParams, ...excludeDailySvc.params];
+  const svcParams = [...svcDateParams, ...salesNmParams, ...excludeDailySvc.params];
 
   const svcRow = d.prepare(`
     SELECT
@@ -278,20 +286,20 @@ export function getPnl(dateFrom: string, dateTo: string, nmId?: number): PnlResu
       COALESCE(SUM(acceptance), 0) as acceptance,
       COALESCE(SUM(rebill_logistic_cost), 0) as rebill
     FROM realization r
-    WHERE rr_dt >= ? AND rr_dt <= ? ${svcWhere} ${excludeDailySvc.sql}
+    WHERE ${svcDateFilter} ${svcWhere} ${excludeDailySvc.sql}
   `).get(...svcParams) as Record<string, number>;
 
-  // Commission by sale_dt (matches WB dashboard calculation)
+  // Commission (matches WB dashboard calculation)
   const commSales = d.prepare(`
     SELECT COALESCE(SUM(retail_price_withdisc_rub - ppvz_for_pay), 0) as comm
     FROM realization r
-    WHERE supplier_oper_name = 'Продажа' AND sale_dt >= ? AND sale_dt <= ? ${salesWhere} ${excludeDaily.sql}
+    WHERE supplier_oper_name = 'Продажа' AND ${saleDateFilter} ${salesWhere} ${excludeDaily.sql}
   `).get(...salesParams) as Record<string, number>;
 
   const commReturns = d.prepare(`
     SELECT COALESCE(SUM(retail_price_withdisc_rub - ppvz_for_pay), 0) as comm
     FROM realization r
-    WHERE supplier_oper_name = 'Возврат' AND sale_dt >= ? AND sale_dt <= ? ${salesWhere} ${excludeDaily.sql}
+    WHERE supplier_oper_name = 'Возврат' AND ${saleDateFilter} ${salesWhere} ${excludeDaily.sql}
   `).get(...salesParams) as Record<string, number>;
 
   // Advertising
@@ -314,8 +322,8 @@ export function getPnl(dateFrom: string, dateTo: string, nmId?: number): PnlResu
   const jamRow = d.prepare(`
     SELECT COALESCE(SUM(deduction), 0) as total
     FROM realization r
-    WHERE bonus_type_name LIKE '%Джем%' AND rr_dt >= ? AND rr_dt <= ? ${excludeDailySvc.sql}
-  `).get(dateFrom, dateTo, ...excludeDailySvc.params) as Record<string, number>;
+    WHERE bonus_type_name LIKE '%Джем%' AND ${svcDateFilter} ${excludeDailySvc.sql}
+  `).get(...svcDateParams, ...excludeDailySvc.params) as Record<string, number>;
   const jam = jamRow.total;
 
   // Компенсация скидки по программе лояльности — из weekly_reports.db

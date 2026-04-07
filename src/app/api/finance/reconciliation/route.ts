@@ -38,6 +38,14 @@ const EMPTY_METRICS: WeekMetrics = {
  */
 function getFinanceMetrics(db: Database.Database, dateFrom: string, dateTo: string, source?: string): WeekMetrics {
   const sourceFilter = source ? ` AND source = '${source}'` : "";
+  // weekly_final: фильтруем по date_from/date_to (период отчёта), т.к. sale_dt может быть из прошлого (коррекции)
+  const useReportPeriod = source === "weekly_final";
+  const saleDateFilter = useReportPeriod
+    ? "date_from >= ? AND date_to <= ?"
+    : "sale_dt >= ? AND sale_dt <= ?";
+  const svcDateFilter = useReportPeriod
+    ? "date_from >= ? AND date_to <= ?"
+    : "rr_dt >= ? AND rr_dt <= ?";
 
   const salesRow = db.prepare(`
     SELECT
@@ -48,7 +56,7 @@ function getFinanceMetrics(db: Database.Database, dateFrom: string, dateTo: stri
       COALESCE(SUM(CASE WHEN supplier_oper_name = 'Продажа' THEN ppvz_for_pay ELSE 0 END), 0) as ppvz,
       COALESCE(SUM(CASE WHEN supplier_oper_name = 'Возврат' THEN ppvz_for_pay ELSE 0 END), 0) as ppvzReturns
     FROM realization
-    WHERE sale_dt >= ? AND sale_dt <= ? ${sourceFilter}
+    WHERE ${saleDateFilter} ${sourceFilter}
   `).get(dateFrom, dateTo) as Record<string, number>;
 
   const svcRow = db.prepare(`
@@ -64,7 +72,7 @@ function getFinanceMetrics(db: Database.Database, dateFrom: string, dateTo: stri
       COALESCE(SUM(acquiring_fee), 0) as acquiring,
       COALESCE(SUM(additional_payment), 0) as compensation
     FROM realization
-    WHERE rr_dt >= ? AND rr_dt <= ? ${sourceFilter}
+    WHERE ${svcDateFilter} ${sourceFilter}
   `).get(dateFrom, dateTo) as Record<string, number>;
 
   return {
