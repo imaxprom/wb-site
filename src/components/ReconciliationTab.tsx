@@ -216,8 +216,8 @@ export default function ReconciliationTab() {
 
                 return (
                   <>
-                    <tr style={{ borderTop: "2px solid var(--border)" }} className="font-bold">
-                      <td className="text-sm py-3">Итого (все статьи)</td>
+                    <tr style={{ borderTop: "2px solid var(--border)" }} className="font-bold bg-orange-500/15">
+                      <td className="text-sm py-3 text-orange-400">Итого (все статьи)</td>
                       <td className="num py-3">{RUB(totalApi)}</td>
                       <td className="num py-3">
                         {w.hasExcel ? RUB(totalExcel) : <span className="text-[var(--text-muted)]">—</span>}
@@ -233,20 +233,7 @@ export default function ReconciliationTab() {
                       </td>
 
                     </tr>
-                    {w.hasExcel && (
-                      <tr className={`font-bold ${diffBg(pctApiExcel)}`}>
-                        <td colSpan={2} className="text-sm py-3">
-                          Разница API vs Excel
-                        </td>
-                        <td colSpan={2} className="num py-3">
-                          <span className={`text-base font-bold ${diffColor(pctApiExcel)}`}>
-                            {Math.abs(diffApiExcel) <= 1
-                              ? "✅ Разница = 0 ₽"
-                              : `${diffApiExcel >= 0 ? "+" : ""}${RUB(diffApiExcel)} (${pctApiExcel.toFixed(2)}%)`}
-                          </span>
-                        </td>
-                      </tr>
-                    )}
+
                   </>
                 );
               })()}
