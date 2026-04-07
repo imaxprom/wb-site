@@ -51,7 +51,7 @@ export default function TaxSettingsPage() {
           </div>
           <h2 className="text-2xl font-bold mt-1">Настройки налогов</h2>
           <p className="text-sm text-[var(--text-muted)] mt-0.5">
-            Ставки УСН и НДС для расчёта P&amp;L
+            Укажите ваши ставки УСН и НДС — от них зависит расчёт чистой прибыли в отчёте
           </p>
         </div>
         {saved && (
@@ -62,7 +62,7 @@ export default function TaxSettingsPage() {
       {/* Form */}
       <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-6 space-y-6">
         <h3 className="text-base font-medium text-[var(--text-muted)] uppercase tracking-wide">
-          Налоговые ставки
+          Ваши налоговые ставки
         </h3>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -80,7 +80,7 @@ export default function TaxSettingsPage() {
               onChange={(e) => handleChange("usnRate", parseFloat(e.target.value) || 0)}
               className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] focus:border-[var(--accent)] focus:outline-none"
             />
-            <p className="text-sm text-[var(--text-muted)]">База: (Стоимость реализованного товара после СПП − НДС)</p>
+            <p className="text-sm text-[var(--text-muted)]">Упрощённый налог на доход от продаж. Считается от суммы реализации за вычетом НДС. «Доходы»: обычно 6%, но с 2025 года ставка может быть 1–6% в зависимости от региона и оборота. Уточните вашу ставку в налоговой или у бухгалтера</p>
           </div>
 
           {/* НДС */}
@@ -97,7 +97,7 @@ export default function TaxSettingsPage() {
               onChange={(e) => handleChange("ndsRate", parseFloat(e.target.value) || 0)}
               className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] focus:border-[var(--accent)] focus:outline-none"
             />
-            <p className="text-sm text-[var(--text-muted)]">База: Стоимость реализованного товара после СПП (НДС включён в цену)</p>
+            <p className="text-sm text-[var(--text-muted)]">Налог на добавленную стоимость, уже включён в розничную цену товара. С 2025 года для УСН с оборотом выше 60 млн ₽: 5% или 7%. Для ОСНО: 20% (большинство товаров), 10% (детские, продукты). Если вы на УСН с оборотом до 60 млн ₽ — ставьте 0%</p>
           </div>
         </div>
       </div>
@@ -105,17 +105,17 @@ export default function TaxSettingsPage() {
       {/* Formulas explanation */}
       <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-6 space-y-4">
         <h3 className="text-base font-medium text-[var(--text-muted)] uppercase tracking-wide">
-          Формулы расчёта
+          Как считаются налоги в отчёте
         </h3>
         <div className="space-y-3">
           <div className="flex items-start gap-3">
             <span className="text-[var(--danger)] font-mono text-sm font-bold mt-0.5">1</span>
             <div>
               <p className="text-sm text-[var(--text)]">
-                <span className="font-semibold">НДС к уплате</span> = Стоимость после СПП × {settings.ndsRate}% / (100% + {settings.ndsRate}%)
+                <span className="font-semibold">Шаг 1 · НДС к уплате</span> = Сумма реализации × {settings.ndsRate} ÷ (100 + {settings.ndsRate})
               </p>
               <p className="text-sm text-[var(--text-muted)] mt-1">
-                НДС уже включён в цену продажи. Ставка {settings.ndsRate}% → эффективная нагрузка {(settings.ndsRate / (100 + settings.ndsRate) * 100).toFixed(3)}%
+                НДС уже включён в розничную цену, поэтому он «извлекается» из суммы, а не начисляется сверху. При ставке {settings.ndsRate}% реальная налоговая нагрузка составит {(settings.ndsRate / (100 + settings.ndsRate) * 100).toFixed(2)}% от выручки
               </p>
             </div>
           </div>
@@ -123,10 +123,10 @@ export default function TaxSettingsPage() {
             <span className="text-[var(--warning)] font-mono text-sm font-bold mt-0.5">2</span>
             <div>
               <p className="text-sm text-[var(--text)]">
-                <span className="font-semibold">Очищаем базу от НДС</span> = Стоимость после СПП − НДС
+                <span className="font-semibold">Шаг 2 · Налоговая база УСН</span> = Сумма реализации − НДС
               </p>
               <p className="text-sm text-[var(--text-muted)] mt-1">
-                Это налоговая база для расчёта УСН
+                Из выручки вычитается НДС, чтобы не платить налог на налог. Оставшаяся сумма — это доход, с которого считается УСН
               </p>
             </div>
           </div>
@@ -134,10 +134,10 @@ export default function TaxSettingsPage() {
             <span className="text-[var(--success)] font-mono text-sm font-bold mt-0.5">3</span>
             <div>
               <p className="text-sm text-[var(--text)]">
-                <span className="font-semibold">УСН</span> = (Стоимость после СПП − НДС) × {settings.usnRate}%
+                <span className="font-semibold">Шаг 3 · УСН к уплате</span> = (Сумма реализации − НДС) × {settings.usnRate}%
               </p>
               <p className="text-sm text-[var(--text-muted)] mt-1">
-                Ставка УСН {settings.usnRate}% от очищенной базы
+                Итоговая сумма УСН: {settings.usnRate}% от дохода, очищенного от НДС. Оба налога (НДС + УСН) вычитаются из выручки при расчёте чистой прибыли
               </p>
             </div>
           </div>

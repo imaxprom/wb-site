@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Proxy Stats — Mockup</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #0f0f0f; color: #e0e0e0; padding: 24px; }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 20px; color: #fff; }
+  
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
+  .card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 12px; padding: 16px; }
+  .card-label { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .card-value { font-size: 28px; font-weight: 700; color: #fff; }
+  .card-sub { font-size: 13px; color: #666; margin-top: 4px; }
+  .card-sub .green { color: #4ade80; }
+  .card-sub .red { color: #f87171; }
+  .card-sub .yellow { color: #fbbf24; }
+  
+  .section { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  .section-title { font-size: 14px; font-weight: 600; color: #fff; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+  .section-title .badge { background: #2a2a2a; color: #888; font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 400; }
+  
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 12px; border-bottom: 1px solid #2a2a2a; font-weight: 500; }
+  th.right, td.right { text-align: right; }
+  td { padding: 10px 12px; border-bottom: 1px solid #1f1f1f; font-size: 13px; }
+  tr:last-child td { border-bottom: none; }
+  tr.total td { border-top: 2px solid #333; font-weight: 700; color: #fff; padding-top: 12px; }
+  tr.subtotal td { color: #999; font-style: italic; }
+  
+  .mono { font-family: 'SF Mono', 'Fira Code', monospace; }
+  .dim { color: #555; }
+  .cost { color: #fbbf24; }
+  .cost-big { color: #fbbf24; font-size: 28px; font-weight: 700; }
+  
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+  .tab { padding: 6px 14px; border-radius: 8px; font-size: 13px; cursor: pointer; background: transparent; color: #666; border: 1px solid transparent; }
+  .tab.active { background: #2a2a2a; color: #fff; border-color: #333; }
+  
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  
+  .bar-container { height: 8px; background: #222; border-radius: 4px; overflow: hidden; margin-top: 6px; }
+  .bar { height: 100%; border-radius: 4px; }
+  .bar-input { background: #3b82f6; }
+  .bar-cache-r { background: #22c55e; }
+  .bar-cache-w { background: #f59e0b; }
+  .bar-output { background: #a855f7; }
+  
+  .legend { display: flex; gap: 16px; margin-top: 12px; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #888; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+  
+  .period-toggle { display: flex; gap: 0; background: #222; border-radius: 8px; padding: 2px; margin-bottom: 20px; }
+  .period-btn { padding: 6px 16px; border-radius: 6px; font-size: 12px; color: #666; cursor: pointer; }
+  .period-btn.active { background: #333; color: #fff; }
+  
+  .cost-breakdown { display: flex; gap: 24px; align-items: baseline; margin-top: 8px; }
+  .cost-item { }
+  .cost-item-label { font-size: 11px; color: #666; }
+  .cost-item-value { font-size: 18px; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<h1>📊 Proxy Statistics</h1>
+
+<!-- Period Toggle -->
+<div class="period-toggle">
+  <div class="period-btn active">Сегодня</div>
+  <div class="period-btn">7 дней</div>
+  <div class="period-btn">30 дней</div>
+</div>
+
+<!-- Top Cards -->
+<div class="cards">
+  <div class="card">
+    <div class="card-label">Запросы</div>
+    <div class="card-value">1 907</div>
+    <div class="card-sub">Opus: 1 634 · Sonnet: 273</div>
+  </div>
+  <div class="card">
+    <div class="card-label">💰 Стоимость</div>
+    <div class="card-value cost">$281.61</div>
+    <div class="card-sub">Opus: $274.86 · Sonnet: $6.74</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Входящие токены</div>
+    <div class="card-value">144.4<span style="font-size:16px;color:#888">M</span></div>
+    <div class="card-sub"><span class="green">73% cache read</span> · 23% cache write</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Исходящие токены</div>
+    <div class="card-value">934<span style="font-size:16px;color:#888">K</span></div>
+    <div class="card-sub">~260K thinking (оценка)</div>
+  </div>
+</div>
+
+<!-- Cost Breakdown -->
+<div class="section">
+  <div class="section-title">Стоимость по категориям <span class="badge">сегодня</span></div>
+  
+  <div class="grid2">
+    <div>
+      <table>
+        <tr>
+          <th>Категория</th>
+          <th class="right">Токены</th>
+          <th class="right">Цена/MTok</th>
+          <th class="right">Стоимость</th>
+        </tr>
+        <tr>
+          <td>🔵 Base Input</td>
+          <td class="right mono">10 657</td>
+          <td class="right dim">$5.00</td>
+          <td class="right mono cost">$0.05</td>
+        </tr>
+        <tr>
+          <td>🟢 Cache Read</td>
+          <td class="right mono">111 171 652</td>
+          <td class="right dim">$0.50</td>
+          <td class="right mono cost">$55.59</td>
+        </tr>
+        <tr>
+          <td>🟡 Cache Write</td>
+          <td class="right mono">33 137 263</td>
+          <td class="right dim">$6.25</td>
+          <td class="right mono cost">$207.11</td>
+        </tr>
+        <tr>
+          <td>🟣 Output</td>
+          <td class="right mono">934 297</td>
+          <td class="right dim">$25.00</td>
+          <td class="right mono cost">$23.36</td>
+        </tr>
+        <tr class="total">
+          <td>Итого</td>
+          <td class="right mono">145 253 869</td>
+          <td class="right"></td>
+          <td class="right mono cost">$281.61</td>
+        </tr>
+      </table>
+    </div>
+    
+    <div>
+      <!-- Visual cost distribution -->
+      <div style="padding: 12px;">
+        <div style="font-size: 12px; color: #888; margin-bottom: 12px;">Распределение стоимости</div>
+        
+        <div style="margin-bottom: 16px;">
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+            <span>Cache Write</span><span class="cost">$207.11 (73.5%)</span>
+          </div>
+          <div class="bar-container"><div class="bar bar-cache-w" style="width:73.5%"></div></div>
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+            <span>Cache Read</span><span class="cost">$55.59 (19.7%)</span>
+          </div>
+          <div class="bar-container"><div class="bar bar-cache-r" style="width:19.7%"></div></div>
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+            <span>Output</span><span class="cost">$23.36 (8.3%)</span>
+          </div>
+          <div class="bar-container"><div class="bar bar-output" style="width:8.3%"></div></div>
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+            <span>Base Input</span><span class="cost">$0.05 (0.0%)</span>
+          </div>
+          <div class="bar-container"><div class="bar bar-input" style="width:0.5%"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- By Model -->
+<div class="section">
+  <div class="section-title">По моделям <span class="badge">сегодня</span></div>
+  <table>
+    <tr>
+      <th>Модель</th>
+      <th class="right">Запросы</th>
+      <th class="right">Base Input</th>
+      <th class="right">Cache Read</th>
+      <th class="right">Cache Write</th>
+      <th class="right">Output</th>
+      <th class="right">💰 Стоимость</th>
+    </tr>
+    <tr>
+      <td>claude-opus-4-6</td>
+      <td class="right mono">1 634</td>
+      <td class="right mono dim">10 154</td>
+      <td class="right mono" style="color:#4ade80">106.3M</td>
+      <td class="right mono" style="color:#fbbf24">32.2M</td>
+      <td class="right mono" style="color:#a855f7">827.7K</td>
+      <td class="right mono cost">$274.86</td>
+    </tr>
+    <tr>
+      <td>claude-sonnet-4-6</td>
+      <td class="right mono">273</td>
+      <td class="right mono dim">503</td>
+      <td class="right mono" style="color:#4ade80">4.8M</td>
+      <td class="right mono" style="color:#fbbf24">984.0K</td>
+      <td class="right mono" style="color:#a855f7">106.6K</td>
+      <td class="right mono cost">$6.74</td>
+    </tr>
+    <tr class="total">
+      <td>Итого</td>
+      <td class="right mono">1 907</td>
+      <td class="right mono">10 657</td>
+      <td class="right mono">111.2M</td>
+      <td class="right mono">33.1M</td>
+      <td class="right mono">934.3K</td>
+      <td class="right mono cost">$281.61</td>
+    </tr>
+  </table>
+</div>
+
+<!-- By Agent -->
+<div class="section">
+  <div class="section-title">По агентам <span class="badge">сегодня, топ-5</span></div>
+  <table>
+    <tr>
+      <th>Агент</th>
+      <th class="right">Запросы</th>
+      <th class="right">Контекст (avg)</th>
+      <th class="right">💰 Стоимость</th>
+      <th class="right">Доля</th>
+    </tr>
+    <tr>
+      <td>Добби</td>
+      <td class="right mono">846</td>
+      <td class="right mono dim">47.0K</td>
+      <td class="right mono cost">$142.30</td>
+      <td class="right">
+        <div class="bar-container" style="width:120px;display:inline-block;vertical-align:middle"><div class="bar bar-cache-w" style="width:50.5%"></div></div>
+        <span style="font-size:11px;color:#888">50.5%</span>
+      </td>
+    </tr>
+    <tr>
+      <td>Heisenberg</td>
+      <td class="right mono">233</td>
+      <td class="right mono dim">93.5K</td>
+      <td class="right mono cost">$89.12</td>
+      <td class="right">
+        <div class="bar-container" style="width:120px;display:inline-block;vertical-align:middle"><div class="bar bar-cache-w" style="width:31.6%"></div></div>
+        <span style="font-size:11px;color:#888">31.6%</span>
+      </td>
+    </tr>
+    <tr>
+      <td>Chuck</td>
+      <td class="right mono">19</td>
+      <td class="right mono dim">36.7K</td>
+      <td class="right mono cost">$12.44</td>
+      <td class="right">
+        <div class="bar-container" style="width:120px;display:inline-block;vertical-align:middle"><div class="bar bar-cache-w" style="width:4.4%"></div></div>
+        <span style="font-size:11px;color:#888">4.4%</span>
+      </td>
+    </tr>
+    <tr>
+      <td>Cron (Sonnet)</td>
+      <td class="right mono">273</td>
+      <td class="right mono dim">21.3K</td>
+      <td class="right mono cost">$6.74</td>
+      <td class="right">
+        <div class="bar-container" style="width:120px;display:inline-block;vertical-align:middle"><div class="bar bar-cache-r" style="width:2.4%"></div></div>
+        <span style="font-size:11px;color:#888">2.4%</span>
+      </td>
+    </tr>
+    <tr>
+      <td>Субагенты</td>
+      <td class="right mono">536</td>
+      <td class="right mono dim">52.8K</td>
+      <td class="right mono cost">$31.01</td>
+      <td class="right">
+        <div class="bar-container" style="width:120px;display:inline-block;vertical-align:middle"><div class="bar bar-cache-w" style="width:11.0%"></div></div>
+        <span style="font-size:11px;color:#888">11.0%</span>
+      </td>
+    </tr>
+  </table>
+</div>
+
+<!-- 30 Days Projection -->
+<div class="section" style="border-color: #333;">
+  <div class="section-title">📅 Прогноз на 30 дней <span class="badge">на основе сегодня</span></div>
+  <div class="grid2">
+    <div>
+      <table>
+        <tr>
+          <th>Период</th>
+          <th class="right">Запросы</th>
+          <th class="right">Токены (всего)</th>
+          <th class="right">💰 Стоимость</th>
+        </tr>
+        <tr>
+          <td>Сегодня</td>
+          <td class="right mono">1 907</td>
+          <td class="right mono">145.3M</td>
+          <td class="right mono cost">$281.61</td>
+        </tr>
+        <tr>
+          <td>7 дней</td>
+          <td class="right mono">~13 349</td>
+          <td class="right mono">~1.02B</td>
+          <td class="right mono cost">~$1 971</td>
+        </tr>
+        <tr>
+          <td>30 дней</td>
+          <td class="right mono">~57 210</td>
+          <td class="right mono">~4.36B</td>
+          <td class="right mono cost">~$8 448</td>
+        </tr>
+      </table>
+      <div style="font-size: 11px; color: #555; margin-top: 8px; padding: 0 12px;">
+        * Прогноз = экстраполяция текущего дня. Реальные 30-дневные данные будут доступны после увеличения retention.
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:center;">
+      <div style="text-align:center;">
+        <div style="font-size:12px;color:#666;margin-bottom:8px;">Прогноз на месяц</div>
+        <div class="cost-big">~$8 448</div>
+        <div style="font-size:12px;color:#555;margin-top:4px;">~$281/день при текущей нагрузке</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="font-size: 11px; color: #444; margin-top: 24px; text-align: center;">
+  Цены: Opus 4.6 ($5/$6.25/$0.50/$25 MTok) · Sonnet 4.6 ($3/$3.75/$0.30/$15 MTok) · Источник: docs.anthropic.com/en/docs/about-claude/pricing
+</div>
+
+</body>
+</html>
