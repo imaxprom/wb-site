@@ -104,14 +104,6 @@ const METRICS = [
   { title: "Прибыль на штуку", formula: "Прибыль ÷ Количество проданных (за вычетом возвратов)", good: null, warn: null, bad: null },
 ];
 
-const VERIFICATION = [
-  { m: "Реализация", d: "−0.05%" },
-  { m: "Комиссия", d: "+0.02%" },
-  { m: "Логистика", d: "−0.06%" },
-  { m: "Реклама", d: "0.00%" },
-  { m: "Себестоимость", d: "−0.05%" },
-  { m: "Прибыль", d: "−0.5%" },
-];
 
 const NUANCES = [
   { q: "Почему даты продаж и услуг могут не совпадать?", a: "Продажи считаются по дате покупки, а услуги (логистика, хранение) — по дате отчёта WB. Они могут попасть в разные недели." },
@@ -159,20 +151,7 @@ export default function FormulasPage() {
           </div>
         </div>
 
-        {/* Verification — 1 col */}
-        <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-4">
-          <h2 className="text-sm font-bold text-white mb-2">✅ Сверка с ЛК WB</h2>
-          <p className="text-[10px] text-[var(--text-muted)] mb-2">2–22 марта 2026</p>
-          <div className="space-y-1.5">
-            {VERIFICATION.map((v) => (
-              <div key={v.m} className="flex justify-between items-center text-xs">
-                <span className="text-[var(--text-muted)]">{v.m}</span>
-                <span className="text-[var(--success)] font-mono text-[11px]">{v.d} ✅</span>
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
 
       {/* Row 2: Formulas grid — 2 cols on md, 3 on xl */}
       <div>
