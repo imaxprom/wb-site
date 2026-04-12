@@ -94,14 +94,12 @@
         },
         {
           "type": "list",
-          "title": "6 табов",
+          "title": "4 таба",
           "items": [
-            "Отчёты — сводный P&L: 4 summary-карточки (Реализация, Услуги, Налоги и затраты, Оп. прибыль), 5 метрик со sparkline, график «Динамика показателей»",
-            "По дням — таблица с детализацией каждого дня (заказы, продажи, возвраты, комиссия, логистика, реклама, прибыль)",
-            "Артикулы — юнит-экономика по каждому артикулу (выручка, расходы, маржа, статус)",
-            "Реклама — расход по рекламным кампаниям, DRR, эффективность",
-            "Сверка — сравнение наших расчётов с данными ЛК WB (Excel vs API)",
-            "Прогноз — нарастающая реализация vs прибыль, прогноз на месяц"
+            "✓ Отчёты — сводный P&L: 4 summary-карточки (Реализация, Услуги, Налоги и затраты, Оп. прибыль), 5 метрик со sparkline, график «Динамика показателей»",
+            "Артикулы — юнит-экономика по каждому артикулу (выручка, расходы, маржа, реклама точная по nm_id)",
+            "✓ Сверка — сравнение наших расчётов с данными ЛК WB (Excel vs API), итог по неделям",
+            "✓ Прогноз — прогноз прибыли: заказы × выкуп × unit economics − реклама − хранение − штрафы. Нераспределённая реклама (nm_id=0) учитывается."
           ]
         },
         {
@@ -161,7 +159,8 @@
             "Проверка юрлица — перед скачиванием сравнивает supplierId из токена с oid из API-ключа",
             "Проверка полноты — если отчёт < 500 строк, помечается неполным (ok: false)",
             "Автоповтор — неполные отчёты пересинхронизируются при следующем запуске",
-            "Watchdog — мониторит ошибки Daily Sync, отправляет алерты в Telegram"
+            "Watchdog — мониторит ошибки Daily Sync, отправляет алерты в Telegram",
+            "Error Boundary — src/app/finance/error.tsx, падение финансов не роняет другие разделы"
           ]
         }
       ]
@@ -239,11 +238,14 @@
             "src/app/analytics/error.tsx — Error Boundary",
             "src/modules/analytics/lib/AnalyticsProvider.tsx — независимый провайдер данных",
             "src/modules/analytics/lib/db.ts — собственное подключение к БД (busy_timeout=5000)",
-            "src/modules/analytics/lib/engine.ts — расчётный движок (getOrderStats)",
+            "src/modules/analytics/lib/engine.ts — расчётный движок (getOrderStats, calculateShipment, calculateDeficit)",
             "src/modules/analytics/components/RegionalMatrix.tsx — матрица регионов",
-            "src/components/Charts.tsx — RegionPieChart, OrdersLineChart",
-            "src/app/api/data/order-stats/route.ts — API: статистика из realization",
-            "src/app/api/data/buyout-rates/route.ts — API: % выкупа по артикулам"
+            "src/components/StatCard.tsx — карточки статистики (shared)",
+            "src/components/Charts.tsx — RegionPieChart, OrdersLineChart (shared)",
+            "src/components/DateRangePicker.tsx — выбор периода (shared)",
+            "src/app/api/data/orders/route.ts — API: заказы из shipment_orders",
+            "src/app/api/data/order-stats/route.ts — API: заказы/доставки/отказы/выкупы из realization + orders_funnel",
+            "src/app/api/data/buyout-rates/route.ts — API: % выкупа по артикулам из realization"
           ]
         },
         {
@@ -252,7 +254,7 @@
           "items": [
             "GET /api/data/orders?from=YYYY-MM-DD&to=YYYY-MM-DD — заказы за период",
             "GET /api/data/stock — остатки на складах (для карточки 'Остатки')",
-            "GET /api/data/products — каталог товаров (для DataProvider)",
+            "GET /api/data/products — каталог товаров (для AnalyticsProvider)",
             "GET /api/data/warehouses — справочник складов",
             "GET /api/data/order-stats?from=&to= — заказы, доставки, отказы, выкупы из realization",
             "GET /api/data/buyout-rates — % выкупа по артикулам из realization"
@@ -334,13 +336,14 @@
           "type": "list",
           "title": "Хранение данных",
           "items": [
-            "Заказы → SQLite shipment_orders (накопительно, INSERT OR IGNORE)",
+            "Заказы → SQLite shipment_orders (накопительно, ON CONFLICT DO UPDATE — обновляет is_cancel)",
             "Остатки → SQLite shipment_stock (перезаписываются при каждой загрузке)",
             "Карточки → SQLite shipment_products (UPSERT)",
             "Настройки (выкуп, регионы, короб) → SQLite user_settings через /api/settings",
             "Overrides (имена, perBox, отключённые) → SQLite product_overrides через /api/overrides",
             "API-ключ WB → data/wb-api-key.txt через /api/settings/apikey",
-            "Авторизация → SQLite users, JWT cookie (30 дней)"
+            "Авторизация → SQLite users, JWT cookie (30 дней)",
+            "% выкупа → GET /api/data/buyout-rates (из realization: delivery_amount/quantity)"
           ]
         },
         {
@@ -355,7 +358,7 @@
         },
         {
           "type": "text",
-          "content": "⚠️ Данные теперь хранятся на сервере (SQLite), а не в кеше браузера. Смена браузера или очистка кеша не приводит к потере данных."
+          "content": "⚠️ Данные на сервере (SQLite), не в кеше браузера. Error Boundary: src/app/shipment/error.tsx."
         }
       ]
     },
@@ -476,7 +479,7 @@
             "AccountSettings — настройки аккаунта (подключение, автожалобы, менеджеры, промпты)",
             "ReviewAccountCard — карточка аккаунта со статусами токенов",
             "ReviewsChart — графики динамики отзывов и жалоб (Recharts)",
-            "RegionalMatrix — матрица регионального распределения заказов (аналитика)"
+            "src/app/reviews/error.tsx — Error Boundary (изоляция от других разделов)"
           ]
         },
         {
@@ -550,7 +553,7 @@
       "blocks": [
         {
           "type": "text",
-          "content": "Мониторинг — централизованный контроль всех 13 сервисов, запущенных на MacBook. Автоматический сбор статусов, перезапуск упавших скриптов, AI-диагностика через Claude Code, уведомления в Telegram."
+          "content": "Мониторинг — централизованный контроль всех 13 сервисов, запущенных на MacBook. Автоматический сбор статусов, перезапуск упавших скриптов, AI-диагностика через Claude Code, уведомления в Telegram. Error Boundary: src/app/monitor/error.tsx."
         },
         {
           "type": "schema",
