@@ -215,7 +215,7 @@ function getPnlFromExcel(wdb: Database.Database, dateFrom: string, dateTo: strin
 
     const tailSvc = finDb.prepare(`
       SELECT
-        COALESCE(SUM(CASE WHEN supplier_oper_name = 'Логистика' THEN delivery_rub ELSE 0 END), 0) as logistics,
+        COALESCE(SUM(CASE WHEN supplier_oper_name IN ('Логистика', 'Коррекция логистики') THEN delivery_rub ELSE 0 END), 0) as logistics,
         COALESCE(SUM(storage_fee), 0) as storage,
         COALESCE(SUM(penalty), 0) as penalty,
         COALESCE(SUM(acceptance), 0) as acceptance,
@@ -411,7 +411,7 @@ export function getPnl(dateFrom: string, dateTo: string, nmId?: number): PnlResu
 
   const svcRow = d.prepare(`
     SELECT
-      COALESCE(SUM(CASE WHEN supplier_oper_name = 'Логистика' THEN delivery_rub ELSE 0 END), 0) as logistics,
+      COALESCE(SUM(CASE WHEN supplier_oper_name IN ('Логистика', 'Коррекция логистики') THEN delivery_rub ELSE 0 END), 0) as logistics,
       COALESCE(SUM(storage_fee), 0) as storage,
       COALESCE(SUM(penalty), 0) as penalty,
       COALESCE(SUM(acceptance), 0) as acceptance,
@@ -551,7 +551,7 @@ export function getDaily(dateFrom: string, dateTo: string, nmId?: number): Daily
   // Services by rr_dt per day
   const svcDaily = d.prepare(`
     SELECT rr_dt as date,
-      SUM(CASE WHEN supplier_oper_name = 'Логистика' THEN delivery_rub ELSE 0 END) as logistics,
+      SUM(CASE WHEN supplier_oper_name IN ('Логистика', 'Коррекция логистики') THEN delivery_rub ELSE 0 END) as logistics,
       SUM(storage_fee) as storage,
       SUM(penalty) as penalty
     FROM realization r

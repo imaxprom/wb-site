@@ -54,11 +54,11 @@ export async function GET(request: NextRequest) {
         SUM(CASE WHEN supplier_oper_name='Продажа' THEN ppvz_for_pay ELSE 0 END) as sales_ppvz,
         SUM(CASE WHEN supplier_oper_name='Продажа' THEN quantity ELSE 0 END) as sales_qty,
         SUM(CASE WHEN supplier_oper_name='Возврат' THEN quantity ELSE 0 END) as ret_qty,
-        SUM(CASE WHEN supplier_oper_name='Логистика' THEN delivery_rub ELSE 0 END) as logistics
+        SUM(CASE WHEN supplier_oper_name IN ('Логистика', 'Коррекция логистики') THEN delivery_rub ELSE 0 END) as logistics
       FROM realization
-      WHERE supplier_oper_name IN ('Продажа','Возврат','Логистика')
+      WHERE supplier_oper_name IN ('Продажа','Возврат','Логистика','Коррекция логистики')
         AND ((supplier_oper_name IN ('Продажа','Возврат') AND sale_dt >= ? AND sale_dt <= ?)
-          OR (supplier_oper_name = 'Логистика' AND rr_dt >= ? AND rr_dt <= ?))
+          OR (supplier_oper_name IN ('Логистика', 'Коррекция логистики') AND rr_dt >= ? AND rr_dt <= ?))
         AND nm_id > 0
       GROUP BY nm_id
     `).all(econFrom, econTo, econFrom, econTo) as Record<string, number & string>[];

@@ -247,7 +247,7 @@ function getPnlFromExcel(wdb: Database.Database, dateFrom: string, dateTo: strin
 
     const tailSvc = finDb.prepare(`
       SELECT
-        COALESCE(SUM(CASE WHEN supplier_oper_name = 'Логистика' THEN delivery_rub ELSE 0 END), 0) as logistics,
+        COALESCE(SUM(CASE WHEN supplier_oper_name IN ('Логистика', 'Коррекция логистики') THEN delivery_rub ELSE 0 END), 0) as logistics,
         COALESCE(SUM(storage_fee), 0) as storage,
         COALESCE(SUM(penalty), 0) as penalty,
         COALESCE(SUM(acceptance), 0) as acceptance,
@@ -345,7 +345,7 @@ export function getPnl(dateFrom: string, dateTo: string, nmId?: number): PnlResu
   `).get(...salesParams) as Record<string, number>;
 
   const svcRow = d.prepare(`
-    SELECT COALESCE(SUM(CASE WHEN supplier_oper_name = 'Логистика' THEN delivery_rub ELSE 0 END), 0) as logistics,
+    SELECT COALESCE(SUM(CASE WHEN supplier_oper_name IN ('Логистика', 'Коррекция логистики') THEN delivery_rub ELSE 0 END), 0) as logistics,
       COALESCE(SUM(storage_fee), 0) as storage, COALESCE(SUM(penalty), 0) as penalty,
       COALESCE(SUM(acceptance), 0) as acceptance, COALESCE(SUM(rebill_logistic_cost), 0) as rebill
     FROM realization r WHERE ${svcDateFilter} ${svcWhere} ${excludeDailySvc.sql}
@@ -445,7 +445,7 @@ export function getDaily(dateFrom: string, dateTo: string, nmId?: number): Daily
   `).all(...saleParams) as Record<string, number>[];
 
   const svcDaily = d.prepare(`
-    SELECT rr_dt as date, SUM(CASE WHEN supplier_oper_name = 'Логистика' THEN delivery_rub ELSE 0 END) as logistics,
+    SELECT rr_dt as date, SUM(CASE WHEN supplier_oper_name IN ('Логистика', 'Коррекция логистики') THEN delivery_rub ELSE 0 END) as logistics,
       SUM(storage_fee) as storage, SUM(penalty) as penalty
     FROM realization r WHERE rr_dt >= ? AND rr_dt <= ? ${nmWhere} ${exRr.sql}
     GROUP BY rr_dt

@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-04-12T16:22:03.131873+03:00",
+  "timestamp": "2026-04-12T21:26:44.934674+03:00",
   "machine": "MacBook Air",
   "services": [
     {
@@ -14,16 +14,16 @@
       "logPath": "/Users/octopus/Projects/wb-parser/data/bot.log",
       "status": "running",
       "pid": 1559,
-      "uptime": "9d 32m",
-      "uptimeSeconds": 779548,
-      "lastRun": "2026-04-12T16:20:12+03:00",
-      "nextRun": "2026-04-12T16:30:00+03:00",
+      "uptime": "9d 5h 37m",
+      "uptimeSeconds": 797829,
+      "lastRun": "2026-04-12T21:20:11+03:00",
+      "nextRun": "2026-04-12T21:30:00+03:00",
       "schedule": {
         "type": "interval",
         "intervalMin": 10,
         "source": "APScheduler в bot.py"
       },
-      "runsToday": 98,
+      "runsToday": 128,
       "runsTotal": 144,
       "errorsLast24h": 0,
       "lastErrors": [],
@@ -45,8 +45,8 @@
       "pid": null,
       "uptime": "0m",
       "uptimeSeconds": 0,
-      "lastRun": "2026-04-12T13:00:02+03:00",
-      "nextRun": "2026-04-12T17:00:00+03:00",
+      "lastRun": "2026-04-12T18:00:06+03:00",
+      "nextRun": "2026-04-12T22:00:00+03:00",
       "schedule": {
         "type": "calendar_range",
         "hours": [
@@ -73,7 +73,7 @@
         "description": "каждый час 06:00–23:00",
         "runsPerDay": 18
       },
-      "runsToday": 11,
+      "runsToday": 16,
       "runsTotal": 18,
       "errorsLast24h": 0,
       "lastErrors": [],
@@ -122,9 +122,9 @@
       "plistLabel": "com.mphub.website",
       "logPath": "/Users/octopus/Projects/website/data/website.log",
       "status": "running",
-      "pid": 50997,
-      "uptime": "1m",
-      "uptimeSeconds": 61,
+      "pid": 93895,
+      "uptime": "41m",
+      "uptimeSeconds": 2500,
       "lastRun": null,
       "nextRun": null,
       "schedule": {
@@ -150,9 +150,9 @@
       "plistLabel": "ai.openclaw.gateway",
       "logPath": null,
       "status": "running",
-      "pid": 28519,
-      "uptime": "2h 30m",
-      "uptimeSeconds": 9043,
+      "pid": 94654,
+      "uptime": "40m",
+      "uptimeSeconds": 2422,
       "lastRun": null,
       "nextRun": null,
       "schedule": {
@@ -179,8 +179,8 @@
       "logPath": null,
       "status": "running",
       "pid": 33743,
-      "uptime": "1h 54m",
-      "uptimeSeconds": 6849,
+      "uptime": "6h 58m",
+      "uptimeSeconds": 25130,
       "lastRun": null,
       "nextRun": null,
       "schedule": {
@@ -209,14 +209,14 @@
       "pid": null,
       "uptime": "0m",
       "uptimeSeconds": 0,
-      "lastRun": "2026-04-12T16:22:00+03:00",
-      "nextRun": "2026-04-12T16:24:00+03:00",
+      "lastRun": "2026-04-12T21:25:57+03:00",
+      "nextRun": "2026-04-12T21:28:00+03:00",
       "schedule": {
         "type": "interval",
         "intervalMin": 2,
         "description": "каждые 2 мин"
       },
-      "runsToday": 491,
+      "runsToday": 643,
       "runsTotal": 720,
       "errorsLast24h": 0,
       "lastErrors": [],
@@ -238,7 +238,7 @@
       "pid": null,
       "uptime": "0m",
       "uptimeSeconds": 0,
-      "lastRun": "2026-04-12 07:00:09+03:00",
+      "lastRun": "2026-04-12 19:00:13+03:00",
       "nextRun": "2026-04-13T00:00:00+03:00",
       "schedule": {
         "type": "calendar",
@@ -267,14 +267,14 @@
       "pid": null,
       "uptime": "0m",
       "uptimeSeconds": 0,
-      "lastRun": "2026-04-12T13:16:17+03:00",
-      "nextRun": "2026-04-12T16:30:00+03:00",
+      "lastRun": "2026-04-12T18:20:01+03:00",
+      "nextRun": "2026-04-12T21:30:00+03:00",
       "schedule": {
         "type": "interval",
         "intervalMin": 10,
         "source": "launchd StartInterval"
       },
-      "runsToday": 98,
+      "runsToday": 128,
       "runsTotal": 144,
       "errorsLast24h": 0,
       "lastErrors": [],
@@ -296,14 +296,14 @@
       "pid": null,
       "uptime": "0m",
       "uptimeSeconds": 0,
-      "lastRun": "2026-04-12T13:12:14+03:00",
-      "nextRun": "2026-04-12T16:30:00+03:00",
+      "lastRun": "2026-04-12T18:15:02+03:00",
+      "nextRun": "2026-04-12T21:30:00+03:00",
       "schedule": {
         "type": "interval",
         "intervalMin": 30,
         "source": "launchd StartInterval"
       },
-      "runsToday": 32,
+      "runsToday": 42,
       "runsTotal": 48,
       "errorsLast24h": 0,
       "lastErrors": [],
@@ -325,14 +325,14 @@
       "pid": null,
       "uptime": "0m",
       "uptimeSeconds": 0,
-      "lastRun": "2026-04-12T16:19:06+03:00",
-      "nextRun": "2026-04-12T16:25:00+03:00",
+      "lastRun": "2026-04-12T21:24:18+03:00",
+      "nextRun": "2026-04-12T21:30:00+03:00",
       "schedule": {
         "type": "interval",
         "intervalMin": 5,
         "source": "launchd StartInterval"
       },
-      "runsToday": 196,
+      "runsToday": 257,
       "runsTotal": 288,
       "errorsLast24h": 0,
       "lastErrors": [],
@@ -352,8 +352,8 @@
       "logPath": "/Users/octopus/Projects/proxy/proxy.log",
       "status": "running",
       "pid": 69924,
-      "uptime": "1d 18h 49m",
-      "uptimeSeconds": 154147,
+      "uptime": "1d 23h 53m",
+      "uptimeSeconds": 172428,
       "lastRun": null,
       "nextRun": null,
       "schedule": {
@@ -362,8 +362,21 @@
       },
       "runsToday": -1,
       "runsTotal": -1,
-      "errorsLast24h": 0,
-      "lastErrors": [],
+      "errorsLast24h": 3,
+      "lastErrors": [
+        {
+          "time": "17:32",
+          "message": "[2026-04-12T17:32:43.846Z] [ERROR] Body processing failed: Unexpected end of JSON input"
+        },
+        {
+          "time": "17:32",
+          "message": "[2026-04-12T17:32:44.107Z] [DEBUG] <<< ERROR 404 headers: {\"date\":\"Sun, 12 Apr 2026 17:32:44 GMT\",\"content-type\":\"text/plain; charset=utf-8\",\"content-length\":\"19\",\"connection\":\"keep-alive\",\"x-content-"
+        },
+        {
+          "time": "17:32",
+          "message": "[2026-04-12T17:32:44.113Z] [ERROR] 404 / agent=system model=? 267ms think=off"
+        }
+      ],
       "fileHash": "a4973fd8",
       "lastModified": "2026-04-10T17:28:45.611780+03:00",
       "lifecycle": "active"
@@ -383,16 +396,29 @@
       "uptime": "0m",
       "uptimeSeconds": 0,
       "lastRun": null,
-      "nextRun": "2026-04-12T21:00:00+03:00",
+      "nextRun": "2026-04-13T03:00:00+03:00",
       "schedule": {
         "type": "interval",
         "intervalMin": 360,
         "description": "каждые 6 ч"
       },
-      "runsToday": 2,
+      "runsToday": 3,
       "runsTotal": 4,
-      "errorsLast24h": 0,
-      "lastErrors": [],
+      "errorsLast24h": 3,
+      "lastErrors": [
+        {
+          "time": "17:32",
+          "message": "[2026-04-12T17:32:43.846Z] [ERROR] Body processing failed: Unexpected end of JSON input"
+        },
+        {
+          "time": "17:32",
+          "message": "[2026-04-12T17:32:44.107Z] [DEBUG] <<< ERROR 404 headers: {\"date\":\"Sun, 12 Apr 2026 17:32:44 GMT\",\"content-type\":\"text/plain; charset=utf-8\",\"content-length\":\"19\",\"connection\":\"keep-alive\",\"x-content-"
+        },
+        {
+          "time": "17:32",
+          "message": "[2026-04-12T17:32:44.113Z] [ERROR] 404 / agent=system model=? 267ms think=off"
+        }
+      ],
       "fileHash": "280bef42",
       "lastModified": "2026-04-05T02:41:30.243111+03:00",
       "lifecycle": "active"
@@ -411,14 +437,14 @@
       "pid": null,
       "uptime": "0m",
       "uptimeSeconds": 0,
-      "lastRun": "2026-04-12T14:31:40+03:00",
-      "nextRun": "2026-04-12T18:00:00+03:00",
+      "lastRun": "2026-04-12T20:31:41+03:00",
+      "nextRun": "2026-04-13T00:00:00+03:00",
       "schedule": {
         "type": "interval",
         "intervalMin": 180,
         "description": "каждые 3 ч"
       },
-      "runsToday": 5,
+      "runsToday": 7,
       "runsTotal": 8,
       "errorsLast24h": 0,
       "lastErrors": [],
