@@ -80,17 +80,23 @@ const WAREHOUSE_DISTRICT: Record<string, string> = {
   "Владивосток": "Дальневосточный федеральный округ",
   "СЦ Хабаровск": "Дальневосточный федеральный округ",
   "СЦ Иркутск": "Дальневосточный федеральный округ",
-  // Казахстан / СНГ → ближайшие ФО
-  "Астана Карагандинское шоссе": "Уральский федеральный округ",
-  "Актобе": "Уральский федеральный округ",
-  "Атакент": "Сибирский федеральный округ",
-  "Ташкент 2": "Сибирский федеральный округ",
-  "Минск Привольный": "Центральный федеральный округ",
-  "Минск": "Центральный федеральный округ",
-  "СЦ Брест": "Центральный федеральный округ",
-  "Орша": "Центральный федеральный округ",
-  "СЦ Ереван": "Южный федеральный округ",
-  "СЦ Гродно": "Центральный федеральный округ",
+  // СНГ
+  "Астана Карагандинское шоссе": "СНГ",
+  "Актобе": "СНГ",
+  "Атакент": "СНГ",
+  "Ташкент 2": "СНГ",
+  "Минск Привольный": "СНГ",
+  "Минск": "СНГ",
+  "Минск Хатежино": "СНГ",
+  "СЦ Брест": "СНГ",
+  "Орша": "СНГ",
+  "СЦ Ереван": "СНГ",
+  "СК Ереван": "СНГ",
+  "СЦ Гродно": "СНГ",
+  // Недостающие российские
+  "Улан-Удэ, Ботаническая": "Сибирский федеральный округ",
+  "Тверь": "Центральный федеральный округ",
+  "Ногир": "Северо-Кавказский федеральный округ",
 };
 
 // Zones: merged districts
@@ -101,13 +107,36 @@ const ZONES = [
   { id: "ufo", short: "УФО", full: "Уральский федеральный округ", districts: ["Уральский федеральный округ"] },
   { id: "yufo-skfo", short: "ЮФО+СКФО", full: "Южный + Северо-Кавказский федеральный округ", districts: ["Южный федеральный округ", "Северо-Кавказский федеральный округ"] },
   { id: "sfo-dfo", short: "СФО+ДФО", full: "Сибирский + Дальневосточный федеральный округ", districts: ["Сибирский федеральный округ", "Дальневосточный федеральный округ"] },
+  { id: "cis", short: "СНГ", full: "СНГ", districts: ["СНГ"] },
 ];
 
 function districtToZone(district: string): string | null {
+  if (!district) return null;
   for (const z of ZONES) {
     if (z.districts.includes(district)) return z.id;
   }
   return null;
+}
+
+/** Определяет страну СНГ по полю region (область/город покупателя) */
+function isCisRegion(region: string): boolean {
+  if (!region) return false;
+  const r = region.toLowerCase();
+  // Беларусь
+  if (r.includes("минск") || r.includes("витебск") || r.includes("брест") || r.includes("гомел") || r.includes("грод") || r.includes("могил")) return true;
+  // Казахстан
+  if (r.includes("алмат") || r.includes("астан") || r.includes("караганд") || r.includes("костан") || r.includes("павлодар") || r.includes("актюбин") || r.includes("акмолин") || r.includes("казах") || r.includes("улытау") || r.includes("абай") || r.includes("мангист")) return true;
+  // Армения
+  if (r.includes("ереван") || r.includes("сюник") || r.includes("гехарк") || r.includes("котайк") || r.includes("армав")) return true;
+  // Узбекистан
+  if (r.includes("ташкент") || r.includes("наманган") || r.includes("самарканд") || r.includes("бухар")) return true;
+  // Кыргызстан
+  if (r.includes("бишкек") || r.includes("чуйск")) return true;
+  // Таджикистан
+  if (r.includes("душанбе")) return true;
+  // Грузия
+  if (r.includes("тбилиси") || r.includes("батум")) return true;
+  return false;
 }
 
 function getWarehouseDistrict(warehouse: string): string | null {
@@ -121,7 +150,8 @@ function getWarehouseDistrict(warehouse: string): string | null {
   if (lower.includes("казань") || lower.includes("самар") || lower.includes("уфа") || lower.includes("пенз") || lower.includes("пермь")) return "Приволжский федеральный округ";
   if (lower.includes("екатеринбург") || lower.includes("челябинск") || lower.includes("тюмень") || lower.includes("сургут")) return "Уральский федеральный округ";
   if (lower.includes("новосибирск") || lower.includes("красноярск") || lower.includes("омск") || lower.includes("барнаул") || lower.includes("кемеров")) return "Сибирский федеральный округ";
-  if (lower.includes("владивосток") || lower.includes("хабаровск") || lower.includes("иркутск")) return "Дальневосточный федеральный округ";
+  if (lower.includes("владивосток") || lower.includes("хабаровск") || lower.includes("иркутск") || lower.includes("улан-удэ")) return "Дальневосточный федеральный округ";
+  if (lower.includes("минск") || lower.includes("орша") || lower.includes("брест") || lower.includes("гродно") || lower.includes("ереван") || lower.includes("астана") || lower.includes("актобе") || lower.includes("атакент") || lower.includes("ташкент")) return "СНГ";
   return null;
 }
 
@@ -147,7 +177,11 @@ export function RegionalMatrix({ orders }: RegionalMatrixProps) {
 
     let unmappedCount = 0;
     for (const o of orders) {
-      const orderZone = districtToZone(o.federalDistrict);
+      // Определяем зону покупателя: по ФО или по region (СНГ)
+      let orderZone = districtToZone(o.federalDistrict);
+      if (!orderZone && isCisRegion(o.region || "")) {
+        orderZone = "cis";
+      }
       const whDistrict = getWarehouseDistrict(o.warehouse);
       const whZone = whDistrict ? districtToZone(whDistrict) : null;
       if (!orderZone || !whZone) { unmappedCount++; continue; }
