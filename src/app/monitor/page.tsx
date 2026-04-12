@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { StatCard } from "@/components/StatCard";
+import { DataHealthCard } from "@/components/DataHealthCard";
 
 // ─── InfoTip ──────────────────────────────────────────────────
 
@@ -612,6 +613,9 @@ export default function MonitorPage() {
 
       {/* Watchdog status */}
       <WatchdogBanner />
+
+      {/* Data health */}
+      <DataHealthCard />
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

@@ -13,6 +13,7 @@ export function middleware(request: NextRequest) {
     pathname.startsWith("/api/wb") ||
     pathname.startsWith("/api/reviews") ||
     pathname.startsWith("/api/finance") ||
+    pathname.startsWith("/api/monitor") ||
     pathname.startsWith("/reviews") ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/data") ||
