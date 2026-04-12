@@ -5,8 +5,8 @@ import Link from "next/link";
 import { StatCard } from "@/components/StatCard";
 import DateRangePicker from "@/components/DateRangePicker";
 import { formatNumber } from "@/lib/utils";
-import ReconciliationTab from "@/components/ReconciliationTab";
-import ForecastTab from "@/components/ForecastTab";
+import ReconciliationTab from "@/modules/finance/components/ReconciliationTab";
+import ForecastTab from "@/modules/finance/components/ForecastTab";
 import type {
   PnlApiResult, PnlData, DailyRow,
   ArticleRow, TaxSettings,

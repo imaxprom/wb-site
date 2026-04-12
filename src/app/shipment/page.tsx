@@ -1,11 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import ShipmentCalcV2 from "@/components/ShipmentCalcV2";
-import ShipmentCalcV3 from "@/components/ShipmentCalcV3";
-import ProductsTab from "@/components/ProductsTab";
-import UploadTab from "@/components/UploadTab";
-import ShipmentSettings from "@/components/ShipmentSettings";
+import ShipmentCalcV2 from "@/modules/shipment/components/ShipmentCalcV2";
+import ShipmentCalcV3 from "@/modules/shipment/components/ShipmentCalcV3";
+import ProductsTab from "@/modules/shipment/components/ProductsTab";
+import UploadTab from "@/modules/shipment/components/UploadTab";
+import ShipmentSettings from "@/modules/shipment/components/ShipmentSettings";
 
 function TabBtn({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (

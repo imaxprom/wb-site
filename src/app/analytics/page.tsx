@@ -5,7 +5,7 @@ import { useData } from "@/components/DataProvider";
 import { calculateShipment, calculateDeficit, getOrderStats } from "@/modules/analytics/lib/engine";
 import { StatCard } from "@/components/StatCard";
 import { RegionPieChart, OrdersLineChart } from "@/components/Charts";
-import { RegionalMatrix } from "@/components/RegionalMatrix";
+import { RegionalMatrix } from "@/modules/analytics/components/RegionalMatrix";
 import DateRangePicker from "@/components/DateRangePicker";
 import { formatNumber, formatPercent } from "@/lib/utils";
 import Link from "next/link";

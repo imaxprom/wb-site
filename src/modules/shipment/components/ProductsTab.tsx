@@ -6,7 +6,7 @@ import { ProductsTable } from "@/modules/shipment/components/ProductsTable";
 import type { Product } from "@/types";
 import Link from "next/link";
 
-export default function ProductsPage() {
+export default function ProductsTab() {
   const { stock, orders, products, isLoaded } = useData();
   const [expandedProduct, setExpandedProduct] = useState<string | null>(null);
   const [showEmpty, setShowEmpty] = useState(false);
@@ -31,7 +31,7 @@ export default function ProductsPage() {
 
   if (!isLoaded) {
     return (
-      <div className="flex items-center justify-center h-screen text-[var(--text-muted)]">
+      <div className="flex items-center justify-center h-64 text-[var(--text-muted)]">
         Загрузка...
       </div>
     );
@@ -40,8 +40,7 @@ export default function ProductsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold">Товары</h2>
-        <p className="text-sm text-[var(--text-muted)] mt-1">
+        <p className="text-base text-[var(--text-muted)]">
           Карточки товаров из Wildberries
         </p>
       </div>
@@ -60,7 +59,7 @@ export default function ProductsPage() {
             <div className="mt-4">
               <button
                 onClick={() => setShowEmpty(!showEmpty)}
-                className="flex items-center gap-2 text-sm text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+                className="flex items-center gap-2 text-base text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
               >
                 <span>{showEmpty ? "▲" : "▼"}</span>
                 <span>
@@ -82,12 +81,15 @@ export default function ProductsPage() {
       ) : (
         <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-12 text-center">
           <p className="text-4xl mb-4">📋</p>
-          <p className="text-lg font-medium">Нет загруженных товаров</p>
-          <p className="text-sm text-[var(--text-muted)] mt-2">
+          <p className="text-xl font-medium">Нет загруженных товаров</p>
+          <p className="text-base text-[var(--text-muted)] mt-2">
             Загрузите данные на вкладке{" "}
-            <Link href="/upload" className="text-[var(--accent)] hover:underline">
+            <button
+              className="text-[var(--accent)] hover:underline"
+              onClick={() => {}}
+            >
               Загрузка данных
-            </Link>
+            </button>
           </p>
         </div>
       )}
