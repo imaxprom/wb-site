@@ -69,13 +69,14 @@ import Database from "better-sqlite3";
 const db = new Database("data/finance.db", { readonly: true });
 db.pragma("journal_mode = WAL");
 db.pragma("cache_size = -64000");
+db.pragma("busy_timeout = 5000");  // Ожидание 5 сек при блокировке
 
 // Чтение + запись (для импорта данных)
 const writeDb = new Database("data/finance.db");
 writeDb.pragma("journal_mode = WAL");
 ```
 
-**Паттерн подключения:** Singleton — одно подключение на процесс, кэшируется в переменной модуля.
+**Паттерн подключения:** Каждый модуль имеет своё собственное подключение (модульная изоляция). Финансы, Отгрузка и Аналитика открывают независимые readonly-соединения к finance.db.
 
 ---
 
@@ -154,11 +155,14 @@ CREATE TABLE advertising (
     campaign_name TEXT,          -- Название кампании
     campaign_id INTEGER,         -- ID кампании WB
     amount REAL DEFAULT 0,       -- Сумма расхода
-    payment_type TEXT            -- Тип оплаты
+    payment_type TEXT,           -- Тип оплаты
+    nm_id INTEGER DEFAULT 0     -- Артикул WB (маппинг campaign→nm_id через /api/advert/v2/adverts)
 );
 
 CREATE INDEX idx_ad_date ON advertising(date);
 ```
+
+**Маппинг nm_id:** При синке рекламы campaign_id маппится в nm_id через WB API `/api/advert/v2/adverts`. Если маппинг не сработал — nm_id = 0, синк помечается как нестабильный (повторится на следующем цикле).
 
 ---
 
@@ -299,7 +303,7 @@ CREATE TABLE shipment_orders (
 ```
 
 **Источник:** WB Statistics API `/api/v1/supplier/orders`.
-**Синхронизация:** `shipment-sync.sh` → `POST /api/data/sync` → INSERT OR IGNORE.
+**Синхронизация:** `shipment-sync.sh` → `POST /api/data/sync` → INSERT с ON CONFLICT DO UPDATE (обновляет is_cancel и cancel_date при повторном синке).
 
 ---
 
@@ -347,6 +351,42 @@ CREATE TABLE shipment_meta (
     value TEXT                            -- ISO дата последней синхронизации
 );
 ```
+
+---
+
+### 2.14a Таблица `buyout_rates` — Процент выкупа по артикулам
+
+```sql
+CREATE TABLE buyout_rates (
+    article_wb TEXT PRIMARY KEY,          -- Артикул WB (nm_id)
+    orders INTEGER,                       -- Заказы (доставки из Логистики)
+    buyouts INTEGER,                      -- Выкупы (Продажи)
+    buyout_rate REAL,                     -- % выкупа = buyouts / orders
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+```
+
+**Источник данных:** `realization` (delivery_amount из Логистики = заказы, quantity из Продажи = выкупы). Дедупликация weekly_final > weekly > daily.
+**Обновление:** при загрузке еженедельных отчётов (`sync-weekly-report.js`) и доступен через API `GET /api/data/buyout-rates`.
+**Используется:** расчёт отгрузки (модуль Shipment) для определения % выкупа по артикулам.
+
+---
+
+### 2.14b Таблица `weekly_buyout_stats` — Статистика выкупов по неделям
+
+```sql
+CREATE TABLE weekly_buyout_stats (
+    period_from TEXT,                     -- Начало недели (YYYY-MM-DD)
+    period_to TEXT,                       -- Конец недели
+    orders INTEGER,                       -- Заказы (доставки)
+    buyouts INTEGER,                      -- Выкупы (продажи)
+    returns INTEGER,                      -- Возвраты = orders - buyouts
+    return_rate REAL,                     -- % возвратов
+    PRIMARY KEY(period_from, period_to)
+);
+```
+
+**Обновление:** при загрузке еженедельных отчётов (`sync-weekly-report.js`).
 
 ---
 
@@ -679,6 +719,7 @@ CREATE INDEX idx_wr_sale_dt ON weekly_rows(sale_dt);
       "report": { "ok": true, "value": 2847, "stable": true, "prevValue": 2830, "lastAttempt": "..." },
       "advertising": { "ok": true, "value": 15230.50, "stable": true, "prevValue": 14900, "lastAttempt": "..." },
       "orders": { "ok": true, "value": 156, "stable": true, "prevValue": 148, "lastAttempt": "..." },
+      "storage": { "ok": true, "value": 3200, "stable": true, "prevValue": 0, "lastAttempt": "..." },
       "complete": true
     }
   ],
@@ -1138,14 +1179,65 @@ weekly_rows ←────────────→ realization (сверка
 
 1. **Продажи vs Услуги:** В таблице `realization` продажи/возвраты фильтруются по `sale_dt`, а услуги (логистика, хранение, штрафы, приёмка) — по `rr_dt`. Это РАЗНЫЕ даты с разницей до нескольких дней.
 
-2. **Источники данных (source):** daily-sync записывает с `realizationreport_id >= 900000000`, еженедельные — с меньшим ID. При расчёте P&L недели с финальным отчётом (weekly_final) исключают daily-данные.
+2. **Источники данных (source):** daily-sync записывает с source='weekly' (ежедневные отчёты из ЛК). Еженедельные отчёты — source='weekly_final'. При расчёте P&L недели с финальным отчётом (weekly_final) исключают daily/weekly-данные за тот же период через `getExcludeDailyFilter()`.
 
-3. **Единая БД:** finance.db содержит ВСЕ домены: финансы, отгрузку, отзывы, пользователей. Это упрощает JOIN'ы но создаёт единую точку отказа.
+3. **Единая БД:** finance.db содержит ВСЕ домены: финансы, отгрузку, отзывы, пользователей. Каждый модуль открывает своё readonly-соединение с `busy_timeout = 5000`.
 
-4. **WAL режим:** Обязателен для параллельного чтения (API) и записи (sync-скрипты). Без WAL будут блокировки.
+4. **WAL режим:** Обязателен для параллельного чтения (API) и записи (sync-скрипты). После записи в weekly_reports.db выполняется `PRAGMA wal_checkpoint(TRUNCATE)` для предотвращения разрастания WAL-файла.
 
 5. **Дефолтный админ:** При первом запуске создаётся пользователь admin/admin. Смени пароль сразу.
 
 6. **sync_status — синглтон:** Таблица содержит ровно одну строку (id=1, CHECK constraint). Используется для отображения прогресса синхронизации отзывов на UI.
+
+7. **Процент выкупа:** Рассчитывается из `realization`: заказы = SUM(delivery_amount) из Логистики, выкупы = SUM(quantity) из Продажи. Формула совпадает с эталоном ЛК WB (~82%). Данные доступны для всех дней, включая текущую незакрытую неделю (из ежедневных отчётов ЛК).
+
+8. **Аналитика — заказы/доставки/отказы/выкупы:**
+   - Заказы: из `orders_funnel.order_count` (WB Sales Funnel API), fallback на `shipment_orders`
+   - Доставки: SUM(delivery_amount) из `realization` Логистики
+   - Отказы: SUM(return_amount) из `realization` Логистики
+   - Выкупы: SUM(quantity) из `realization` Продажи
+
+---
+
+## 10. Модульная архитектура (с 12.04.2026)
+
+Проект разделён на независимые модули. Каждый модуль имеет свои запросы к БД, компоненты и бизнес-логику. Изменения в одном модуле не затрагивают другие.
+
+```
+src/
+  modules/
+    finance/
+      lib/queries.ts          ← getPnl, getDaily, getFilters (свои копии из db.ts)
+      components/             ← ReconciliationTab, ForecastTab
+    shipment/
+      lib/engine.ts           ← calculation-engine (расчёт отгрузки)
+      lib/use-effective-buyout.ts  ← процент выкупа из API
+      lib/use-effective-regions.ts ← регионы из настроек
+      components/             ← ShipmentCalcV2/V3, Settings, Products, Upload, Warehouse*
+    analytics/
+      lib/db.ts               ← своё подключение к БД + getExcludeDailyFilter
+      lib/engine.ts           ← getOrderStats, calculateShipment (свои копии)
+      lib/AnalyticsProvider.tsx ← независимый провайдер данных
+      components/             ← RegionalMatrix
+    reviews/                  ← полностью независим, не использует общие модули
+
+  shared (src/components/):   ← только стабильные UI: StatCard, DateRangePicker, Sidebar, Charts
+
+  lib/
+    sync/                     ← Независимые sync-модули
+      types.ts                ← общие типы и утилиты
+      realization.ts          ← синк ежедневных отчётов из ЛК
+      advertising.ts          ← синк рекламных расходов
+      orders.ts               ← синк воронки продаж
+      storage.ts              ← синк платного хранения
+    daily-sync.ts             ← оркестратор (каждый модуль в try/catch)
+```
+
+**Правила:**
+- Модуль НЕ импортирует из другого модуля
+- Каждый модуль имеет своё подключение к БД
+- Error Boundary на каждый раздел (error.tsx)
+- Автотесты API: `scripts/test-api.sh` (9 эндпоинтов)
+- DataProvider — только для Отгрузки; Аналитика имеет свой AnalyticsProvider
 
 7. **Обогащение отзывов:** reviews-sync.js по полю `shk_id` сопоставляет отзыв с заказом из Orders API, чтобы добавить цену и регион (горизонт 90 дней).
