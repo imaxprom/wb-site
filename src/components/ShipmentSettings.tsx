@@ -2,9 +2,9 @@
 
 import { useState, useMemo } from "react";
 import { useData } from "@/components/DataProvider";
-import { ALL_DISTRICTS, getDefaultRegionGroups, toRegionConfigs, shortDistrict } from "@/lib/calculation-engine";
+import { ALL_DISTRICTS, getDefaultRegionGroups, toRegionConfigs, shortDistrict } from "@/modules/shipment/lib/engine";
 import { WarehousePicker } from "@/components/WarehousePicker";
-import { useBuyoutRates } from "@/lib/use-effective-buyout";
+import { useBuyoutRates } from "@/modules/shipment/lib/use-effective-buyout";
 import type { RegionGroup } from "@/types";
 
 export default function ShipmentSettings() {

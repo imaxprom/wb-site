@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDaily } from "@/lib/db";
+import { getDaily } from "@/modules/finance/lib/queries";
 import { apiError } from "@/lib/api-utils";
 
 export async function GET(request: NextRequest) {

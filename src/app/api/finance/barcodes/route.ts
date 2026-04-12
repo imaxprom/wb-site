@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-utils";
-import { getDb } from "@/lib/db";
+import { getDb } from "@/modules/finance/lib/queries";
 
 /**
  * GET /api/finance/barcodes — unique barcodes with nm_id, sa_name, ts_name

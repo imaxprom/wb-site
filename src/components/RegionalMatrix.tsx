@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import type { OrderRecord } from "@/types";
-import { ALL_DISTRICTS } from "@/lib/calculation-engine";
+import { ALL_DISTRICTS } from "@/modules/shipment/lib/engine";
 
 // Mapping: warehouse name → federal district where the warehouse is physically located
 const WAREHOUSE_DISTRICT: Record<string, string> = {

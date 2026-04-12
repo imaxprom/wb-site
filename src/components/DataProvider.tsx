@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useReducer, useEffect, useCallback } from "react";
 import type { StockItem, OrderRecord, Product, ProductOverrides } from "@/types";
 import type { AppSettings } from "@/types";
-import { getDefaultRegions, getDefaultRegionGroups } from "@/lib/calculation-engine";
+import { getDefaultRegions, getDefaultRegionGroups } from "@/modules/shipment/lib/engine";
 
 // --- State ---
 

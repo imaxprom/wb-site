@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-utils";
-import { getFilters } from "@/lib/db";
+import { getFilters } from "@/modules/finance/lib/queries";
 
 export async function GET() {
   try {

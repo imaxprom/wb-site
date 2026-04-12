@@ -2,12 +2,12 @@
 
 import React, { useMemo, useState, useCallback } from "react";
 import { useData } from "./DataProvider";
-import { calculateShipmentV2, type ShipmentCalculationV2 } from "@/lib/calculation-engine";
+import { calculateShipmentV2, type ShipmentCalculationV2 } from "@/modules/shipment/lib/engine";
 import { exportShipmentExcelV2 } from "@/lib/export-excel-v2";
 import { packItems, unitVolumeLiters, usableVolumeLiters, boxVolumeLiters, type PackingItem, type PackingResult, type BoxConfig } from "@/lib/packing-engine";
 import { formatNumber } from "@/lib/utils";
-import { useEffectiveRegions } from "@/lib/use-effective-regions";
-import { useEffectiveBuyout } from "@/lib/use-effective-buyout";
+import { useEffectiveRegions } from "@/modules/shipment/lib/use-effective-regions";
+import { useEffectiveBuyout } from "@/modules/shipment/lib/use-effective-buyout";
 import { InfoTip } from "@/components/Tooltip";
 import { calculateTrend, type TrendResult } from "@/lib/trend-engine";
 import type { ShipmentRowExtended } from "@/types";

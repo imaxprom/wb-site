@@ -2,7 +2,7 @@
 
 import React, { useCallback, useMemo, useState } from "react";
 import { useData } from "./DataProvider";
-import { sortShipmentRows } from "@/lib/calculation-engine";
+import { sortShipmentRows } from "@/modules/shipment/lib/engine";
 import { formatNumber } from "@/lib/utils";
 import { getWbImageUrl } from "@/lib/wb-image";
 import type { Product, StockItem } from "@/types";

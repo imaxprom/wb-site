@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiError } from "@/lib/api-utils";
-import { getDb } from "@/lib/db";
+import { getDb } from "@/modules/finance/lib/queries";
 import { DEFAULT_COGS_PER_UNIT } from "@/lib/constants";
 
 /** Предзагрузка себестоимости в Map (кэш, как в db.ts) */

@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { useData } from "@/components/DataProvider";
-import { calculateShipment, calculateDeficit, getOrderStats } from "@/lib/calculation-engine";
+import { calculateShipment, calculateDeficit, getOrderStats } from "@/modules/analytics/lib/engine";
 import { StatCard } from "@/components/StatCard";
 import { RegionPieChart, OrdersLineChart } from "@/components/Charts";
 import { RegionalMatrix } from "@/components/RegionalMatrix";

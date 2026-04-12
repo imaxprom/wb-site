@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getPnl } from "@/lib/db";
+import { getPnl } from "@/modules/finance/lib/queries";
 import { apiError } from "@/lib/api-utils";
 
 export async function GET(request: NextRequest) {

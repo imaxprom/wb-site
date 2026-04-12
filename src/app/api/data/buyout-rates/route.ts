@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getDb, getExcludeDailyFilter } from "@/lib/db";
+import { getDb, getExcludeDailyFilter } from "@/modules/analytics/lib/db";
 
 /**
  * GET /api/data/buyout-rates
