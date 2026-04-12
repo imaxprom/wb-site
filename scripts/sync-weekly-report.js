@@ -363,6 +363,11 @@ async function main() {
     }
   }
 
+  // WAL checkpoint — сбрасываем WAL чтобы не блокировать readonly соединения
+  if (newCount > 0) {
+    try { db.pragma("wal_checkpoint(TRUNCATE)"); } catch { /* ignore */ }
+  }
+
   // Итог
   const total = db.prepare("SELECT COUNT(*) as c FROM weekly_rows").get();
   const reportsList = db.prepare("SELECT * FROM reports ORDER BY period_from DESC").all();

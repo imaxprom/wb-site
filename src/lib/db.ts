@@ -15,6 +15,7 @@ export function getDb(): Database.Database {
     db = new Database(DB_PATH, { readonly: true });
     db.pragma("journal_mode = WAL");
     db.pragma("cache_size = -64000"); // 64MB cache
+    db.pragma("busy_timeout = 5000");
     // Индекс на source для дедупликации weekly_final
     try {
       const writeDb = new Database(DB_PATH);
@@ -38,6 +39,7 @@ export function getWeeklyDb(): Database.Database | null {
   if (!weeklyDb && fs.existsSync(WEEKLY_DB_PATH)) {
     weeklyDb = new Database(WEEKLY_DB_PATH, { readonly: true });
     weeklyDb.pragma("journal_mode = WAL");
+    weeklyDb.pragma("busy_timeout = 5000");
   }
   return weeklyDb;
 }
