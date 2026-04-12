@@ -2055,8 +2055,8 @@
             "shipment-db.ts — CRUD для shipment-данных (заказы, остатки, товары, мета)",
             "reviews-db.ts — CRUD для модуля отзывов (аккаунты, отзывы, статистика)",
             "parse-daily-report.ts — парсинг строк реализации WB → структура для SQLite",
-            "modules/finance/lib/queries.ts — getPnl, getDaily, getFilters",
-            "modules/analytics/lib/db.ts — подключение для аналитики"
+            "src/modules/finance/lib/queries.ts — getPnl, getDaily, getFilters",
+            "src/modules/analytics/lib/db.ts — подключение для аналитики"
           ]
         },
         {
@@ -2078,7 +2078,7 @@
           "type": "list",
           "title": "Расчётные движки",
           "items": [
-            "calculation-engine.ts — расчёт отгрузки (legacy). Копии в modules/shipment/ и modules/analytics/",
+            "calculation-engine.ts — расчёт отгрузки (legacy). Копии в src/modules/shipment/ и src/modules/analytics/",
             "trend-engine.ts — динамика заказов: разбивка по неделям, линейная регрессия, прогноз, R²",
             "packing-engine.ts — укладка товаров в короба (объём, размеры, оптимизация)",
             "constants.ts — централизованные константы (DEFAULT_COGS_PER_UNIT, TREND пороги)"
@@ -2098,8 +2098,8 @@
           "type": "list",
           "title": "React Hooks и утилиты",
           "items": [
-            "use-effective-buyout.ts — % выкупа из realization. Перенесён в modules/shipment/lib/",
-            "use-effective-regions.ts — региональные конфигурации. Перенесён в modules/shipment/lib/",
+            "use-effective-buyout.ts — % выкупа из realization. Перенесён в src/modules/shipment/lib/",
+            "use-effective-regions.ts — региональные конфигурации. Перенесён в src/modules/shipment/lib/",
             "tooltips.ts — словарь терминов для тултипов по всему сайту",
             "size-utils.ts — утилиты размеров (определение кол-ва в коробе по названию размера)"
           ]
@@ -2129,8 +2129,8 @@
           "type": "list",
           "title": "Финансы",
           "items": [
-            "modules/finance/components/ForecastTab.tsx — прогноз прибыли (nm_id=0 реклама в итогах)",
-            "modules/finance/components/ReconciliationTab.tsx — сверка API vs Excel",
+            "src/modules/finance/components/ForecastTab.tsx — прогноз прибыли (nm_id=0 реклама в итогах)",
+            "src/modules/finance/components/ReconciliationTab.tsx — сверка API vs Excel",
             "StatCard.tsx — карточка метрики (значение + sparkline)",
             "Charts.tsx — обёртка recharts (BarChart, LineChart, AreaChart, PieChart)"
           ]
@@ -2139,16 +2139,16 @@
           "type": "list",
           "title": "Отгрузка",
           "items": [
-            "modules/shipment/components/ShipmentCalcV2.tsx — расчёт V2",
-            "modules/shipment/components/ShipmentCalcV3.tsx — расчёт V3",
-            "modules/shipment/components/ShipmentSettings.tsx — настройки (выкуп из realization, регионы, короба)",
-            "modules/shipment/components/WarehousePicker.tsx — выбор склада",
-            "modules/shipment/components/WarehouseBreakdown.tsx — разбивка по складам",
-            "modules/shipment/components/ProductsTab.tsx — товары",
-            "modules/shipment/components/ProductsTable.tsx — таблица товаров",
-            "modules/shipment/components/ProductRow.tsx — строка товара",
-            "modules/shipment/components/UploadTab.tsx — загрузка данных",
-            "modules/analytics/components/RegionalMatrix.tsx — матрица регионов"
+            "src/modules/shipment/components/ShipmentCalcV2.tsx — расчёт V2",
+            "src/modules/shipment/components/ShipmentCalcV3.tsx — расчёт V3",
+            "src/modules/shipment/components/ShipmentSettings.tsx — настройки (выкуп из realization, регионы, короба)",
+            "src/modules/shipment/components/WarehousePicker.tsx — выбор склада",
+            "src/modules/shipment/components/WarehouseBreakdown.tsx — разбивка по складам",
+            "src/modules/shipment/components/ProductsTab.tsx — товары",
+            "src/modules/shipment/components/ProductsTable.tsx — таблица товаров",
+            "src/modules/shipment/components/ProductRow.tsx — строка товара",
+            "src/modules/shipment/components/UploadTab.tsx — загрузка данных",
+            "src/modules/analytics/components/RegionalMatrix.tsx — матрица регионов"
           ]
         },
         {
