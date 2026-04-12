@@ -36,7 +36,8 @@ interface DaySyncStatus {
   report: SourceStatus;
   advertising: SourceStatus;
   orders: SourceStatus;
-  complete: boolean;   // all 3 ok and stable
+  storage: SourceStatus;
+  complete: boolean;   // all sources ok and stable
 }
 
 export interface SyncStatus {
@@ -269,19 +270,40 @@ async function syncReport(date: string): Promise<SourceStatus> {
 
 // --- Source 2: Advertising ---
 
+/** Загружает маппинг campaign_id → nm_id из WB API */
+async function getCampaignNmMap(apiKey: string): Promise<Map<number, number>> {
+  const map = new Map<number, number>();
+  try {
+    const res = await fetch("https://advert-api.wildberries.ru/api/advert/v2/adverts", {
+      headers: { Authorization: apiKey },
+    });
+    if (!res.ok) return map;
+    const data = (await res.json()) as { adverts?: { id: number; nm_settings?: { nm_id: number }[] }[] };
+    for (const c of data.adverts || []) {
+      if (c.nm_settings?.length) {
+        map.set(c.id, c.nm_settings[0].nm_id);
+      }
+    }
+  } catch { /* не критично — nm_id будет 0 */ }
+  return map;
+}
+
 async function syncAdvertising(date: string): Promise<SourceStatus> {
   const s: SourceStatus = { ...emptySource(), lastAttempt: new Date().toISOString() };
   const apiKey = getApiKey();
   if (!apiKey) { s.error = "Нет WB API ключа"; return s; }
 
   try {
-    const res = await fetch(
-      `https://advert-api.wildberries.ru/adv/v1/upd?from=${date}&to=${date}`,
-      { headers: { Authorization: apiKey } }
-    );
-    if (!res.ok) { s.error = `API error: ${res.status}`; return s; }
+    // Параллельно: расходы + маппинг кампаний
+    const [updRes, nmMap] = await Promise.all([
+      fetch(`https://advert-api.wildberries.ru/adv/v1/upd?from=${date}&to=${date}`, {
+        headers: { Authorization: apiKey },
+      }),
+      getCampaignNmMap(apiKey),
+    ]);
+    if (!updRes.ok) { s.error = `API error: ${updRes.status}`; return s; }
 
-    const data = (await res.json()) as { updSum?: number; campName?: string; advertId?: number; paymentType?: string; updTime?: string }[];
+    const data = (await updRes.json()) as { updSum?: number; campName?: string; advertId?: number; paymentType?: string; updTime?: string }[];
 
     const entries = data.filter(d => (d.updSum || 0) > 0);
     const total = entries.reduce((sum, d) => sum + (d.updSum || 0), 0);
@@ -294,17 +316,20 @@ async function syncAdvertising(date: string): Promise<SourceStatus> {
     // Save to DB
     const db = new Database(DB_PATH);
     db.prepare("DELETE FROM advertising WHERE date = ?").run(date);
-    const ins = db.prepare("INSERT INTO advertising (date, campaign_name, campaign_id, amount, payment_type) VALUES (?, ?, ?, ?, ?)");
+    const ins = db.prepare("INSERT INTO advertising (date, campaign_name, campaign_id, amount, payment_type, nm_id) VALUES (?, ?, ?, ?, ?, ?)");
     db.transaction(() => {
       for (const e of entries) {
-        ins.run(date, e.campName || "", e.advertId || 0, e.updSum || 0, e.paymentType || "Баланс");
+        const nmId = nmMap.get(e.advertId || 0) || 0;
+        ins.run(date, e.campName || "", e.advertId || 0, e.updSum || 0, e.paymentType || "Баланс", nmId);
       }
     })();
     db.close();
 
     s.ok = true;
     s.value = total;
-    s.stable = true;
+    // Если маппинг campaign→nm_id не сработал — не помечаем stable, чтобы синк повторился
+    const mappedCount = entries.filter(e => nmMap.get(e.advertId || 0)).length;
+    s.stable = mappedCount > 0;
   } catch (err) {
     s.error = err instanceof Error ? err.message : String(err);
   }
@@ -358,6 +383,79 @@ async function syncOrders(date: string, prevValue: number): Promise<SourceStatus
   return s;
 }
 
+// --- Source 4: Paid Storage ---
+
+async function syncPaidStorage(date: string): Promise<SourceStatus> {
+  const s: SourceStatus = { ...emptySource(), lastAttempt: new Date().toISOString() };
+  const apiKey = getApiKey();
+  if (!apiKey) { s.error = "Нет WB API ключа"; return s; }
+
+  try {
+    const HOST = "https://seller-analytics-api.wildberries.ru";
+
+    // Create task (max 8 days, we request 1 day)
+    const createRes = await fetch(`${HOST}/api/v1/paid_storage?dateFrom=${date}&dateTo=${date}`, {
+      headers: { Authorization: apiKey },
+    });
+    if (!createRes.ok) { s.error = `API create error: ${createRes.status}`; return s; }
+    const createData = (await createRes.json()) as { data?: { taskId?: string } };
+    const taskId = createData?.data?.taskId;
+    if (!taskId) { s.error = "No taskId"; return s; }
+
+    // Poll status (max 30 sec)
+    for (let i = 0; i < 15; i++) {
+      await new Promise(ok => setTimeout(ok, 2000));
+      const statusRes = await fetch(`${HOST}/api/v1/paid_storage/tasks/${taskId}/status`, {
+        headers: { Authorization: apiKey },
+      });
+      const statusData = (await statusRes.json()) as { data?: { status?: string } };
+      if (statusData?.data?.status === "done") break;
+      if (statusData?.data?.status === "canceled" || statusData?.data?.status === "purged") {
+        s.error = "Task " + statusData.data.status;
+        return s;
+      }
+    }
+
+    // Download
+    const dlRes = await fetch(`${HOST}/api/v1/paid_storage/tasks/${taskId}/download`, {
+      headers: { Authorization: apiKey },
+    });
+    if (!dlRes.ok) { s.error = `Download error: ${dlRes.status}`; return s; }
+    const raw = await dlRes.json();
+    const rows = Array.isArray(raw) ? raw : (Array.isArray(raw?.data) ? raw.data : []);
+
+    if (rows.length === 0) {
+      s.error = "Нет данных хранения за эту дату";
+      return s;
+    }
+
+    // Save to DB
+    const db = new Database(DB_PATH);
+    db.prepare("CREATE TABLE IF NOT EXISTS paid_storage (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, nm_id INTEGER NOT NULL, barcode TEXT, warehouse TEXT, warehouse_price REAL DEFAULT 0, barcodes_count INTEGER DEFAULT 0, vendor_code TEXT, subject TEXT, volume REAL DEFAULT 0)");
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_ps_date_nm ON paid_storage(date, nm_id)");
+    db.prepare("DELETE FROM paid_storage WHERE date = ?").run(date);
+
+    const ins = db.prepare("INSERT INTO paid_storage (date, nm_id, barcode, warehouse, warehouse_price, barcodes_count, vendor_code, subject, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    const total = db.transaction(() => {
+      let sum = 0;
+      for (const r of rows) {
+        if ((r.date || date) !== date) continue; // filter to exact date
+        ins.run(date, r.nmId || 0, r.barcode || "", r.warehouse || "", r.warehousePrice || 0, r.barcodesCount || 0, r.vendorCode || "", r.subject || "", r.volume || 0);
+        sum += r.warehousePrice || 0;
+      }
+      return Math.round(sum);
+    })();
+    db.close();
+
+    s.ok = true;
+    s.value = total;
+    s.stable = true;
+  } catch (err) {
+    s.error = err instanceof Error ? err.message : String(err);
+  }
+  return s;
+}
+
 // --- Main sync ---
 
 export async function syncAll(date?: string): Promise<DaySyncStatus> {
@@ -372,6 +470,7 @@ export async function syncAll(date?: string): Promise<DaySyncStatus> {
       report: emptySource(),
       advertising: emptySource(),
       orders: emptySource(),
+      storage: emptySource(),
       complete: false,
     };
   }
@@ -399,6 +498,12 @@ export async function syncAll(date?: string): Promise<DaySyncStatus> {
     console.log("[daily-sync] Syncing orders...");
     day.orders = await syncOrders(targetDate, day.orders.value);
     console.log(`[daily-sync] Orders: ${day.orders.ok ? day.orders.value + " руб" + (day.orders.stable ? " (stable)" : " (updating)") : "FAIL: " + day.orders.error}`);
+  }
+
+  if (!day.storage?.ok) {
+    console.log("[daily-sync] Syncing paid storage...");
+    day.storage = await syncPaidStorage(targetDate);
+    console.log(`[daily-sync] Storage: ${day.storage.ok ? "OK (" + day.storage.value + " руб)" : "FAIL: " + (day.storage.error || "unknown")}`);
   }
 
   day.complete = day.report.ok && day.advertising.ok && day.orders.ok && day.orders.stable;

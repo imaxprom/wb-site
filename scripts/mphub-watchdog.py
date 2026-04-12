@@ -120,23 +120,30 @@ def get_uid():
 def restart_service(label):
     """Restart via launchctl. Returns True if service is running after restart."""
     uid = get_uid()
+    plist_path = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
     log(f"  Restarting {label}...")
 
-    # Stop
-    subprocess.run(
-        ["launchctl", "bootout", f"gui/{uid}/{label}"],
-        capture_output=True, timeout=10,
-    )
-    time.sleep(1)
-
-    # Start
+    # Try kickstart first (fastest, works if plist is loaded)
     result = subprocess.run(
-        ["launchctl", "kickstart", f"gui/{uid}/{label}"],
+        ["launchctl", "kickstart", "-k", f"gui/{uid}/{label}"],
         capture_output=True, text=True, timeout=10,
     )
 
-    if result.returncode != 0:
-        # Fallback
+    if result.returncode != 0 and plist_path.exists():
+        # Plist not loaded — bootout (if partially loaded) then bootstrap
+        log(f"  kickstart failed, trying bootstrap...")
+        subprocess.run(
+            ["launchctl", "bootout", f"gui/{uid}/{label}"],
+            capture_output=True, timeout=10,
+        )
+        time.sleep(1)
+        subprocess.run(
+            ["launchctl", "bootstrap", f"gui/{uid}", str(plist_path)],
+            capture_output=True, timeout=10,
+        )
+
+    if result.returncode != 0 and not plist_path.exists():
+        # No plist file — try legacy start as last resort
         subprocess.run(["launchctl", "start", label], capture_output=True, timeout=10)
 
     # Verify (wait a bit, then check)
@@ -146,8 +153,11 @@ def restart_service(label):
         capture_output=True, text=True, timeout=10,
     )
     has_pid = '"PID"' in check.stdout and '"PID" = 0' not in check.stdout
-    log(f"  Restart {'OK' if has_pid else 'FAILED'} for {label}")
-    return has_pid
+    # For cron tasks (no KeepAlive), check if loaded at all (exit_code 0)
+    is_loaded = check.returncode == 0
+    ok = has_pid or is_loaded
+    log(f"  Restart {'OK' if ok else 'FAILED'} for {label}")
+    return ok
 
 
 # ─── Claude Code diagnostics ─────────────────────────────────

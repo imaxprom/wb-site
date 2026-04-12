@@ -2,7 +2,7 @@
   "mphub-website": {
     "restart_count": 0,
     "last_restart": "2026-04-04T03:54:18",
-    "last_stable": "2026-04-08T00:22:18",
+    "last_stable": "2026-04-12T14:44:02",
     "circuit": "closed",
     "circuit_opened_at": null,
     "ai_last_called": "2026-04-04T03:54:26",
@@ -12,6 +12,24 @@
     "restart_count": 1,
     "last_restart": "2026-04-04T08:40:49",
     "last_stable": null,
+    "circuit": "closed",
+    "circuit_opened_at": null,
+    "ai_last_called": null,
+    "ai_diagnosis": null
+  },
+  "claude-proxy": {
+    "restart_count": 0,
+    "last_restart": null,
+    "last_stable": "2026-04-12T14:44:02",
+    "circuit": "closed",
+    "circuit_opened_at": null,
+    "ai_last_called": "2026-04-12T12:28:23",
+    "ai_diagnosis": "**Severity: noise**\n\nThe 41 errors from 10.04 were all `400` responses on `claude-opus-4-6` with `think=adaptive` — likely malformed `thinking` parameter in the request payload (e.g., sending `{\"type\":\"enabled\",\"budget_tokens\":...}` with an invalid/missing field, or a `beta` header mismatch for the thinking feature). The proxy has been running clean since then — the last ~24h of logs show only `200` responses across all agents.\n\nNo fix needed unless the errors recur. If they do, check the request body for the `thinking` block format — the Anthropic API requires `{\"type\":\"enabled\",\"budget_tokens\":N}` and the `anthropic-beta: interleaved-thinking-2025-05-14` header when using extended thinking."
+  },
+  "proxy-version-check": {
+    "restart_count": 0,
+    "last_restart": "2026-04-12T13:44:00",
+    "last_stable": "2026-04-12T13:44:00",
     "circuit": "closed",
     "circuit_opened_at": null,
     "ai_last_called": null,

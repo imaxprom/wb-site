@@ -3,6 +3,29 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { StatCard } from "@/components/StatCard";
 
+// ─── InfoTip ──────────────────────────────────────────────────
+
+function InfoTip({ text }: { text: string }) {
+  const [show, setShow] = useState(false);
+  return (
+    <span
+      className="ml-1 cursor-help text-[var(--text-muted)] text-xs relative inline-block"
+      onMouseEnter={() => setShow(true)}
+      onMouseLeave={() => setShow(false)}
+    >
+      ⓘ
+      {show && (
+        <span
+          className="absolute left-0 top-6 z-50 border rounded-lg px-3 py-2 shadow-xl whitespace-normal"
+          style={{ background: "#1a1a2e", borderColor: "var(--border)", color: "#e4e4ef", fontSize: 13, fontWeight: 400, width: 280, lineHeight: 1.5 }}
+        >
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
 // ─── Types ───────────────────────────────────────────────────
 
 interface Schedule {
@@ -19,6 +42,7 @@ interface ServiceError {
 interface Service {
   id: string;
   name: string;
+  nameRu?: string;
   description: string;
   project: string;
   type: string;
@@ -68,9 +92,15 @@ const TYPE_BADGES: Record<string, { label: string; color: string }> = {
 
 function statusColor(status: string) {
   if (status === "running") return "var(--success)";
+  if (status === "idle") return "#42A5F5"; // синий — ожидает следующего запуска
   if (status === "error") return "var(--danger)";
   if (status === "stopped") return "var(--warning)";
   return "var(--text-muted)";
+}
+
+function statusLabel(status: string) {
+  if (status === "idle") return "Ожидает";
+  return status;
 }
 
 function timeAgo(iso: string | null | undefined): string {
@@ -222,7 +252,13 @@ function ServiceCard({
         {/* Header */}
         <div className="flex items-start justify-between gap-1">
           <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-            <h4 className="text-white font-semibold text-sm truncate">{service.name}</h4>
+            <h4 className="text-white font-semibold text-sm flex items-center gap-1 min-w-0">
+              <span className="truncate">
+                {service.name}
+                {service.nameRu && <span className="text-[var(--text-muted)] font-normal"> ({service.nameRu})</span>}
+              </span>
+              {service.description && <InfoTip text={service.description} />}
+            </h4>
             <span
               className="text-[9px] px-1.5 py-0.5 rounded-full font-medium uppercase tracking-wider shrink-0"
               style={{ color: badge.color, background: `color-mix(in srgb, ${badge.color} 15%, transparent)` }}
@@ -250,7 +286,6 @@ function ServiceCard({
               </span>
             )}
           </div>
-
           {/* Menu */}
           <div className="relative">
             <button
@@ -306,6 +341,9 @@ function ServiceCard({
           )}
           {service.uptime && service.status === "running" && (
             <span>Аптайм: {service.uptime}</span>
+          )}
+          {service.status === "idle" && service.lastRun && (
+            <span>Последний: {timeAgo(service.lastRun)}</span>
           )}
           {service.pid && (
             <span>PID: {service.pid}</span>
@@ -379,7 +417,15 @@ function WatchdogBanner() {
     fetch("/data/monitor/repair-log.json")
       .then(r => r.json())
       .then((entries: Array<{ time: string; action: string; serviceId: string; result: string; details: string }>) => {
-        if (entries.length > 0) setLastEntry(entries[entries.length - 1]);
+        if (entries.length === 0) return;
+        const last = entries[entries.length - 1];
+        // Показываем только свежие записи (< 24 часов)
+        if (last.time) {
+          const ageMs = Date.now() - new Date(last.time).getTime();
+          if (ageMs < 24 * 60 * 60 * 1000) {
+            setLastEntry(last);
+          }
+        }
       })
       .catch(() => {});
   }, []);
@@ -479,7 +525,7 @@ export default function MonitorPage() {
   const archived = services.filter((s) => s.lifecycle === "archived");
 
   const stats = useMemo(() => {
-    const runningList = active.filter((s) => s.status === "running");
+    const runningList = active.filter((s) => s.status === "running" || s.status === "idle");
     const warningList = active.filter((s) => s.status === "stopped" || s.status === "unknown" || s.lifecycle === "stale");
     const errorList = active.filter((s) => s.status === "error");
     const errCount = active.reduce((sum, s) => sum + (s.errorsLast24h || 0), 0);
@@ -570,14 +616,23 @@ export default function MonitorPage() {
       {/* Stat cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard title="Работают" value={stats.running} color="success" tooltipItems={stats.runningNames} />
-        <StatCard title="Ожидают" value={stats.warning} color="warning" tooltipItems={stats.warningNames} />
+        <StatCard title="Остановлены" value={stats.warning} color="warning" tooltipItems={stats.warningNames} />
         <StatCard title="Упали" value={stats.errors} color="danger" tooltipItems={stats.errorNames} />
         <StatCard title="Ошибок за 24ч" value={stats.errCount} color={stats.errCount > 0 ? "danger" : "default"} tooltipItems={stats.errNames} />
+      </div>
+
+      {/* Status legend */}
+      <div className="flex flex-wrap gap-4 text-xs text-[var(--text-muted)] bg-[var(--bg-card)] rounded-lg border border-[var(--border)] px-4 py-2">
+        <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: "var(--success)" }} />Работает — процесс запущен</span>
+        <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: "#42A5F5" }} />Ожидает — cron-задача отработала, ждёт следующего запуска</span>
+        <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: "var(--warning)" }} />Остановлен — не запускался или последний запуск более 25ч назад</span>
+        <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: "var(--danger)" }} />Ошибка — процесс завершился с ошибкой</span>
       </div>
 
       {/* Services grouped by project */}
       {grouped.map(([project, svcs]) => {
         const pRunning = svcs.filter(s => s.status === "running").length;
+        const pIdle = svcs.filter(s => s.status === "idle").length;
         const pStopped = svcs.filter(s => s.status === "stopped" || s.status === "unknown").length;
         const pError = svcs.filter(s => s.status === "error").length;
         return (
@@ -586,6 +641,7 @@ export default function MonitorPage() {
             <h2 className="text-lg font-semibold text-white">{project} <span className="text-sm font-normal text-[var(--text-muted)]">{svcs.length}</span></h2>
             <div className="flex items-center gap-3 text-xs">
               {pRunning > 0 && <span className="flex items-center gap-1 text-[var(--success)]"><span className="w-2 h-2 rounded-full bg-[var(--success)]" />{pRunning}</span>}
+              {pIdle > 0 && <span className="flex items-center gap-1" style={{ color: "#42A5F5" }}><span className="w-2 h-2 rounded-full" style={{ background: "#42A5F5" }} />{pIdle}</span>}
               {pStopped > 0 && <span className="flex items-center gap-1 text-[var(--warning)]"><span className="w-2 h-2 rounded-full bg-[var(--warning)]" />{pStopped}</span>}
               {pError > 0 && <span className="flex items-center gap-1 text-[var(--danger)]"><span className="w-2 h-2 rounded-full bg-[var(--danger)]" />{pError}</span>}
             </div>

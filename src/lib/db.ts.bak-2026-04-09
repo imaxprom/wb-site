@@ -8,30 +8,14 @@ const WEEKLY_DB_PATH = path.join(process.cwd(), "data", "weekly_reports.db");
 
 let db: Database.Database | null = null;
 let weeklyDb: Database.Database | null = null;
-let cogsMap: Map<string, number> | null = null;
 
 export function getDb(): Database.Database {
   if (!db) {
     db = new Database(DB_PATH, { readonly: true });
     db.pragma("journal_mode = WAL");
     db.pragma("cache_size = -64000"); // 64MB cache
-    // Индекс на source для дедупликации weekly_final
-    try {
-      const writeDb = new Database(DB_PATH);
-      writeDb.exec("CREATE INDEX IF NOT EXISTS idx_real_source_dates ON realization(source, date_from, date_to)");
-      writeDb.close();
-    } catch { /* readonly fallback — индекс уже есть или нет прав */ }
   }
   return db;
-}
-
-/** Предзагрузка всех себестоимостей в Map (1 запрос вместо N) */
-function getCogsMap(): Map<string, number> {
-  if (cogsMap) return cogsMap;
-  const d = getDb();
-  const rows = d.prepare("SELECT barcode, cost FROM cogs").all() as { barcode: string; cost: number }[];
-  cogsMap = new Map(rows.map(r => [r.barcode, r.cost]));
-  return cogsMap;
 }
 
 export function getWeeklyDb(): Database.Database | null {
@@ -150,8 +134,8 @@ function getPnlFromExcel(wdb: Database.Database, dateFrom: string, dateTo: strin
     WHERE 1=1 ${pf}
   `).get(...periodParams) as Record<string, number>;
 
-  // ── Excel: COGS по sale_dt (Map вместо N запросов) ──
-  const costs = getCogsMap();
+  // ── Excel: COGS по sale_dt ──
+  const finDb = getDb();
   let cogs = 0;
   const qtyRows = wdb.prepare(`
     SELECT barcode, SUM(quantity) as qty FROM weekly_rows
@@ -159,7 +143,8 @@ function getPnlFromExcel(wdb: Database.Database, dateFrom: string, dateTo: strin
     GROUP BY barcode
   `).all(dateFrom, excelSaleTo) as { barcode: string; qty: number }[];
   for (const row of qtyRows) {
-    cogs += row.qty * (costs.get(row.barcode) || DEFAULT_COGS_PER_UNIT);
+    const costRow = finDb.prepare("SELECT cost FROM cogs WHERE barcode = ?").get(row.barcode) as { cost: number } | undefined;
+    cogs += row.qty * (costRow?.cost || DEFAULT_COGS_PER_UNIT);
   }
   let cogsReturns = 0;
   const retQtyRows = wdb.prepare(`
@@ -168,14 +153,14 @@ function getPnlFromExcel(wdb: Database.Database, dateFrom: string, dateTo: strin
     GROUP BY barcode
   `).all(dateFrom, excelSaleTo) as { barcode: string; qty: number }[];
   for (const row of retQtyRows) {
-    cogsReturns += row.qty * (costs.get(row.barcode) || DEFAULT_COGS_PER_UNIT);
+    const costRow = finDb.prepare("SELECT cost FROM cogs WHERE barcode = ?").get(row.barcode) as { cost: number } | undefined;
+    cogsReturns += row.qty * (costRow?.cost || DEFAULT_COGS_PER_UNIT);
   }
 
   // ── API-хвост: дни после excelEnd (если dateTo > excelEnd) ──
   if (excelEnd < dateTo) {
     const tailFrom = nextDay(excelEnd);
     const tailTo = dateTo;
-    const finDb = getDb();
 
     const tailSales = finDb.prepare(`
       SELECT
@@ -260,18 +245,6 @@ function nextDay(dateStr: string): string {
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 }
 
-/** Кэш weekly_final периодов (не меняются в рамках запроса) */
-let wfPeriodsCache: { date_from: string; date_to: string }[] | null = null;
-
-function getWeeklyFinalPeriods(d: Database.Database): { date_from: string; date_to: string }[] {
-  if (wfPeriodsCache) return wfPeriodsCache;
-  wfPeriodsCache = d.prepare(`
-    SELECT DISTINCT date_from, date_to FROM realization
-    WHERE source = 'weekly_final' AND date_from != '' AND date_to != ''
-  `).all() as { date_from: string; date_to: string }[];
-  return wfPeriodsCache;
-}
-
 /**
  * Возвращает SQL-фрагмент для исключения daily-дублей.
  * Если за неделю есть weekly_final — daily за ту же неделю игнорируются.
@@ -279,7 +252,10 @@ function getWeeklyFinalPeriods(d: Database.Database): { date_from: string; date_
  * alias: алиас таблицы (по умолчанию 'r')
  */
 export function getExcludeDailyFilter(d: Database.Database, dateCol: string = "sale_dt", alias: string = "r"): { sql: string; params: string[] } {
-  const wfPeriods = getWeeklyFinalPeriods(d);
+  const wfPeriods = d.prepare(`
+    SELECT DISTINCT date_from, date_to FROM realization
+    WHERE source = 'weekly_final' AND date_from != '' AND date_to != ''
+  `).all() as { date_from: string; date_to: string }[];
 
   if (wfPeriods.length === 0) return { sql: "", params: [] };
 
@@ -455,18 +431,30 @@ export function getPnl(dateFrom: string, dateTo: string, nmId?: number): PnlResu
   `).get(...svcDateParams, ...excludeDailySvc.params) as Record<string, number>;
   const jam = jamRow.total;
 
-  // Компенсация скидки по программе лояльности — из weekly_reports.db (кэшированное соединение)
+  // Компенсация скидки по программе лояльности — из weekly_reports.db
   let loyaltyComp = 0;
-  const wkDb = getWeeklyDb();
-  if (wkDb) {
-    try {
+  try {
+    const wkDbPath = path.join(process.cwd(), "data", "weekly_reports.db");
+    const wkDb = new Database(wkDbPath, { readonly: true });
+    const loyaltyRow = wkDb.prepare(`
+      SELECT COALESCE(SUM(loyalty_compensation), 0) as total
+      FROM weekly_rows
+      WHERE period_from <= ? AND period_to >= ?
+    `).get(dateFrom, dateFrom) as Record<string, number>;
+    // Для диапазонов шире одной недели — суммируем все попавшие недели
+    if (dateFrom !== dateTo) {
       const loyaltyRange = wkDb.prepare(`
         SELECT COALESCE(SUM(loyalty_compensation), 0) as total
         FROM weekly_rows
         WHERE period_from >= ? AND period_to <= ?
       `).get(dateFrom, dateTo) as Record<string, number>;
-      loyaltyComp = Math.round(loyaltyRange.total || 0);
-    } catch { /* weekly_reports.db может не иметь данных */ }
+      loyaltyComp = Math.round(loyaltyRange.total || loyaltyRow.total || 0);
+    } else {
+      loyaltyComp = Math.round(loyaltyRow.total || 0);
+    }
+    wkDb.close();
+  } catch {
+    // weekly_reports.db может не существовать
   }
   
   const other = svcRow.storage + svcRow.penalty + svcRow.acceptance;
@@ -636,50 +624,44 @@ export function getDaily(dateFrom: string, dateTo: string, nmId?: number): Daily
 }
 
 // ─── Filters ───────────────────────────────────────────────
-/** Кэш фильтров (меняются редко, пересчёт раз в 10 минут) */
-let filtersCache: { suppliers: string[]; brands: string[]; subjects: string[]; articles: { nm_id: number; sa_name: string; brand_name: string; subject_name: string }[]; sizes: string[] } | null = null;
-let filtersCacheTime = 0;
-const FILTERS_CACHE_TTL = 10 * 60 * 1000; // 10 минут
-
 export function getFilters() {
-  if (filtersCache && Date.now() - filtersCacheTime < FILTERS_CACHE_TTL) {
-    return filtersCache;
-  }
-
   const d = getDb();
+  
+  const suppliers = d.prepare(`
+    SELECT DISTINCT ppvz_supplier_name as name FROM realization 
+    WHERE supplier_oper_name = 'Продажа' AND ppvz_supplier_name != ''
+    ORDER BY name
+  `).all() as { name: string }[];
 
-  // Один запрос вместо 5 отдельных DISTINCT по 2.1M строк
+  const brands = d.prepare(`
+    SELECT DISTINCT brand_name as name FROM realization 
+    WHERE supplier_oper_name = 'Продажа' AND brand_name != ''
+    ORDER BY name
+  `).all() as { name: string }[];
+
+  const subjects = d.prepare(`
+    SELECT DISTINCT subject_name as name FROM realization 
+    WHERE supplier_oper_name = 'Продажа' AND subject_name != ''
+    ORDER BY name
+  `).all() as { name: string }[];
+
   const articles = d.prepare(`
-    SELECT DISTINCT nm_id, sa_name, brand_name, subject_name, ppvz_supplier_name, ts_name
-    FROM realization
+    SELECT DISTINCT nm_id, sa_name, brand_name, subject_name FROM realization 
     WHERE supplier_oper_name = 'Продажа' AND nm_id > 0
-  `).all() as { nm_id: number; sa_name: string; brand_name: string; subject_name: string; ppvz_supplier_name: string; ts_name: string }[];
+    ORDER BY sa_name
+  `).all() as { nm_id: number; sa_name: string; brand_name: string; subject_name: string }[];
 
-  const suppliers = new Set<string>();
-  const brands = new Set<string>();
-  const subjects = new Set<string>();
-  const sizes = new Set<string>();
-  const articleMap = new Map<number, { nm_id: number; sa_name: string; brand_name: string; subject_name: string }>();
+  const sizes = d.prepare(`
+    SELECT DISTINCT ts_name as name FROM realization 
+    WHERE supplier_oper_name = 'Продажа' AND ts_name != ''
+    ORDER BY name
+  `).all() as { name: string }[];
 
-  for (const a of articles) {
-    if (a.ppvz_supplier_name) suppliers.add(a.ppvz_supplier_name);
-    if (a.brand_name) brands.add(a.brand_name);
-    if (a.subject_name) subjects.add(a.subject_name);
-    if (a.ts_name) sizes.add(a.ts_name);
-    if (!articleMap.has(a.nm_id)) {
-      articleMap.set(a.nm_id, { nm_id: a.nm_id, sa_name: a.sa_name, brand_name: a.brand_name, subject_name: a.subject_name });
-    }
-  }
-
-  const result = {
-    suppliers: [...suppliers].sort(),
-    brands: [...brands].sort(),
-    subjects: [...subjects].sort(),
-    articles: [...articleMap.values()].sort((a, b) => (a.sa_name || "").localeCompare(b.sa_name || "")),
-    sizes: [...sizes].sort(),
+  return {
+    suppliers: suppliers.map(r => r.name),
+    brands: brands.map(r => r.name),
+    subjects: subjects.map(r => r.name),
+    articles: [...new Map(articles.map(a => [a.nm_id, a])).values()],
+    sizes: sizes.map(r => r.name),
   };
-
-  filtersCache = result;
-  filtersCacheTime = Date.now();
-  return result;
 }

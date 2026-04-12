@@ -302,6 +302,67 @@ async function main() {
     }
   }
 
+  // Пересчёт buyout_rates в finance.db
+  if (newCount > 0) {
+    try {
+      const financeDbPath = path.join(__dirname, "..", "data", "finance.db");
+      const fdb = new Database(financeDbPath);
+      fdb.exec(`CREATE TABLE IF NOT EXISTS buyout_rates (
+        article_wb TEXT PRIMARY KEY,
+        orders INTEGER,
+        buyouts INTEGER,
+        buyout_rate REAL,
+        updated_at TEXT DEFAULT (datetime('now'))
+      )`);
+      fdb.exec(`CREATE TABLE IF NOT EXISTS weekly_buyout_stats (
+        period_from TEXT,
+        period_to TEXT,
+        orders INTEGER,
+        buyouts INTEGER,
+        returns INTEGER,
+        return_rate REAL,
+        PRIMARY KEY(period_from, period_to)
+      )`);
+      fdb.exec("DELETE FROM buyout_rates");
+      fdb.exec("DELETE FROM weekly_buyout_stats");
+      const rows = db.prepare(`
+        SELECT nm_id,
+          COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Логистика' THEN srid END) as orders,
+          COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Продажа' THEN srid END) as buyouts
+        FROM weekly_rows
+        WHERE supplier_oper_name IN ('Логистика', 'Продажа') AND nm_id != ''
+        GROUP BY nm_id
+        HAVING orders >= 30
+      `).all();
+      const ins = fdb.prepare("INSERT INTO buyout_rates (article_wb, orders, buyouts, buyout_rate) VALUES (?, ?, ?, ?)");
+      fdb.transaction(() => {
+        for (const r of rows) {
+          ins.run(r.nm_id, r.orders, r.buyouts, r.orders > 0 ? r.buyouts / r.orders : 0);
+        }
+      })();
+      fdb.close();
+      // Weekly buyout stats
+      const weeklyRows = db.prepare(`
+        SELECT period_from, period_to,
+          COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Логистика' THEN srid END) as orders,
+          COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Продажа' THEN srid END) as buyouts
+        FROM weekly_rows
+        WHERE supplier_oper_name IN ('Логистика', 'Продажа')
+        GROUP BY period_from, period_to
+      `).all();
+      const insW = fdb.prepare("INSERT INTO weekly_buyout_stats VALUES (?, ?, ?, ?, ?, ?)");
+      fdb.transaction(() => {
+        for (const w of weeklyRows) {
+          const returns = w.orders - w.buyouts;
+          insW.run(w.period_from, w.period_to, w.orders, w.buyouts, returns, w.orders > 0 ? returns / w.orders : 0);
+        }
+      })();
+      console.log(`✅ buyout_rates обновлены: ${rows.length} артикулов, ${weeklyRows.length} недель`);
+    } catch (e) {
+      console.log(`⚠️ buyout_rates: ${e.message}`);
+    }
+  }
+
   // Итог
   const total = db.prepare("SELECT COUNT(*) as c FROM weekly_rows").get();
   const reportsList = db.prepare("SELECT * FROM reports ORDER BY period_from DESC").all();

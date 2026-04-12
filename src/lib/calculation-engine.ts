@@ -71,6 +71,21 @@ export const ALL_DISTRICTS = [
   'Северо-Кавказский федеральный округ',
 ];
 
+const SHORT_DISTRICT: Record<string, string> = {
+  'Центральный федеральный округ': 'ЦФО',
+  'Приволжский федеральный округ': 'ПФО',
+  'Сибирский федеральный округ': 'СФО',
+  'Южный федеральный округ': 'ЮФО',
+  'Северо-Западный федеральный округ': 'СЗФО',
+  'Уральский федеральный округ': 'УФО',
+  'Дальневосточный федеральный округ': 'ДФО',
+  'Северо-Кавказский федеральный округ': 'СКФО',
+};
+
+export function shortDistrict(d: string): string {
+  return SHORT_DISTRICT[d] || d;
+}
+
 const DEFAULT_REGION_GROUPS: RegionGroup[] = [
   {
     id: 'central-nw',
@@ -142,6 +157,14 @@ export function toRegionConfigs(
     }
   }
 
+  // Подсчёт заказов по каждому ФО
+  const districtCounts = new Map<string, number>();
+  for (const o of orders) {
+    if (o.federalDistrict) {
+      districtCounts.set(o.federalDistrict, (districtCounts.get(o.federalDistrict) || 0) + 1);
+    }
+  }
+
   return groups.map((g) => {
     const groupOrders = orders.filter((o) => {
       // Match by federal district
@@ -152,10 +175,19 @@ export function toRegionConfigs(
       }
       return false;
     }).length;
+
+    // Динамический shortName из округов + их процентов
+    const dynName = g.districts
+      .map(d => {
+        const pct = total > 0 ? ((districtCounts.get(d) || 0) / total * 100).toFixed(1) : '0.0';
+        return `${shortDistrict(d)} ${pct}%`;
+      })
+      .join(' + ');
+
     return {
       id: g.id,
       name: g.name,
-      shortName: g.shortName,
+      shortName: dynName || g.shortName,
       percentage: total > 0 ? groupOrders / total : g.manualPercentage,
       warehouses: g.warehouses,
     };

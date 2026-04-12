@@ -44,9 +44,14 @@ export async function GET(request: NextRequest) {
     `).all(dateFrom, dateTo) as Record<string, number>[];
     const logMap = Object.fromEntries(logistics.map(r => [r.nm_id, r.logistics]));
 
-    // Ad spend allocated proportionally by revenue (from advertising table)
-    const totalAd = (d.prepare(`SELECT COALESCE(SUM(amount), 0) as total FROM advertising WHERE date >= ? AND date <= ?`).get(dateFrom, dateTo) as Record<string, number>).total;
-    const totalRevenue = articles.reduce((s, a) => s + (a.sales_rpwd - a.returns_rpwd), 0);
+    // Ad spend per article (точные данные из advertising с nm_id)
+    const adsByArticle = d.prepare(`
+      SELECT nm_id, SUM(amount) as total
+      FROM advertising
+      WHERE date >= ? AND date <= ? AND nm_id > 0
+      GROUP BY nm_id
+    `).all(dateFrom, dateTo) as { nm_id: number; total: number }[];
+    const adMap = Object.fromEntries(adsByArticle.map(r => [r.nm_id, r.total]));
 
     const result = articles.map(a => {
       const revenue = a.sales_rpwd - a.returns_rpwd;
@@ -54,7 +59,7 @@ export async function GET(request: NextRequest) {
       const ppvz = a.sales_ppvz - a.returns_ppvz;
       const cogs = a.cogs_total - a.cogs_returns;
       const log = logMap[a.nm_id] || 0;
-      const adAllocated = totalRevenue > 0 ? totalAd * (revenue / totalRevenue) : 0;
+      const adAllocated = adMap[a.nm_id] || 0;
       const nds = ppvz * 5 / 105;
       const usn = (ppvz - nds) * 0.01;
       const tax = nds + usn;
@@ -74,8 +79,12 @@ export async function GET(request: NextRequest) {
         cogs_unit: netQty > 0 ? Math.round(cogs / netQty) : 0,
         logistics: Math.round(log),
         log_per_unit: netQty > 0 ? Math.round(log / netQty) : 0,
+        commission: Math.round(commission),
+        commission_unit: netQty > 0 ? Math.round(commission / netQty) : 0,
         ad_allocated: Math.round(adAllocated),
+        ad_per_unit: netQty > 0 ? Math.round(adAllocated / netQty) : 0,
         tax: Math.round(tax),
+        tax_unit: netQty > 0 ? Math.round(tax / netQty) : 0,
         profit: Math.round(profit),
         margin: Math.round(margin * 10) / 10,
         profit_per_unit: netQty > 0 ? Math.round(profit / netQty) : 0,

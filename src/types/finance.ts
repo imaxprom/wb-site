@@ -18,6 +18,7 @@ export interface PnlApiResult {
   acceptance: number;
   rebill: number;
   other_services: number;
+  jam: number;
   sales_qty: number;
   returns_qty: number;
 }
@@ -60,6 +61,7 @@ export interface PnlData {
   orders_sum: number;
   profitability: number;
   acceptance: number;
+  jam: number;
 }
 
 /** Daily row returned by /api/finance/daily */

@@ -591,7 +591,7 @@ export default function ShipmentCalcV3() {
           <PackingView
             key={region.id}
             result={packing}
-            regionName={`${region.shortName} (${(region.percentage * 100).toFixed(0)}%)`}
+            regionName={region.shortName}
             variant={packingVariant}
           />
         )

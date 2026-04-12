@@ -34,13 +34,22 @@ export default function AnalyticsPage() {
   // Local orders loaded by date range
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(false);
+  const [weeklyStats, setWeeklyStats] = useState<{ orders: number; deliveries: number; returns: number; returnRate: number; buyouts: number } | null>(null);
 
   const fetchOrders = useCallback(async (from: string, to: string) => {
     setLoadingOrders(true);
     try {
-      const res = await fetch(`/api/data/orders?from=${from}&to=${to}`);
-      const data = await res.json();
+      const [ordersRes, statsRes] = await Promise.all([
+        fetch(`/api/data/orders?from=${from}&to=${to}`),
+        fetch(`/api/data/order-stats?from=${from}&to=${to}`),
+      ]);
+      const data = await ordersRes.json();
       if (Array.isArray(data)) setOrders(data);
+      if (statsRes.ok) {
+        const s = await statsRes.json();
+        if (s.deliveries > 0 || s.orders > 0) setWeeklyStats(s);
+        else setWeeklyStats(null);
+      }
     } catch (e) {
       console.error("Failed to fetch orders:", e);
     } finally {
@@ -138,19 +147,24 @@ export default function AnalyticsPage() {
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <StatCard
           title="Заказы"
-          value={formatNumber(stats?.total || 0)}
+          value={formatNumber(weeklyStats?.orders || stats?.total || 0)}
           color="warning"
         />
         <StatCard
-          title="Выкупы"
-          value={formatNumber((stats?.total || 0) - (stats?.cancels || 0))}
-          color="success"
+          title="Доставки"
+          value={formatNumber(weeklyStats?.deliveries || 0)}
+          color="default"
         />
         <StatCard
-          title="Отмены"
-          value={formatNumber(stats?.cancels || 0)}
-          subtitle={formatPercent(stats?.cancelRate || 0)}
-          color={stats && stats.cancelRate > 0.15 ? "danger" : "warning"}
+          title="Отказы"
+          value={formatNumber(weeklyStats?.returns || stats?.cancels || 0)}
+          subtitle={formatPercent(weeklyStats?.returnRate || stats?.cancelRate || 0)}
+          color={weeklyStats ? (weeklyStats.returnRate > 0.2 ? "danger" : "warning") : stats && stats.cancelRate > 0.15 ? "danger" : "warning"}
+        />
+        <StatCard
+          title="Выкупы"
+          value={formatNumber(weeklyStats?.buyouts || (stats?.total || 0) - (stats?.cancels || 0))}
+          color="success"
         />
         <StatCard
           title="Остатки на складах"

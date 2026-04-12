@@ -2,7 +2,7 @@
   {
     "id": "wb-parser-bot",
     "name": "WB Parser Bot",
-    "description": "Telegram-бот для отслеживания позиций товаров IMSI в поисковой выдаче Wildberries. Парсит каждые 10 минут, отправляет алерты при изменении позиций.",
+    "description": "Отслеживает позиции товаров в поиске WB, алерты при изменениях",
     "project": "WB Parser",
     "type": "python",
     "scriptPath": "/Users/octopus/Projects/wb-parser/bot.py",
@@ -13,23 +13,25 @@
       "intervalMin": 10,
       "source": "APScheduler в bot.py"
     },
-    "lifecycle": "active"
+    "lifecycle": "active",
+    "nameRu": "Бот позиций"
   },
   {
     "id": "daily-sync",
     "name": "Daily Sync",
-    "description": "Синхронизация финансовых данных из WB API для дашборда. Обновляет P&L, артикулы, рекламу.",
+    "description": "Каждый час тянет реализацию, рекламу, заказы, хранение из WB API",
     "project": "Финансовый дашборд",
     "type": "node",
     "scriptPath": "/Users/octopus/Projects/website/scripts/daily-sync.js",
     "plistLabel": "com.wb-parser.daily-sync",
     "logPath": "/Users/octopus/Projects/website/data/daily-sync.log",
-    "lifecycle": "active"
+    "lifecycle": "active",
+    "nameRu": "Синхронизация финансов"
   },
   {
     "id": "weekly-sync",
     "name": "Weekly Report Sync",
-    "description": "Скачивает еженедельные Excel-отчёты из ЛК WB → weekly_reports.db. Финальные данные для P&L. Пн-Ср каждый час 10:00-23:00.",
+    "description": "Скачивает Excel-отчёты из ЛК WB (Пн-Ср), эталон для P&L",
     "project": "Финансовый дашборд",
     "type": "node",
     "scriptPath": "/Users/octopus/Projects/website/scripts/sync-weekly-report.js",
@@ -41,74 +43,59 @@
       "hours": "10-23",
       "source": "launchd StartCalendarInterval"
     },
-    "lifecycle": "active"
+    "lifecycle": "active",
+    "nameRu": "Еженедельные отчёты"
   },
   {
     "id": "mphub-website",
     "name": "MpHub Website",
-    "description": "Сайт MpHub (Next.js) — финансовый дашборд, P&L, отгрузка, мониторинг. Автоперезапуск при падении.",
+    "description": "Веб-дашборд: финансы, отгрузка, отзывы, мониторинг (порт 3000)",
     "project": "Финансовый дашборд",
     "type": "node",
     "scriptPath": "/Users/octopus/Projects/website/node_modules/.bin/next",
     "plistLabel": "com.mphub.website",
     "logPath": "/Users/octopus/Projects/website/data/website.log",
-    "lifecycle": "active"
+    "lifecycle": "active",
+    "nameRu": "Дашборд"
   },
   {
     "id": "openclaw-gateway",
     "name": "OpenClaw Gateway",
-    "description": "Основной шлюз системы AI-агентов. Обрабатывает все входящие/исходящие сообщения.",
+    "description": "Основной шлюз AI-агентов, обработка входящих/исходящих сообщений",
     "project": "OpenClaw",
     "type": "system",
     "plistLabel": "ai.openclaw.gateway",
     "logPath": null,
-    "lifecycle": "active"
+    "lifecycle": "active",
+    "nameRu": "Шлюз агентов"
   },
   {
     "id": "openclaw-backup",
     "name": "Backup Bot",
-    "description": "Автоматическое резервное копирование данных и конфигураций.",
+    "description": "Автоматическое резервное копирование данных и конфигураций",
     "project": "OpenClaw",
     "type": "system",
     "plistLabel": "ai.openclaw.backup-bot",
     "logPath": null,
-    "lifecycle": "active"
+    "lifecycle": "active",
+    "nameRu": "Резервное копирование"
   },
   {
     "id": "limits-monitor",
     "name": "Limits Monitor",
-    "description": "Мониторинг лимитов API и использования ресурсов агентами.",
+    "description": "Отслеживает использование API-лимитов агентами",
     "project": "OpenClaw",
     "type": "bash",
     "scriptPath": "/Users/octopus/.openclaw/scripts/limits-monitor.sh",
     "plistLabel": "com.openclaw.limits-monitor",
-    "logPath": "/tmp/limits-monitor-stdout.log",
-    "lifecycle": "active"
-  },
-  {
-    "id": "openclaw-watchdog",
-    "name": "Watchdog",
-    "description": "Следит за здоровьем системы агентов, перезапускает упавшие сервисы.",
-    "project": "OpenClaw",
-    "type": "system",
-    "plistLabel": "ai.openclaw.watchdog",
-    "logPath": null,
-    "lifecycle": "active"
-  },
-  {
-    "id": "openclaw-log-rotate",
-    "name": "Log Rotate",
-    "description": "Ротация логов для предотвращения переполнения диска.",
-    "project": "OpenClaw",
-    "type": "system",
-    "plistLabel": "ai.openclaw.log-rotate",
-    "logPath": null,
-    "lifecycle": "active"
+    "logPath": "/Users/octopus/.openclaw/logs/limits-monitor.log",
+    "lifecycle": "active",
+    "nameRu": "Мониторинг лимитов"
   },
   {
     "id": "shipment-sync",
     "name": "Shipment Sync",
-    "description": "Автосинхронизация данных отгрузки из WB API. Карточки, остатки, заказы. 5 раз в день.",
+    "description": "5 раз в день синхронизирует карточки, остатки, заказы из WB API",
     "project": "Финансовый дашборд",
     "type": "bash",
     "scriptPath": "/Users/octopus/Projects/website/scripts/shipment-sync.sh",
@@ -119,12 +106,13 @@
       "hours": "09,12,15,18,21",
       "source": "launchd StartCalendarInterval"
     },
-    "lifecycle": "active"
+    "lifecycle": "active",
+    "nameRu": "Синхронизация отгрузки"
   },
   {
     "id": "reviews-sync",
     "name": "Reviews Sync",
-    "description": "Автосинхронизация отзывов из WB Feedbacks API + обогащение ценой и регионом из Orders API. Каждые 10 минут.",
+    "description": "Каждые 10 мин загружает отзывы из WB, обогащает ценой и регионом",
     "project": "Отзывы",
     "type": "node",
     "scriptPath": "/Users/octopus/Projects/website/scripts/reviews-sync.js",
@@ -135,12 +123,13 @@
       "intervalMin": 10,
       "source": "launchd StartInterval"
     },
-    "lifecycle": "active"
+    "lifecycle": "active",
+    "nameRu": "Синхронизация отзывов"
   },
   {
     "id": "reviews-complaints",
     "name": "Reviews Auto-Complaints",
-    "description": "Автоматическая подача жалоб на негативные отзывы через WB Cabinet API. Каждые 30 минут.",
+    "description": "Каждые 30 мин подаёт жалобы на негативные отзывы через ЛК WB",
     "project": "Отзывы",
     "type": "node",
     "scriptPath": "/Users/octopus/Projects/website/scripts/reviews-complaints.js",
@@ -151,12 +140,13 @@
       "intervalMin": 30,
       "source": "launchd StartInterval"
     },
-    "lifecycle": "active"
+    "lifecycle": "active",
+    "nameRu": "Автожалобы"
   },
   {
     "id": "mphub-watchdog",
     "name": "MpHub Watchdog",
-    "description": "Авто-ремонт упавших сервисов. Перезапускает, анализирует ошибки через Claude Code, шлёт алерты в Telegram.",
+    "description": "Каждые 5 мин проверяет сервисы, перезапускает упавшие, алерты в Telegram",
     "project": "Финансовый дашборд",
     "type": "python",
     "scriptPath": "/Users/octopus/Projects/website/scripts/mphub-watchdog.py",
@@ -167,6 +157,43 @@
       "intervalMin": 5,
       "source": "launchd StartInterval"
     },
+    "lifecycle": "active",
+    "nameRu": "Авто-ремонт сервисов"
+  },
+  {
+    "id": "claude-proxy",
+    "name": "Claude Proxy",
+    "nameRu": "Прокси агентов",
+    "description": "Прокси OpenClaw → Anthropic API. Маскирует запросы под Claude Code, маппинг инструментов, ротация токенов (порт 9090)",
+    "project": "Proxy",
+    "type": "node",
+    "scriptPath": "/Users/octopus/Projects/proxy/proxy.js",
+    "plistLabel": "com.claude-proxy",
+    "logPath": "/Users/octopus/Projects/proxy/proxy.log",
+    "lifecycle": "active"
+  },
+  {
+    "id": "proxy-version-check",
+    "name": "Version Check",
+    "nameRu": "Проверка версии CC",
+    "description": "Каждые 6 часов сравнивает версию Claude Code с калибровкой прокси, авто-рекалибровка при расхождении",
+    "project": "Proxy",
+    "type": "bash",
+    "scriptPath": "/Users/octopus/Projects/proxy/check-version.sh",
+    "plistLabel": "com.proxy.version-check",
+    "logPath": "/Users/octopus/Projects/proxy/proxy.log",
+    "lifecycle": "active"
+  },
+  {
+    "id": "wb-refresh-tab",
+    "name": "Refresh WB Tab",
+    "nameRu": "Обновление WB-вкладки",
+    "description": "Каждые 3 часа обновляет вкладку WB в Chrome через AppleScript, поддерживает session-pow-token актуальным",
+    "project": "WB Parser",
+    "type": "bash",
+    "scriptPath": "/Users/octopus/Projects/wb-parser/refresh_wb_tab.sh",
+    "plistLabel": "com.wb-parser.refresh-tab",
+    "logPath": "/Users/octopus/Projects/wb-parser/data/refresh_tab.log",
     "lifecycle": "active"
   }
 ]

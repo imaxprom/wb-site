@@ -133,10 +133,9 @@ export function initShipmentTables(): void {
 
 export function saveOrders(orders: OrderRecord[]): void {
   const d = getDb();
-  // INSERT OR IGNORE — accumulate orders, never delete old ones
-  // If order with same (barcode, date, warehouse) exists — skip (data doesn't change)
+  // INSERT with ON CONFLICT UPDATE — accumulate orders and update cancel status
   const stmt = d.prepare(`
-    INSERT OR IGNORE INTO shipment_orders
+    INSERT INTO shipment_orders
       (date, warehouse, federal_district, region, article_seller, article_wb,
        barcode, category, subject, brand, size, total_price, discount_percent,
        spp, finished_price, price_with_disc, is_cancel, cancel_date)
@@ -144,6 +143,9 @@ export function saveOrders(orders: OrderRecord[]): void {
       (@date, @warehouse, @federalDistrict, @region, @articleSeller, @articleWB,
        @barcode, @category, @subject, @brand, @size, @totalPrice, @discountPercent,
        @spp, @finishedPrice, @priceWithDisc, @isCancel, @cancelDate)
+    ON CONFLICT(barcode, date, warehouse) DO UPDATE SET
+      is_cancel = excluded.is_cancel,
+      cancel_date = excluded.cancel_date
   `);
 
   const insert = d.transaction((rows: OrderRecord[]) => {

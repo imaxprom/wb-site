@@ -1,14 +1,15 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
 import Link from "next/link";
 import { StatCard } from "@/components/StatCard";
 import DateRangePicker from "@/components/DateRangePicker";
 import { formatNumber } from "@/lib/utils";
 import ReconciliationTab from "@/components/ReconciliationTab";
+import ForecastTab from "@/components/ForecastTab";
 import type {
-  PnlApiResult, PnlData, DailyRow, FilterOptions,
-  ArticleRow, AdCampaign, TaxSettings,
+  PnlApiResult, PnlData, DailyRow,
+  ArticleRow, TaxSettings,
 } from "@/types/finance";
 
 async function loadTaxSettings(): Promise<TaxSettings> {
@@ -45,10 +46,6 @@ const RUB = (v: number) => formatNumber(v) + " ₽";
 const PCT = (v: number) => v.toFixed(1) + "%";
 const QTY = (v: number) => formatNumber(v) + " шт";
 
-const CAMPAIGN_COLORS = [
-  "#6366f1", "#22c55e", "#f59e0b", "#ef4444", "#06b6d4",
-  "#a78bfa", "#f472b6", "#fb923c", "#34d399", "#60a5fa",
-];
 
 function marginStatus(m: number) {
   if (m > 15) return "✅";
@@ -114,23 +111,24 @@ function buildWaterfall(pnl: PnlData) {
 // ────────────────────────────────────────────────────────────
 // Main Page
 // ────────────────────────────────────────────────────────────
-type Tab = "pnl" | "daily" | "articles" | "ads" | "reconciliation" | "forecast";
+type Tab = "pnl" | "articles" | "reconciliation" | "forecast";
 
 export default function FinancePage() {
-  const [tab, setTab] = useState<Tab>("pnl");
+  const [tab, setTabState] = useState<Tab>(() => {
+    if (typeof window !== "undefined") {
+      const hash = window.location.hash.replace("#", "") as Tab;
+      if (["pnl", "articles", "reconciliation", "forecast"].includes(hash)) return hash;
+    }
+    return "pnl";
+  });
+  const setTab = (t: Tab) => {
+    setTabState(t);
+    window.location.hash = t;
+  };
   const [pnl, setPnl] = useState<PnlApiResult | null>(null);
   const [daily, setDaily] = useState<DailyRow[]>([]);
   const [articles, setArticles] = useState<ArticleRow[]>([]);
-  const [ads, setAds] = useState<AdCampaign[]>([]);
-  const [filterOptions, setFilterOptions] = useState<FilterOptions>({ suppliers: [], brands: [], subjects: [], articles: [], sizes: [] });
   const [loading, setLoading] = useState(true);
-
-  // Filter state for "По дням" tab
-  const [filterSupplier, setFilterSupplier] = useState<string>("");
-  const [filterBrand, setFilterBrand] = useState<string>("");
-  const [filterSubject, setFilterSubject] = useState<string>("");
-  const [filterArticle, setFilterArticle] = useState<string>("");
-  const [filterSize, setFilterSize] = useState<string>("");
 
   // Period filter
   const [dateFrom, setDateFrom] = useState<string>("");
@@ -143,22 +141,22 @@ export default function FinancePage() {
   // Article table state
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [sortKey, setSortKey] = useState<keyof ArticleRow>("revenue");
+  const [artCols, setArtCols] = useState<Set<string>>(() => new Set(["nm_id", "article", "sales_qty", "revenue", "ad_allocated", "margin", "profit_per_unit"]));
+  const [showArticleCols, setShowArticleCols] = useState(false);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
-  // ── Load period data from API ──
+  // ── Load period data from API (все запросы параллельно) ──
   const loadPeriodData = useCallback(async (from: string, to: string, nmId?: number) => {
     setLoading(true);
     const nmParam = nmId ? `&nm_id=${nmId}` : "";
-    const [pnlData, dailyData, articlesData, adsData] = await Promise.all([
+    const [pnlData, dailyData, articlesData] = await Promise.all([
       fetch(`/api/finance/pnl?from=${from}&to=${to}${nmParam}`).then((r) => r.json()),
       fetch(`/api/finance/daily?from=${from}&to=${to}${nmParam}`).then((r) => r.json()),
       fetch(`/api/finance/articles?from=${from}&to=${to}`).then((r) => r.json()).catch(() => []),
-      fetch(`/api/finance/ads?from=${from}&to=${to}`).then((r) => r.json()).catch(() => []),
     ]);
     setPnl(pnlData);
     setDaily(dailyData);
     setArticles(articlesData);
-    setAds(adsData);
     setLoading(false);
   }, []);
 
@@ -173,27 +171,18 @@ export default function FinancePage() {
     setDateTo(endDate.toISOString().slice(0, 10));
   }, []);
 
-  // ── Load filters, articles, ads once ──
+  // ── Load tax settings once ──
   useEffect(() => {
-    fetch("/api/finance/filters")
-      .then((r) => r.json())
-      .then((fo) => { if (fo && fo.suppliers) setFilterOptions(fo); })
-      .catch(() => {});
-
-    // Articles and ads loaded when period changes (see loadPeriodData effect)
-
     loadTaxSettings().then(setTaxSettings);
   }, []);
 
-  // ── Reload when period or article filter changes ──
+  // ── Reload when period changes ──
   useEffect(() => {
     if (dateFrom && dateTo) {
-      const nmId = filterArticle ? Number(filterArticle) : undefined;
-      loadPeriodData(dateFrom, dateTo, nmId);
+      loadPeriodData(dateFrom, dateTo);
     }
-  }, [dateFrom, dateTo, filterArticle, loadPeriodData]);
+  }, [dateFrom, dateTo, loadPeriodData]);
 
-  // ── daily from API is already filtered — use as-is ──
   const filteredDaily = daily;
 
   // ── Recalculate PnL: API provides aggregated values, we only add taxes ──
@@ -274,22 +263,8 @@ export default function FinancePage() {
   const PIE_COLORS = ["#ef4444", "#a78bfa", "#f59e0b", "#6366f1", "#22c55e", "#8888a0"];
 
   // ── Ads DRR ──
-  const totalAdSpend = useMemo(() => ads.reduce((s, c) => s + c.total, 0), [ads]);
-  const drr = useMemo(() => (recalcPnl ? (totalAdSpend / recalcPnl.realization) * 100 : 0), [recalcPnl, totalAdSpend]);
 
   // ── Ads stacked chart data ──
-  const adsChartData = useMemo(() => {
-    if (!ads.length) return [];
-    const allDates = new Set<string>();
-    ads.forEach((c) => Object.keys(c.daily).forEach((d) => allDates.add(d)));
-    return Array.from(allDates)
-      .sort()
-      .map((date) => {
-        const row: Record<string, string | number> = { date };
-        ads.forEach((c) => { row[c.name] = c.daily[date] || 0; });
-        return row;
-      });
-  }, [ads]);
 
   // ── Sorted articles ──
   const sortedArticles = useMemo(() => {
@@ -313,24 +288,7 @@ export default function FinancePage() {
     });
   }
 
-  // ── Forecast / cumulative data (uses filteredDaily) ──
-  const forecastData = useMemo(() => {
-    if (!filteredDaily.length) return [];
-    let runningProfit = 0;
-    let runningRevenue = 0;
-    return filteredDaily.map((row) => {
-      runningProfit += row.profit;
-      runningRevenue += row.realization;
-      return {
-        date: row.date.slice(5),
-        realization: row.realization,
-        orders_rub: row.orders_rub,
-        profit: row.profit,
-        running_profit: runningProfit,
-        running_revenue: runningRevenue,
-      };
-    });
-  }, [filteredDaily]);
+  // forecastData removed — forecast tab now uses its own API
 
   if (loading) {
     return (
@@ -390,10 +348,10 @@ export default function FinancePage() {
 
       {/* Tabs */}
       <div className="flex flex-wrap gap-2">
-        {(["pnl", "daily", "articles", "ads", "reconciliation", "forecast"] as Tab[]).map((t) => (
+        {(["pnl", "articles", "reconciliation", "forecast"] as Tab[]).map((t) => (
           <TabBtn
             key={t}
-            label={{ pnl: "Отчёты", daily: "По дням", articles: "Артикулы", ads: "Реклама", reconciliation: "Сверка", forecast: "Прогноз" }[t]}
+            label={{ pnl: "✓ Отчёты", articles: "Артикулы", reconciliation: "✓ Сверка", forecast: "✓ Прогноз" }[t]}
             active={tab === t}
             onClick={() => setTab(t)}
           />
@@ -566,311 +524,67 @@ export default function FinancePage() {
         );
       })()}
 
-      {/* ══════════════ TAB: По дням ══════════════ */}
-      {tab === "daily" && (
-        <div className="space-y-4">
-          {/* Filter row */}
-          {filterOptions.suppliers.length > 0 && (
-            <div className="flex flex-wrap gap-3 items-center">
-              <select
-                value={filterSupplier}
-                onChange={(e) => setFilterSupplier(e.target.value)}
-                className="bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)]"
-              >
-                <option value="">Все юрлица</option>
-                {filterOptions.suppliers.map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-              <select
-                value={filterBrand}
-                onChange={(e) => setFilterBrand(e.target.value)}
-                className="bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)]"
-              >
-                <option value="">Все бренды</option>
-                {filterOptions.brands.map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-              <select
-                value={filterSubject}
-                onChange={(e) => setFilterSubject(e.target.value)}
-                className="bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)]"
-              >
-                <option value="">Все предметы</option>
-                {filterOptions.subjects.map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-              <select
-                value={filterArticle}
-                onChange={(e) => setFilterArticle(e.target.value)}
-                className="bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)]"
-              >
-                <option value="">Арт. WB</option>
-                {filterOptions.articles.map((a) => (
-                  <option key={a.nm_id} value={String(a.nm_id)}>{a.nm_id}</option>
-                ))}
-              </select>
-              <select
-                value={filterArticle ? (filterOptions.articles.find(a => String(a.nm_id) === filterArticle)?.sa_name || "") : ""}
-                onChange={(e) => {
-                  const sa = e.target.value;
-                  if (sa) {
-                    const art = filterOptions.articles.find(a => a.sa_name === sa);
-                    setFilterArticle(art ? String(art.nm_id) : "");
-                  } else {
-                    setFilterArticle("");
-                  }
-                }}
-                className="bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)]"
-              >
-                <option value="">Арт. продавца</option>
-                {filterOptions.articles.map((a) => (
-                  <option key={a.nm_id} value={a.sa_name}>{a.sa_name}</option>
-                ))}
-              </select>
-              <select
-                value={filterSize}
-                onChange={(e) => setFilterSize(e.target.value)}
-                className="bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)]"
-              >
-                <option value="">Все размеры</option>
-                {filterOptions.sizes.map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-              {(filterSupplier || filterBrand || filterSubject || filterArticle || filterSize) && (
-                <button
-                  onClick={() => {
-                    setFilterSupplier("");
-                    setFilterBrand("");
-                    setFilterSubject("");
-                    setFilterArticle("");
-                    setFilterSize("");
-                  }}
-                  className="px-3 py-2 text-sm rounded-lg border border-[var(--danger)] text-[var(--danger)] hover:bg-[var(--danger)] hover:text-white transition-colors"
-                >
-                  Сбросить фильтры
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Active filter badges */}
-          {(filterSupplier || filterBrand || filterSubject || filterArticle || filterSize) && (
-            <div className="flex flex-wrap gap-2 text-xs">
-              {filterSupplier && (
-                <span className="bg-[var(--bg-card)] border border-[var(--accent)] text-[var(--accent)] px-2 py-1 rounded-full">
-                  Юрлицо: {filterSupplier}
-                </span>
-              )}
-              {filterBrand && (
-                <span className="bg-[var(--bg-card)] border border-[var(--accent)] text-[var(--accent)] px-2 py-1 rounded-full">
-                  Бренд: {filterBrand}
-                </span>
-              )}
-              {filterSubject && (
-                <span className="bg-[var(--bg-card)] border border-[var(--accent)] text-[var(--accent)] px-2 py-1 rounded-full">
-                  Предмет: {filterSubject}
-                </span>
-              )}
-              {filterArticle && (
-                <span className="bg-[var(--bg-card)] border border-[var(--accent)] text-[var(--accent)] px-2 py-1 rounded-full">
-                  Артикул WB: {filterArticle}
-                </span>
-              )}
-              {filterSize && (
-                <span className="bg-[var(--bg-card)] border border-[var(--accent)] text-[var(--accent)] px-2 py-1 rounded-full">
-                  Размер: {filterSize}
-                </span>
-              )}
-            </div>
-          )}
-
-          {/* Supplier info banner */}
-          {!filterSupplier && filterOptions.suppliers.length === 1 && (
-            <div className="text-sm text-[var(--text-muted)] px-1">
-              Юрлицо: <span className="text-[var(--text)] font-medium">{filterOptions.suppliers[0]}</span>
-            </div>
-          )}
-
-          {filteredDaily.length === 0 ? (
-            <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-8 text-center text-[var(--text-muted)]">
-              Нет данных за выбранный период
-            </div>
-          ) : (
-            <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-4">
-              <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-                {(() => {
-                  const SECTIONS = [
-                    { name: "Период",     cols: 1,  bg: "#12121a", border: "#555" },
-                    { name: "Деньги",     cols: 4,  bg: "#142a14", border: "#22c55e" },
-                    { name: "Штуки",      cols: 3,  bg: "#1a1a38", border: "#818cf8" },
-                    { name: "Услуги WB",  cols: 5,  bg: "#2a1414", border: "#ef4444" },
-                    { name: "Итог",       cols: 2,  bg: "#2a2a10", border: "#f59e0b" },
-                  ] as const;
-
-                  type ColDef = {
-                    key: keyof DailyRow | "margin_pct";
-                    label: string;
-                    section: number;
-                    first?: boolean;
-                    rub?: boolean;
-                    qty?: boolean;
-                    pct?: boolean;
-                    date?: boolean;
-                  };
-
-                  const COLS: ColDef[] = [
-                    // Период
-                    { key: "date", label: "Дата", section: 0, date: true },
-                    // Деньги
-                    { key: "realization", label: "Реализация", section: 1, first: true, rub: true },
-                    { key: "sales_rub", label: "Продажи", section: 1, rub: true },
-                    { key: "returns_rub", label: "Возвраты", section: 1, rub: true },
-                    { key: "orders_rub", label: "Заказы", section: 1, rub: true },
-                    // Штуки
-                    { key: "sales_qty", label: "Продажи шт", section: 2, first: true, qty: true },
-                    { key: "returns_qty", label: "Возвраты шт", section: 2, qty: true },
-                    { key: "net_qty", label: "Итого шт", section: 2, qty: true },
-                    // Услуги
-                    { key: "commission", label: "Комиссия", section: 3, first: true, rub: true },
-                    { key: "logistics", label: "Логистика", section: 3, rub: true },
-                    { key: "storage", label: "Хранение", section: 3, rub: true },
-                    { key: "penalty", label: "Штрафы", section: 3, rub: true },
-                    { key: "ad_spend", label: "Реклама", section: 3, rub: true },
-                    // Итог
-                    { key: "cogs", label: "Себестоим.", section: 4, first: true, rub: true },
-                    { key: "profit", label: "Прибыль", section: 4, rub: true },
-                  ];
-
-                  return (
-                    <table style={{ fontSize: 14, borderCollapse: "collapse", width: "100%", minWidth: 900 }}>
-                      <thead>
-                        <tr>
-                          {SECTIONS.map((s, i) => (
-                            <th
-                              key={i}
-                              colSpan={s.cols}
-                              style={{
-                                textAlign: "center",
-                                background: s.bg,
-                                borderLeft: `2px solid ${s.border}`,
-                                borderBottom: `2px solid ${s.border}`,
-                                padding: "10px 8px",
-                                fontSize: "12px",
-                                fontWeight: 700,
-                                color: "#e4e4ef",
-                                letterSpacing: "0.03em",
-                              }}
-                            >
-                              {s.name}
-                            </th>
-                          ))}
-                        </tr>
-                        <tr>
-                          {COLS.map((col, i) => {
-                            const sec = SECTIONS[col.section];
-                            return (
-                              <th
-                                key={i}
-                                style={{
-                                  background: sec.bg,
-                                  borderLeft: col.first ? `2px solid ${sec.border}` : undefined,
-                                  padding: "8px 10px",
-                                  fontSize: "11px",
-                                  fontWeight: 600,
-                                  color: "#8888a0",
-                                  textTransform: "uppercase",
-                                  letterSpacing: "0.04em",
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
-                                {col.label}
-                              </th>
-                            );
-                          })}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredDaily.map((row) => {
-                          const margin = row.realization > 0 ? (row.profit / row.realization) * 100 : 0;
-                          return (
-                            <tr key={row.date}>
-                              {COLS.map((col, i) => {
-                                const sec = SECTIONS[col.section];
-                                const rawVal = col.key === "margin_pct" ? margin : row[col.key as keyof DailyRow];
-                                const numVal = typeof rawVal === "number" ? rawVal : 0;
-                                return (
-                                  <td
-                                    key={i}
-                                    style={{
-                                      borderLeft: col.first ? `2px solid ${sec.border}` : undefined,
-                                      textAlign: col.date ? "left" : "right",
-                                      fontVariantNumeric: "tabular-nums",
-                                      fontSize: "13px",
-                                      padding: "8px 10px",
-                                      whiteSpace: "nowrap",
-                                      color:
-                                        col.key === "profit"
-                                          ? numVal >= 0 ? "#66BB6A" : "#EF5350"
-                                          : undefined,
-                                    }}
-                                  >
-                                    {col.date
-                                      ? (rawVal as string).slice(8) + "." + (rawVal as string).slice(5, 7)
-                                      : col.rub
-                                      ? formatNumber(Math.round(numVal)) + " ₽"
-                                      : col.qty
-                                      ? formatNumber(numVal) + " шт"
-                                      : col.pct
-                                      ? numVal.toFixed(1) + "%"
-                                      : formatNumber(Math.round(numVal))}
-                                  </td>
-                                );
-                              })}
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  );
-                })()}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* ══════════════ TAB: Артикулы ══════════════ */}
-      {tab === "articles" && (
+      {tab === "articles" && (() => {
+        const ART_COLS: { key: string; label: string; defaultOn: boolean; isText?: boolean; render: (a: ArticleRow & Record<string, number>) => string | React.ReactNode }[] = [
+          { key: "nm_id", label: "Артикул WB", defaultOn: true, isText: true, render: a => <span className="font-mono text-[var(--text-muted)] text-xs">{a.nm_id}</span> },
+          { key: "article", label: "Артикул продавца", defaultOn: true, isText: true, render: a => <span className="font-mono text-[var(--accent)] text-xs">{a.article}</span> },
+          { key: "sales_qty", label: "Продажи шт", defaultOn: true, render: a => QTY(a.sales_qty) },
+          { key: "returns_qty", label: "Возвраты шт", defaultOn: false, render: a => QTY(a.returns_qty) },
+          { key: "net_qty", label: "Чистые шт", defaultOn: false, render: a => QTY(a.net_qty) },
+          { key: "revenue", label: "Выручка", defaultOn: true, render: a => RUB(a.revenue) },
+          { key: "avg_price", label: "Ср. цена/шт", defaultOn: false, render: a => RUB(a.avg_price) },
+          { key: "cogs_unit", label: "Себест./шт", defaultOn: false, render: a => RUB(a.cogs_unit) },
+          { key: "commission_unit", label: "Комисс./шт", defaultOn: false, render: a => RUB(a.commission_unit || 0) },
+          { key: "log_per_unit", label: "Логист./шт", defaultOn: false, render: a => RUB(a.log_per_unit) },
+          { key: "tax_unit", label: "Налоги/шт", defaultOn: false, render: a => RUB(a.tax_unit || 0) },
+          { key: "ad_allocated", label: "Реклама", defaultOn: true, render: a => RUB(a.ad_allocated) },
+          { key: "ad_per_unit", label: "Реклама/шт", defaultOn: false, render: a => RUB(a.ad_per_unit || 0) },
+          { key: "margin", label: "Маржа %", defaultOn: true, render: a => <span className={`font-semibold ${marginColor(a.margin)}`}>{PCT(a.margin)}</span> },
+          { key: "profit_per_unit", label: "Прибыль/шт", defaultOn: true, render: a => RUB(a.profit_per_unit) },
+        ];
+        return (
         <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
-          <h3 className="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wide mb-4">
-            Юнит-экономика по артикулам
-          </h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wide">
+              Юнит-экономика по артикулам
+            </h3>
+            <div className="relative">
+              <button
+                onClick={() => setShowArticleCols(!showArticleCols)}
+                className="p-2 rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:text-white hover:border-[var(--accent)] transition-colors text-xs"
+              >
+                Столбцы ({ART_COLS.filter(c => artCols.has(c.key)).length}/{ART_COLS.length})
+              </button>
+              {showArticleCols && (
+                <div className="absolute right-0 top-10 z-50 bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-3 shadow-xl min-w-[200px]">
+                  {ART_COLS.map(c => (
+                    <label key={c.key} className="flex items-center gap-2 py-1 cursor-pointer text-xs">
+                      <input type="checkbox" checked={artCols.has(c.key)} onChange={() => {
+                        setArtCols(prev => { const next = new Set(prev); next.has(c.key) ? next.delete(c.key) : next.add(c.key); return next; });
+                      }} className="rounded" />
+                      <span className={artCols.has(c.key) ? "text-white" : "text-[var(--text-muted)]"}>{c.label}</span>
+                    </label>
+                  ))}
+                  <div className="border-t border-[var(--border)] mt-2 pt-2 flex gap-2">
+                    <button onClick={() => setArtCols(new Set(ART_COLS.map(c => c.key)))} className="text-[10px] text-[var(--accent)] hover:underline">Все</button>
+                    <button onClick={() => setArtCols(new Set(ART_COLS.filter(c => c.defaultOn).map(c => c.key)))} className="text-[10px] text-[var(--text-muted)] hover:underline">По умолчанию</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
           <div className="data-table-wrapper">
             <table className="data-table">
               <thead>
                 <tr>
-                  {(
-                    [
-                      ["article", "Артикул"],
-                      ["sales_qty", "Продажи шт"],
-                      ["revenue", "Выручка"],
-                      ["cogs_unit", "Себ/шт"],
-                      ["log_per_unit", "Логист/шт"],
-                      ["ad_allocated", "Реклама"],
-                      ["margin", "Маржа %"],
-                      ["profit_per_unit", "Прибыль/шт"],
-                    ] as [keyof ArticleRow, string][]
-                  ).map(([key, label]) => (
+                  {ART_COLS.filter(c => artCols.has(c.key)).map(col => (
                     <th
-                      key={key}
-                      className={key !== "article" ? "num cursor-pointer select-none" : "cursor-pointer select-none"}
-                      onClick={() => toggleSort(key)}
+                      key={col.key}
+                      className={col.isText ? "cursor-pointer select-none" : "num cursor-pointer select-none"}
+                      onClick={() => toggleSort(col.key as keyof ArticleRow)}
                     >
-                      {label} {sortKey === key ? (sortDir === "desc" ? "↓" : "↑") : ""}
+                      {col.label} {sortKey === col.key ? (sortDir === "desc" ? "↓" : "↑") : ""}
                     </th>
                   ))}
                   <th>Статус</th>
@@ -878,141 +592,21 @@ export default function FinancePage() {
               </thead>
               <tbody>
                 {sortedArticles.map((art) => (
-                  <>
-                    <tr
-                      key={art.nm_id}
-                      className="cursor-pointer"
-                      onClick={() => toggleExpand(art.nm_id)}
-                    >
-                      <td className="font-mono text-[var(--accent)] text-xs">{art.article}</td>
-                      <td className="num">{QTY(art.sales_qty)}</td>
-                      <td className="num">{RUB(art.revenue)}</td>
-                      <td className="num">{RUB(art.cogs_unit)}</td>
-                      <td className="num">{RUB(art.log_per_unit)}</td>
-                      <td className="num">{RUB(art.ad_allocated)}</td>
-                      <td className={`num font-semibold ${marginColor(art.margin)}`}>{PCT(art.margin)}</td>
-                      <td className="num">{RUB(art.profit_per_unit)}</td>
-                      <td className="text-center text-lg">{marginStatus(art.margin)}</td>
-                    </tr>
-                    {expanded.has(art.nm_id) && (
-                      <tr key={`${art.nm_id}-exp`}>
-                        <td colSpan={9} className="p-0">
-                          <div className="bg-[var(--bg)] border-t border-b border-[var(--border)] px-4 py-3">
-                            <p className="text-xs text-[var(--text-muted)] mb-2 uppercase tracking-wide">
-                              Детализация по дням
-                            </p>
-                            <table className="data-table text-xs">
-                              <thead>
-                                <tr>
-                                  <th>Дата</th>
-                                  <th className="num">Заказы</th>
-                                  <th className="num">Отмены</th>
-                                  <th className="num">Продажи</th>
-                                  <th className="num">Возвраты</th>
-                                  <th className="num">Выручка</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {art.daily.map((d) => (
-                                  <tr key={d.date}>
-                                    <td className="font-mono text-[var(--text-muted)]">{d.date}</td>
-                                    <td className="num">{formatNumber(d.orders)}</td>
-                                    <td className="num cell-negative">{formatNumber(d.cancels)}</td>
-                                    <td className="num">{formatNumber(d.sales)}</td>
-                                    <td className="num cell-warning">{formatNumber(d.returns)}</td>
-                                    <td className="num">{d.revenue > 0 ? RUB(d.revenue) : "—"}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </>
+                  <tr key={art.nm_id}>
+                    {ART_COLS.filter(c => artCols.has(c.key)).map(col => (
+                      <td key={col.key} className={col.isText ? "" : "num"}>
+                        {col.render(art as ArticleRow & Record<string, number>)}
+                      </td>
+                    ))}
+                    <td className="text-center text-lg">{marginStatus(art.margin)}</td>
+                  </tr>
                 ))}
               </tbody>
             </table>
           </div>
         </div>
-      )}
-
-      {/* ══════════════ TAB: Реклама ══════════════ */}
-      {tab === "ads" && (
-        <div className="space-y-6">
-          {/* DRR badge */}
-          <div className="flex items-center gap-4">
-            <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] px-6 py-4">
-              <p className="text-xs text-[var(--text-muted)] uppercase tracking-wide">Общий DRR</p>
-              <p className={`text-2xl font-bold mt-1 ${drr < 12 ? "text-[var(--success)]" : drr < 18 ? "text-[var(--warning)]" : "text-[var(--danger)]"}`}>
-                {PCT(drr)}
-              </p>
-            </div>
-            <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] px-6 py-4">
-              <p className="text-xs text-[var(--text-muted)] uppercase tracking-wide">Расход всего</p>
-              <p className="text-2xl font-bold mt-1 text-[var(--danger)]">{RUB(totalAdSpend)}</p>
-            </div>
-          </div>
-
-          {/* Table */}
-          <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
-            <h3 className="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wide mb-4">
-              Кампании
-            </h3>
-            <div className="data-table-wrapper">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Название кампании</th>
-                    <th className="num">Расход</th>
-                    <th className="num">Дней</th>
-                    <th className="num">Средний/день</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ads.map((c) => {
-                    const days = Object.keys(c.daily).length;
-                    return (
-                      <tr key={c.id}>
-                        <td className="font-medium">{c.name}</td>
-                        <td className="num cell-negative">{RUB(c.total)}</td>
-                        <td className="num text-[var(--text-muted)]">{days}</td>
-                        <td className="num">{days > 0 ? RUB(Math.round(c.total / days)) : "—"}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Stacked bar chart */}
-          <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
-            <h3 className="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wide mb-4">
-              Расход по дням (stacked)
-            </h3>
-            <ResponsiveContainer width="100%" height={320}>
-              <BarChart data={adsChartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis dataKey="date" tick={{ fill: "#8888a0", fontSize: 10 }} />
-                <YAxis
-                  tickFormatter={(v) => formatNumber(Math.round(v / 1000)) + "k"}
-                  tick={{ fill: "#8888a0", fontSize: 11 }}
-                />
-                <Tooltip
-                  contentStyle={{ background: "#12121a", border: "1px solid #2a2a3a", borderRadius: 8, color: "#e4e4ef" }}
-                  itemStyle={{ color: "#e4e4ef" }}
-                  formatter={(v) => RUB(Number(v))}
-                />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                {ads.map((c, i) => (
-                  <Bar key={c.id} dataKey={c.name} stackId="a" fill={CAMPAIGN_COLORS[i % CAMPAIGN_COLORS.length]} />
-                ))}
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ══════════════ TAB: Сверка ══════════════ */}
       {tab === "reconciliation" && (
@@ -1020,67 +614,7 @@ export default function FinancePage() {
       )}
 
       {/* ══════════════ TAB: Прогноз ══════════════ */}
-      {tab === "forecast" && (
-        <div className="space-y-6">
-          {/* LineChart */}
-          <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
-            <h3 className="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wide mb-4">
-              Нарастающая: реализация vs прибыль
-            </h3>
-            <ResponsiveContainer width="100%" height={280}>
-              <LineChart data={forecastData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis dataKey="date" tick={{ fill: "#8888a0", fontSize: 11 }} />
-                <YAxis
-                  tickFormatter={(v) => formatNumber(Math.round(v / 1000)) + "k"}
-                  tick={{ fill: "#8888a0", fontSize: 11 }}
-                />
-                <Tooltip
-                  contentStyle={{ background: "#12121a", border: "1px solid #2a2a3a", borderRadius: 8, color: "#e4e4ef" }}
-                  itemStyle={{ color: "#e4e4ef" }}
-                  formatter={(v) => RUB(Number(v))}
-                />
-                <Legend />
-                <Line type="monotone" dataKey="running_revenue" name="Нарастающая реализация" stroke="var(--success)" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="running_profit" name="Нарастающая прибыль" stroke="var(--accent)" strokeWidth={2} dot={false} strokeDasharray="6 3" />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Table */}
-          <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
-            <h3 className="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wide mb-4">
-              Прибыль по дням
-            </h3>
-            <div className="data-table-wrapper">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Дата</th>
-                    <th className="num">Реализация</th>
-                    <th className="num">Заказы ₽</th>
-                    <th className="num">Прибыль</th>
-                    <th className="num">Нараст. реализация</th>
-                    <th className="num">Нараст. прибыль</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {forecastData.map((row) => (
-                    <tr key={row.date}>
-                      <td className="font-mono text-[var(--text-muted)]">{row.date}</td>
-                      <td className="num">{RUB(row.realization)}</td>
-                      <td className="num">{RUB(row.orders_rub)}</td>
-                      <td className={`num ${row.profit >= 0 ? "cell-positive" : "cell-negative"}`}>{RUB(row.profit)}</td>
-                      <td className="num text-[var(--success)]">{RUB(row.running_revenue)}</td>
-                      <td className="num text-[var(--accent)]">{RUB(row.running_profit)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
+      {tab === "forecast" && <ForecastTab dateFrom={dateFrom} dateTo={dateTo} />}
     </div>
   );
 }

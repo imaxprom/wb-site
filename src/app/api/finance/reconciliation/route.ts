@@ -171,7 +171,8 @@ function getLoyaltyCompensation(db: Database.Database | null, dateFrom: string, 
 
 /**
  * GET /api/finance/reconciliation
- * Три столбца: API недельный | Excel ЛК | 7 дней ежедневный
+ * Сверка: API weekly_final vs Excel ЛК
+ * Показывает расхождения между двумя источниками данных WB
  */
 export async function GET(request: NextRequest) {
   try {
@@ -188,8 +189,8 @@ export async function GET(request: NextRequest) {
 
     // Все недели с weekly_final
     const weeks = finDb.prepare(`
-      SELECT DISTINCT date_from, date_to 
-      FROM realization 
+      SELECT DISTINCT date_from, date_to
+      FROM realization
       WHERE source = 'weekly_final' AND date_from != '' AND date_to != ''
       GROUP BY date_from, date_to
       ORDER BY date_from DESC
@@ -198,8 +199,8 @@ export async function GET(request: NextRequest) {
 
     const result: Array<{
       dateFrom: string; dateTo: string; status: "final" | "preliminary";
-      apiWeekly: WeekMetrics; excelLk: WeekMetrics; daily7: WeekMetrics;
-      hasDaily: boolean; hasExcel: boolean;
+      apiWeekly: WeekMetrics; excelLk: WeekMetrics;
+      hasExcel: boolean;
     }> = weeks.map(w => {
       const apiWeekly = getFinanceMetrics(finDb, w.date_from, w.date_to, "weekly_final");
       // weekly_final в finance.db имеет additional_payment=0 для лояльности,
@@ -208,9 +209,7 @@ export async function GET(request: NextRequest) {
       if (loyaltyFromWeekly !== 0) {
         apiWeekly.compensation = loyaltyFromWeekly;
       }
-      const daily7 = getFinanceMetrics(finDb, w.date_from, w.date_to, "daily");
       const excelLk = wkDb ? getExcelMetrics(wkDb, w.date_from, w.date_to) : { ...EMPTY_METRICS };
-      const hasDaily = daily7.sales > 0 || daily7.logistics > 0;
       const hasExcel = excelLk.sales > 0 || excelLk.logistics > 0;
 
       return {
@@ -219,40 +218,25 @@ export async function GET(request: NextRequest) {
         status: "final" as const,
         apiWeekly,
         excelLk,
-        daily7,
-        hasDaily,
         hasExcel,
       };
     });
 
-    // Текущая неделя (только daily, нет weekly_final)
-    const now = new Date();
-    const msk = new Date(now.getTime() + 3 * 60 * 60 * 1000);
-    const dayOfWeek = msk.getDay();
-    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-    const thisMonday = new Date(msk);
-    thisMonday.setDate(msk.getDate() - daysToMonday);
-    const thisMondayStr = thisMonday.toISOString().slice(0, 10);
-    const todayStr = msk.toISOString().slice(0, 10);
-
-    const currentDaily = getFinanceMetrics(finDb, thisMondayStr, todayStr);
-    if (currentDaily.sales > 0) {
-      result.unshift({
-        dateFrom: thisMondayStr,
-        dateTo: todayStr,
-        status: "preliminary",
-        apiWeekly: { ...EMPTY_METRICS },
-        excelLk: { ...EMPTY_METRICS },
-        daily7: currentDaily,
-        hasDaily: true,
-        hasExcel: false,
-      });
+    // Итог по всем завершённым неделям (суммы API и Excel)
+    const totalApi: WeekMetrics = { ...EMPTY_METRICS };
+    const totalExcel: WeekMetrics = { ...EMPTY_METRICS };
+    for (const w of result) {
+      if (w.status !== "final") continue;
+      for (const key of Object.keys(EMPTY_METRICS) as (keyof WeekMetrics)[]) {
+        totalApi[key] += w.apiWeekly[key];
+        if (w.hasExcel) totalExcel[key] += w.excelLk[key];
+      }
     }
 
     finDb.close();
     wkDb?.close();
 
-    return NextResponse.json(result);
+    return NextResponse.json({ weeks: result, totalApi, totalExcel });
   } catch (error) {
     return apiError(error);
   }

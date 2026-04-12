@@ -1,11 +1,12 @@
 {
-  "timestamp": "2026-04-07T22:06:36.246407+03:00",
+  "timestamp": "2026-04-12T13:47:46.818138+03:00",
   "machine": "MacBook Air",
   "services": [
     {
       "id": "wb-parser-bot",
       "name": "WB Parser Bot",
-      "description": "Telegram-бот для отслеживания позиций товаров IMSI в поисковой выдаче Wildberries. Парсит каждые 10 минут, отправляет алерты при изменении позиций.",
+      "nameRu": "Бот позиций",
+      "description": "Отслеживает позиции товаров в поиске WB, алерты при изменениях",
       "project": "WB Parser",
       "type": "python",
       "scriptPath": "/Users/octopus/Projects/wb-parser/bot.py",
@@ -13,16 +14,16 @@
       "logPath": "/Users/octopus/Projects/wb-parser/data/bot.log",
       "status": "running",
       "pid": 1559,
-      "uptime": "4d 6h 17m",
-      "uptimeSeconds": 368221,
-      "lastRun": "2026-04-07T22:00:14+03:00",
-      "nextRun": "2026-04-07T22:10:00+03:00",
+      "uptime": "8d 21h 58m",
+      "uptimeSeconds": 770291,
+      "lastRun": "2026-04-12T13:40:28+03:00",
+      "nextRun": "2026-04-12T13:50:00+03:00",
       "schedule": {
         "type": "interval",
         "intervalMin": 10,
         "source": "APScheduler в bot.py"
       },
-      "runsToday": 132,
+      "runsToday": 82,
       "runsTotal": 144,
       "errorsLast24h": 0,
       "lastErrors": [],
@@ -33,18 +34,19 @@
     {
       "id": "daily-sync",
       "name": "Daily Sync",
-      "description": "Синхронизация финансовых данных из WB API для дашборда. Обновляет P&L, артикулы, рекламу.",
+      "nameRu": "Синхронизация финансов",
+      "description": "Каждый час тянет реализацию, рекламу, заказы, хранение из WB API",
       "project": "Финансовый дашборд",
       "type": "node",
       "scriptPath": "/Users/octopus/Projects/website/scripts/daily-sync.js",
       "plistLabel": "com.wb-parser.daily-sync",
       "logPath": "/Users/octopus/Projects/website/data/daily-sync.log",
-      "status": "stopped",
+      "status": "idle",
       "pid": null,
       "uptime": "0m",
       "uptimeSeconds": 0,
-      "lastRun": "2026-04-07T19:00:03+03:00",
-      "nextRun": "2026-04-07T23:00:00+03:00",
+      "lastRun": "2026-04-12T06:00:03+03:00",
+      "nextRun": "2026-04-12T14:00:00+03:00",
       "schedule": {
         "type": "calendar_range",
         "hours": [
@@ -71,31 +73,10 @@
         "description": "каждый час 06:00–23:00",
         "runsPerDay": 18
       },
-      "runsToday": 17,
+      "runsToday": 8,
       "runsTotal": 18,
-      "errorsLast24h": 6,
-      "lastErrors": [
-        {
-          "time": "04:00",
-          "message": "[2026-04-06T04:00:06.181Z]   Weekly error: Unexpected end of JSON input"
-        },
-        {
-          "time": "05:00",
-          "message": "[2026-04-06T05:00:02.910Z]   Weekly error: Unexpected end of JSON input"
-        },
-        {
-          "time": "05:00",
-          "message": "[2026-04-06T05:00:02.910Z]   Weekly error: Unexpected end of JSON input"
-        },
-        {
-          "time": "06:00",
-          "message": "[2026-04-06T06:00:04.890Z]   Weekly error: Unexpected end of JSON input"
-        },
-        {
-          "time": "06:00",
-          "message": "[2026-04-06T06:00:04.890Z]   Weekly error: Unexpected end of JSON input"
-        }
-      ],
+      "errorsLast24h": 0,
+      "lastErrors": [],
       "fileHash": "949aabab",
       "lastModified": "2026-04-04T13:53:37.741846+03:00",
       "lifecycle": "active"
@@ -103,18 +84,19 @@
     {
       "id": "weekly-sync",
       "name": "Weekly Report Sync",
-      "description": "Скачивает еженедельные Excel-отчёты из ЛК WB → weekly_reports.db. Финальные данные для P&L. Пн-Ср каждый час 10:00-23:00.",
+      "nameRu": "Еженедельные отчёты",
+      "description": "Скачивает Excel-отчёты из ЛК WB (Пн-Ср), эталон для P&L",
       "project": "Финансовый дашборд",
       "type": "node",
       "scriptPath": "/Users/octopus/Projects/website/scripts/sync-weekly-report.js",
       "plistLabel": "com.wb-parser.weekly-sync",
       "logPath": "/Users/octopus/Projects/website/data/weekly-sync.log",
-      "status": "stopped",
+      "status": "idle",
       "pid": null,
       "uptime": "0m",
       "uptimeSeconds": 0,
-      "lastRun": null,
-      "nextRun": "2026-04-08T00:00:00+03:00",
+      "lastRun": "2026-04-09T06:00:01+03:00",
+      "nextRun": "2026-04-13T00:00:00+03:00",
       "schedule": {
         "type": "calendar",
         "days": "Пн-Ср",
@@ -132,16 +114,17 @@
     {
       "id": "mphub-website",
       "name": "MpHub Website",
-      "description": "Сайт MpHub (Next.js) — финансовый дашборд, P&L, отгрузка, мониторинг. Автоперезапуск при падении.",
+      "nameRu": "Дашборд",
+      "description": "Веб-дашборд: финансы, отгрузка, отзывы, мониторинг (порт 3000)",
       "project": "Финансовый дашборд",
       "type": "node",
       "scriptPath": "/Users/octopus/Projects/website/node_modules/.bin/next",
       "plistLabel": "com.mphub.website",
       "logPath": "/Users/octopus/Projects/website/data/website.log",
       "status": "running",
-      "pid": 5237,
-      "uptime": "2h 44m",
-      "uptimeSeconds": 9879,
+      "pid": 27708,
+      "uptime": "0m",
+      "uptimeSeconds": 10,
       "lastRun": null,
       "nextRun": null,
       "schedule": {
@@ -159,16 +142,17 @@
     {
       "id": "openclaw-gateway",
       "name": "OpenClaw Gateway",
-      "description": "Основной шлюз системы AI-агентов. Обрабатывает все входящие/исходящие сообщения.",
+      "nameRu": "Шлюз агентов",
+      "description": "Основной шлюз AI-агентов, обработка входящих/исходящих сообщений",
       "project": "OpenClaw",
       "type": "system",
       "scriptPath": null,
       "plistLabel": "ai.openclaw.gateway",
       "logPath": null,
       "status": "running",
-      "pid": 90895,
-      "uptime": "5h 41m",
-      "uptimeSeconds": 20508,
+      "pid": 2982,
+      "uptime": "3h 46m",
+      "uptimeSeconds": 13590,
       "lastRun": null,
       "nextRun": null,
       "schedule": {
@@ -186,16 +170,17 @@
     {
       "id": "openclaw-backup",
       "name": "Backup Bot",
-      "description": "Автоматическое резервное копирование данных и конфигураций.",
+      "nameRu": "Резервное копирование",
+      "description": "Автоматическое резервное копирование данных и конфигураций",
       "project": "OpenClaw",
       "type": "system",
       "scriptPath": null,
       "plistLabel": "ai.openclaw.backup-bot",
       "logPath": null,
       "status": "running",
-      "pid": 8893,
-      "uptime": "2d 4h 42m",
-      "uptimeSeconds": 189773,
+      "pid": 36740,
+      "uptime": "13h 46m",
+      "uptimeSeconds": 49609,
       "lastRun": null,
       "nextRun": null,
       "schedule": {
@@ -213,24 +198,25 @@
     {
       "id": "limits-monitor",
       "name": "Limits Monitor",
-      "description": "Мониторинг лимитов API и использования ресурсов агентами.",
+      "nameRu": "Мониторинг лимитов",
+      "description": "Отслеживает использование API-лимитов агентами",
       "project": "OpenClaw",
       "type": "bash",
       "scriptPath": "/Users/octopus/.openclaw/scripts/limits-monitor.sh",
       "plistLabel": "com.openclaw.limits-monitor",
-      "logPath": "/tmp/limits-monitor-stdout.log",
-      "status": "stopped",
+      "logPath": "/Users/octopus/.openclaw/logs/limits-monitor.log",
+      "status": "idle",
       "pid": null,
       "uptime": "0m",
       "uptimeSeconds": 0,
-      "lastRun": null,
-      "nextRun": "2026-04-07T22:08:00+03:00",
+      "lastRun": "2026-04-12T13:46:53+03:00",
+      "nextRun": "2026-04-12T13:48:00+03:00",
       "schedule": {
         "type": "interval",
         "intervalMin": 2,
         "description": "каждые 2 мин"
       },
-      "runsToday": 663,
+      "runsToday": 413,
       "runsTotal": 720,
       "errorsLast24h": 0,
       "lastErrors": [],
@@ -239,77 +225,21 @@
       "lifecycle": "active"
     },
     {
-      "id": "openclaw-watchdog",
-      "name": "Watchdog",
-      "description": "Следит за здоровьем системы агентов, перезапускает упавшие сервисы.",
-      "project": "OpenClaw",
-      "type": "system",
-      "scriptPath": null,
-      "plistLabel": "ai.openclaw.watchdog",
-      "logPath": null,
-      "status": "stopped",
-      "pid": null,
-      "uptime": "0m",
-      "uptimeSeconds": 0,
-      "lastRun": null,
-      "nextRun": "2026-04-07T22:07:00+03:00",
-      "schedule": {
-        "type": "interval",
-        "intervalMin": 1,
-        "description": "каждые 1 мин"
-      },
-      "runsToday": 1326,
-      "runsTotal": 1440,
-      "errorsLast24h": 0,
-      "lastErrors": [],
-      "fileHash": "",
-      "lastModified": "",
-      "lifecycle": "active"
-    },
-    {
-      "id": "openclaw-log-rotate",
-      "name": "Log Rotate",
-      "description": "Ротация логов для предотвращения переполнения диска.",
-      "project": "OpenClaw",
-      "type": "system",
-      "scriptPath": null,
-      "plistLabel": "ai.openclaw.log-rotate",
-      "logPath": null,
-      "status": "stopped",
-      "pid": null,
-      "uptime": "0m",
-      "uptimeSeconds": 0,
-      "lastRun": null,
-      "nextRun": "2026-04-08T04:00:00+03:00",
-      "schedule": {
-        "type": "calendar",
-        "hour": 4,
-        "minute": 0,
-        "description": "ежедневно в 04:00"
-      },
-      "runsToday": -1,
-      "runsTotal": -1,
-      "errorsLast24h": 0,
-      "lastErrors": [],
-      "fileHash": "",
-      "lastModified": "",
-      "lifecycle": "active"
-    },
-    {
       "id": "shipment-sync",
       "name": "Shipment Sync",
-      "description": "Автосинхронизация данных отгрузки из WB API. Карточки, остатки, заказы. 5 раз в день.",
+      "nameRu": "Синхронизация отгрузки",
+      "description": "5 раз в день синхронизирует карточки, остатки, заказы из WB API",
       "project": "Финансовый дашборд",
       "type": "bash",
       "scriptPath": "/Users/octopus/Projects/website/scripts/shipment-sync.sh",
       "plistLabel": "com.mphub.shipment-sync",
       "logPath": "/Users/octopus/Projects/website/data/shipment-sync.log",
-      "status": "stopped",
+      "status": "idle",
       "pid": null,
       "uptime": "0m",
       "uptimeSeconds": 0,
-      "lastRun": null,
-      "nextRun": "2026-04-08T00:00:00+03:00",
+      "lastRun": "2026-04-12 07:00:09+03:00",
+      "nextRun": "2026-04-13T00:00:00+03:00",
       "schedule": {
         "type": "calendar",
         "hours": "09,12,15,18,21",
@@ -326,24 +256,25 @@
     {
       "id": "reviews-sync",
       "name": "Reviews Sync",
-      "description": "Автосинхронизация отзывов из WB Feedbacks API + обогащение ценой и регионом из Orders API. Каждые 10 минут.",
+      "nameRu": "Синхронизация отзывов",
+      "description": "Каждые 10 мин загружает отзывы из WB, обогащает ценой и регионом",
       "project": "Отзывы",
       "type": "node",
       "scriptPath": "/Users/octopus/Projects/website/scripts/reviews-sync.js",
       "plistLabel": "com.wb-parser.reviews-sync",
       "logPath": "/Users/octopus/Projects/website/data/reviews-sync.log",
-      "status": "unknown",
+      "status": "idle",
       "pid": null,
       "uptime": "0m",
       "uptimeSeconds": 0,
-      "lastRun": "2026-04-04T05:40:18+03:00",
-      "nextRun": "2026-04-07T22:10:00+03:00",
+      "lastRun": "2026-04-12T10:38:48+03:00",
+      "nextRun": "2026-04-12T13:50:00+03:00",
       "schedule": {
         "type": "interval",
         "intervalMin": 10,
         "source": "launchd StartInterval"
       },
-      "runsToday": 132,
+      "runsToday": 82,
       "runsTotal": 144,
       "errorsLast24h": 0,
       "lastErrors": [],
@@ -354,27 +285,45 @@
     {
       "id": "reviews-complaints",
       "name": "Reviews Auto-Complaints",
-      "description": "Автоматическая подача жалоб на негативные отзывы через WB Cabinet API. Каждые 30 минут.",
+      "nameRu": "Автожалобы",
+      "description": "Каждые 30 мин подаёт жалобы на негативные отзывы через ЛК WB",
       "project": "Отзывы",
       "type": "node",
       "scriptPath": "/Users/octopus/Projects/website/scripts/reviews-complaints.js",
       "plistLabel": "com.wb-parser.reviews-complaints",
       "logPath": "/Users/octopus/Projects/website/data/reviews-complaints.log",
-      "status": "stopped",
+      "status": "idle",
       "pid": null,
       "uptime": "0m",
       "uptimeSeconds": 0,
-      "lastRun": "2026-04-07T18:53:02+03:00",
-      "nextRun": "2026-04-07T22:30:00+03:00",
+      "lastRun": "2026-04-12T10:37:18+03:00",
+      "nextRun": "2026-04-12T14:00:00+03:00",
       "schedule": {
         "type": "interval",
         "intervalMin": 30,
         "source": "launchd StartInterval"
       },
-      "runsToday": 44,
+      "runsToday": 27,
       "runsTotal": 48,
-      "errorsLast24h": 0,
-      "lastErrors": [],
+      "errorsLast24h": 4,
+      "lastErrors": [
+        {
+          "time": "03:33",
+          "message": "[2026-04-12T03:33:32.756Z]   ERROR on review xK1PRJ7QGG3NyPjxxsm4: HTTP 200: {\"data\":{},\"additionalErrors\":\"rest.AddFeedbackComplaints: \",\"errorText\":\"invalid-request-input\",\"error\":true}"
+        },
+        {
+          "time": "03:33",
+          "message": "[2026-04-12T03:33:32.756Z]   ERROR on review xK1PRJ7QGG3NyPjxxsm4: HTTP 200: {\"data\":{},\"additionalErrors\":\"rest.AddFeedbackComplaints: \",\"errorText\":\"invalid-request-input\",\"error\":true}"
+        },
+        {
+          "time": "04:04",
+          "message": "[2026-04-12T04:04:13.039Z]   Done: submitted=28, errors=2"
+        },
+        {
+          "time": "04:04",
+          "message": "[2026-04-12T04:04:13.039Z]   Done: submitted=28, errors=2"
+        }
+      ],
       "fileHash": "389cf4e6",
       "lastModified": "2026-04-04T14:31:22.454545+03:00",
       "lifecycle": "active"
@@ -382,29 +331,163 @@
     {
       "id": "mphub-watchdog",
       "name": "MpHub Watchdog",
-      "description": "Авто-ремонт упавших сервисов. Перезапускает, анализирует ошибки через Claude Code, шлёт алерты в Telegram.",
+      "nameRu": "Авто-ремонт сервисов",
+      "description": "Каждые 5 мин проверяет сервисы, перезапускает упавшие, алерты в Telegram",
       "project": "Финансовый дашборд",
       "type": "python",
       "scriptPath": "/Users/octopus/Projects/website/scripts/mphub-watchdog.py",
       "plistLabel": "com.mphub.watchdog",
       "logPath": "/Users/octopus/Projects/website/data/watchdog.log",
-      "status": "stopped",
+      "status": "idle",
       "pid": null,
       "uptime": "0m",
       "uptimeSeconds": 0,
-      "lastRun": null,
-      "nextRun": "2026-04-07T22:10:00+03:00",
+      "lastRun": "2026-04-12T13:44:00+03:00",
+      "nextRun": "2026-04-12T13:50:00+03:00",
       "schedule": {
         "type": "interval",
         "intervalMin": 5,
         "source": "launchd StartInterval"
       },
-      "runsToday": 265,
+      "runsToday": 165,
       "runsTotal": 288,
+      "errorsLast24h": 6,
+      "lastErrors": [
+        {
+          "time": "",
+          "message": "The 41 errors from 10.04 were all `400` responses on `claude-opus-4-6` with `think=adaptive` — likely malformed `thinking` parameter in the request payload (e.g., sending `{\"type\"..."
+        },
+        {
+          "time": "12:28",
+          "message": "[2026-04-12T12:28:24]   Telegram error: HTTP Error 400: Bad Request"
+        },
+        {
+          "time": "12:28",
+          "message": "[2026-04-12T12:28:11]   Claude Proxy: 41 errors, analyzing..."
+        },
+        {
+          "time": "",
+          "message": "The 41 errors from 10.04 were all `400` responses on `claude-opus-4-6` with `think=adaptive` — likely malformed `thinking` parameter in the request payload (e.g., sending `{\"type\"..."
+        },
+        {
+          "time": "12:28",
+          "message": "[2026-04-12T12:28:24]   Telegram error: HTTP Error 400: Bad Request"
+        }
+      ],
+      "fileHash": "a64ef36f",
+      "lastModified": "2026-04-10T14:57:10.089299+03:00",
+      "lifecycle": "active"
+    },
+    {
+      "id": "claude-proxy",
+      "name": "Claude Proxy",
+      "nameRu": "Прокси агентов",
+      "description": "Прокси OpenClaw → Anthropic API. Маскирует запросы под Claude Code, маппинг инструментов, ротация токенов (порт 9090)",
+      "project": "Proxy",
+      "type": "node",
+      "scriptPath": "/Users/octopus/Projects/proxy/proxy.js",
+      "plistLabel": "com.claude-proxy",
+      "logPath": "/Users/octopus/Projects/proxy/proxy.log",
+      "status": "running",
+      "pid": 69924,
+      "uptime": "1d 16h 14m",
+      "uptimeSeconds": 144890,
+      "lastRun": null,
+      "nextRun": null,
+      "schedule": {
+        "type": "keepalive",
+        "description": "постоянно"
+      },
+      "runsToday": -1,
+      "runsTotal": -1,
+      "errorsLast24h": 3,
+      "lastErrors": [
+        {
+          "time": "10:31",
+          "message": "[2026-04-12T10:31:46.549Z] [ERROR] Body processing failed: Unexpected end of JSON input"
+        },
+        {
+          "time": "10:31",
+          "message": "[2026-04-12T10:31:46.831Z] [DEBUG] <<< ERROR 404 headers: {\"date\":\"Sun, 12 Apr 2026 10:31:46 GMT\",\"content-type\":\"text/plain; charset=utf-8\",\"content-length\":\"19\",\"connection\":\"keep-alive\",\"x-content-"
+        },
+        {
+          "time": "10:31",
+          "message": "[2026-04-12T10:31:46.835Z] [ERROR] 404 / agent=system model=? 286ms think=off"
+        }
+      ],
+      "fileHash": "a4973fd8",
+      "lastModified": "2026-04-10T17:28:45.611780+03:00",
+      "lifecycle": "active"
+    },
+    {
+      "id": "proxy-version-check",
+      "name": "Version Check",
+      "nameRu": "Проверка версии CC",
+      "description": "Каждые 6 часов сравнивает версию Claude Code с калибровкой прокси, авто-рекалибровка при расхождении",
+      "project": "Proxy",
+      "type": "bash",
+      "scriptPath": "/Users/octopus/Projects/proxy/check-version.sh",
+      "plistLabel": "com.proxy.version-check",
+      "logPath": "/Users/octopus/Projects/proxy/proxy.log",
+      "status": "stopped",
+      "pid": null,
+      "uptime": "0m",
+      "uptimeSeconds": 0,
+      "lastRun": null,
+      "nextRun": "2026-04-12T15:00:00+03:00",
+      "schedule": {
+        "type": "interval",
+        "intervalMin": 360,
+        "description": "каждые 6 ч"
+      },
+      "runsToday": 2,
+      "runsTotal": 4,
+      "errorsLast24h": 3,
+      "lastErrors": [
+        {
+          "time": "10:31",
+          "message": "[2026-04-12T10:31:46.549Z] [ERROR] Body processing failed: Unexpected end of JSON input"
+        },
+        {
+          "time": "10:31",
+          "message": "[2026-04-12T10:31:46.831Z] [DEBUG] <<< ERROR 404 headers: {\"date\":\"Sun, 12 Apr 2026 10:31:46 GMT\",\"content-type\":\"text/plain; charset=utf-8\",\"content-length\":\"19\",\"connection\":\"keep-alive\",\"x-content-"
+        },
+        {
+          "time": "10:31",
+          "message": "[2026-04-12T10:31:46.835Z] [ERROR] 404 / agent=system model=? 286ms think=off"
+        }
+      ],
+      "fileHash": "280bef42",
+      "lastModified": "2026-04-05T02:41:30.243111+03:00",
+      "lifecycle": "active"
+    },
+    {
+      "id": "wb-refresh-tab",
+      "name": "Refresh WB Tab",
+      "nameRu": "Обновление WB-вкладки",
+      "description": "Каждые 3 часа обновляет вкладку WB в Chrome через AppleScript, поддерживает session-pow-token актуальным",
+      "project": "WB Parser",
+      "type": "bash",
+      "scriptPath": "/Users/octopus/Projects/wb-parser/refresh_wb_tab.sh",
+      "plistLabel": "com.wb-parser.refresh-tab",
+      "logPath": "/Users/octopus/Projects/wb-parser/data/refresh_tab.log",
+      "status": "idle",
+      "pid": null,
+      "uptime": "0m",
+      "uptimeSeconds": 0,
+      "lastRun": "2026-04-12T11:31:40+03:00",
+      "nextRun": "2026-04-12T15:00:00+03:00",
+      "schedule": {
+        "type": "interval",
+        "intervalMin": 180,
+        "description": "каждые 3 ч"
+      },
+      "runsToday": 4,
+      "runsTotal": 8,
       "errorsLast24h": 0,
       "lastErrors": [],
-      "fileHash": "8915a21a",
-      "lastModified": "2026-04-04T03:52:44.618482+03:00",
+      "fileHash": "a155cd84",
+      "lastModified": "2026-04-10T15:35:47.367304+03:00",
       "lifecycle": "active"
     }
   ]

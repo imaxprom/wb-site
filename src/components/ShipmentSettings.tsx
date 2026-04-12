@@ -2,8 +2,9 @@
 
 import { useState, useMemo } from "react";
 import { useData } from "@/components/DataProvider";
-import { ALL_DISTRICTS, getDefaultRegionGroups, toRegionConfigs, getAllBuyoutRates } from "@/lib/calculation-engine";
+import { ALL_DISTRICTS, getDefaultRegionGroups, toRegionConfigs, shortDistrict } from "@/lib/calculation-engine";
 import { WarehousePicker } from "@/components/WarehousePicker";
+import { useBuyoutRates } from "@/lib/use-effective-buyout";
 import type { RegionGroup } from "@/types";
 
 export default function ShipmentSettings() {
@@ -42,10 +43,8 @@ export default function ShipmentSettings() {
     return counts;
   }, [nonCancelledOrders]);
 
-  // Per-article buyout rates
-  const buyoutRates = useMemo(() => {
-    return getAllBuyoutRates(orders, settings.buyoutRate, 30);
-  }, [orders, settings.buyoutRate]);
+  // Per-article buyout rates from realization (sales − returns)
+  const buyoutRates = useBuyoutRates();
 
   // CIS orders (no federal district) — distributed by warehouse
   const cisOrderCount = useMemo(() => {
@@ -148,20 +147,6 @@ export default function ShipmentSettings() {
     setGroups((prev) => prev.filter((g) => g.id !== id));
   };
 
-  // Short district name for badges
-  const shortDistrict = (d: string) => {
-    const map: Record<string, string> = {
-      "Центральный федеральный округ": "ЦФО",
-      "Приволжский федеральный округ": "ПФО",
-      "Сибирский федеральный округ": "СФО",
-      "Южный федеральный округ": "ЮФО",
-      "Северо-Западный федеральный округ": "СЗФО",
-      "Уральский федеральный округ": "УФО",
-      "Дальневосточный федеральный округ": "ДФО",
-      "Северо-Кавказский федеральный округ": "СКФО",
-    };
-    return map[d] || d;
-  };
 
   return (
     <div className="space-y-6">
@@ -279,20 +264,20 @@ export default function ShipmentSettings() {
                 <thead>
                   <tr>
                     <th>Артикул</th>
-                    <th className="num">Заказов</th>
+                    <th className="num">Выкупы</th>
                     <th className="num">Отмены</th>
                     <th className="num">% выкупа</th>
                     <th className="num">vs ручной</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {buyoutRates.filter(r => r.totalOrders > 0).map((r) => {
+                  {buyoutRates.map((r) => {
                     const diff = (r.buyoutRate - buyoutRate / 100) * 100;
                     return (
                       <tr key={r.articleWB}>
                         <td className="font-mono text-[var(--text-muted)]">{r.articleWB}</td>
-                        <td className="num">{r.totalOrders}</td>
-                        <td className="num text-[var(--danger)]">{r.cancelledOrders}</td>
+                        <td className="num">{r.sales}</td>
+                        <td className="num text-[var(--danger)]">{r.returns}</td>
                         <td className="num font-bold" style={{
                           color: r.buyoutRate > 0.8 ? "var(--success)" : r.buyoutRate > 0.6 ? "var(--warning)" : "var(--danger)"
                         }}>
@@ -307,8 +292,8 @@ export default function ShipmentSettings() {
                 </tbody>
               </table>
             </div>
-            {orders.length === 0 && (
-              <p className="text-[10px] text-[var(--warning)] mt-1">Нет загруженных заказов.</p>
+            {buyoutRates.length === 0 && (
+              <p className="text-[10px] text-[var(--warning)] mt-1">Нет данных реализации.</p>
             )}
           </div>
         )}
@@ -423,8 +408,7 @@ export default function ShipmentSettings() {
                   ) : (
                     <>
                       <div className="flex-1">
-                        <span className="font-medium text-sm">{group.name}</span>
-                        <span className="text-[var(--text-muted)] text-xs ml-2">({group.shortName})</span>
+                        <span className="font-medium text-sm">{autoConfig?.shortName || group.shortName}</span>
                       </div>
                       <div className="text-right">
                         <div className="text-white font-bold text-sm">{autoPercent}%</div>

@@ -247,28 +247,40 @@ def get_last_modified(path: str | None) -> str:
 
 
 def get_last_run_from_log(log_path: str | None) -> str | None:
-    """Get last successful run timestamp from log."""
+    """Get last successful run timestamp from log (searches last 20 non-empty lines)."""
     if not log_path or not os.path.isfile(log_path):
         return None
-    last_line = run_cmd(f'tail -n 1 "{log_path}" 2>/dev/null')
-    if not last_line:
+    lines = run_cmd(f'grep -v "^$" "{log_path}" 2>/dev/null | tail -n 20')
+    if not lines:
         return None
-    # Try common timestamp formats
-    m = re.match(r"(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})", last_line)
-    if m:
-        try:
-            ts = m.group(1).replace("T", " ")
-            dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
-            return dt.replace(tzinfo=TZ_MSK).isoformat()
-        except Exception:
-            pass
-    # ISO format in brackets
-    m = re.match(r"\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})", last_line)
-    if m:
-        try:
-            return m.group(1) + "+03:00"
-        except Exception:
-            pass
+    # Search from bottom up for any timestamp
+    for line in reversed(lines.split("\n")):
+        line = line.strip()
+        if not line:
+            continue
+        # ISO format: 2026-04-10T15:20:13 or 2026-04-10 15:20:13
+        m = re.match(r"(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})", line)
+        if m:
+            try:
+                ts = m.group(1).replace("T", " ")
+                dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+                return dt.replace(tzinfo=TZ_MSK).isoformat()
+            except Exception:
+                continue
+        # ISO in brackets: [2026-04-10T15:20:13] or [2026-04-10 15:20:13]
+        m = re.match(r"\[(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})", line)
+        if m:
+            try:
+                return m.group(1) + "+03:00"
+            except Exception:
+                continue
+        # ISO with Z: [2026-04-10T06:00:02.003Z]
+        m = re.match(r"\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.\d+Z\]", line)
+        if m:
+            try:
+                return m.group(1) + "+03:00"
+            except Exception:
+                continue
     return None
 
 
@@ -326,7 +338,25 @@ def main():
             status = "error"
             uptime_secs = 0
         elif lctl.get("found"):
-            status = "stopped"
+            # Cron-задачи (не KeepAlive) — проверяем lastRun vs расписание
+            # Если exit_code == 0 и есть lastRun в разумных пределах — "idle"
+            tmp_last_run = get_last_run_from_log(log_path)
+            if exit_code == 0 and tmp_last_run:
+                from datetime import datetime, timedelta
+                try:
+                    lr = datetime.fromisoformat(tmp_last_run.replace("Z", "+00:00"))
+                    age_hours = (datetime.now(lr.tzinfo) - lr).total_seconds() / 3600
+                    # Для задач с конкретными днями (Пн-Ср) — окно 96ч (4 дня)
+                    # Для обычных cron — 25ч
+                    max_age = 96 if internal_schedule and internal_schedule.get("days") else 25
+                    if age_hours < max_age:
+                        status = "idle"
+                    else:
+                        status = "stopped"
+                except Exception:
+                    status = "stopped"
+            else:
+                status = "stopped"
             uptime_secs = 0
         else:
             status = "unknown"
@@ -356,6 +386,7 @@ def main():
         services.append({
             "id": svc_id,
             "name": svc.get("name", ""),
+            "nameRu": svc.get("nameRu", ""),
             "description": svc.get("description", ""),
             "project": svc.get("project", ""),
             "type": svc.get("type", ""),

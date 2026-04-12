@@ -314,7 +314,7 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
               <th rowSpan={2} className="num">Нужно</th>
               {effectiveRegionConfigs.map((r) => (
                 <th key={r.id} colSpan={3} className="text-center border-l border-[var(--border)]">
-                  {r.shortName} ({(r.percentage * 100).toFixed(0)}%)
+                  {r.shortName}
                 </th>
               ))}
             </tr>
