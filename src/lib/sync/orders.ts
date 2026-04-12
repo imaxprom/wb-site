@@ -34,6 +34,7 @@ export async function syncOrders(date: string, prevValue: number): Promise<Sourc
     }
 
     const db = new Database(DB_PATH);
+    db.pragma("busy_timeout = 5000");
     db.prepare("INSERT OR REPLACE INTO orders_funnel (date, order_sum, order_count, buyout_sum, buyout_count) VALUES (?, ?, ?, ?, ?)")
       .run(date, day.orderSum, day.orderCount, day.buyoutSum || 0, day.buyoutCount || 0);
     db.close();

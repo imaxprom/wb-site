@@ -177,11 +177,13 @@ function getLoyaltyCompensation(db: Database.Database | null, dateFrom: string, 
 export async function GET(request: NextRequest) {
   try {
     const finDb = new Database(FINANCE_DB, { readonly: true });
+    finDb.pragma("busy_timeout = 5000");
     finDb.pragma("journal_mode = WAL");
 
     let wkDb: Database.Database | null = null;
     try {
       wkDb = new Database(WEEKLY_DB, { readonly: true });
+      wkDb.pragma("busy_timeout = 5000");
       wkDb.pragma("journal_mode = WAL");
     } catch {
       // weekly_reports.db может не существовать

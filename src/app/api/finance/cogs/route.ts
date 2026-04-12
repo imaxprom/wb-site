@@ -6,13 +6,13 @@ import path from "path";
 const DB_PATH = path.join(process.cwd(), "data", "finance.db");
 
 function getWriteDb() {
-  const db = new Database(DB_PATH);
+  const db = new Database(DB_PATH); db.pragma("busy_timeout = 5000");
   db.pragma("journal_mode = WAL");
   return db;
 }
 
 function getReadDb() {
-  const db = new Database(DB_PATH, { readonly: true });
+  const db = new Database(DB_PATH, { readonly: true }); db.pragma("busy_timeout = 5000");
   db.pragma("journal_mode = WAL");
   return db;
 }

@@ -135,6 +135,7 @@ CREATE INDEX idx_real_op_sale_dt ON realization(supplier_oper_name, sale_dt);
 CREATE INDEX idx_real_op_rr_dt ON realization(supplier_oper_name, rr_dt);
 CREATE INDEX idx_real_op_nm ON realization(supplier_oper_name, nm_id, sa_name, brand_name, subject_name);
 CREATE INDEX idx_real_op_supplier ON realization(supplier_oper_name, ppvz_supplier_name);
+CREATE INDEX idx_real_source_dates ON realization(source, date_from, date_to);
 ```
 
 **Ключевое правило:** Продажи фильтруются по `sale_dt`, а услуги (логистика, хранение, штрафы) — по `rr_dt`. Это **разные даты**.
@@ -354,7 +355,31 @@ CREATE TABLE shipment_meta (
 
 ---
 
-### 2.14a Таблица `buyout_rates` — Процент выкупа по артикулам
+### 2.14 Таблица `paid_storage` — Платное хранение
+
+```sql
+CREATE TABLE paid_storage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,                   -- Дата (YYYY-MM-DD)
+    nm_id INTEGER NOT NULL,              -- Артикул WB
+    barcode TEXT,                         -- Баркод
+    warehouse TEXT,                       -- Склад
+    warehouse_price REAL DEFAULT 0,      -- Стоимость хранения
+    barcodes_count INTEGER DEFAULT 0,    -- Кол-во баркодов
+    vendor_code TEXT,                    -- Артикул поставщика
+    subject TEXT,                        -- Предмет
+    volume REAL DEFAULT 0               -- Объём
+);
+
+CREATE INDEX idx_ps_date_nm ON paid_storage(date, nm_id);
+```
+
+**Источник:** WB API `/api/v1/paid_storage` (создание задачи → poll → download).
+**Синхронизация:** `src/lib/sync/storage.ts`, ежедневно.
+
+---
+
+### 2.15a Таблица `buyout_rates` — Процент выкупа по артикулам
 
 ```sql
 CREATE TABLE buyout_rates (
@@ -372,7 +397,7 @@ CREATE TABLE buyout_rates (
 
 ---
 
-### 2.14b Таблица `weekly_buyout_stats` — Статистика выкупов по неделям
+### 2.15b Таблица `weekly_buyout_stats` — Статистика выкупов по неделям
 
 ```sql
 CREATE TABLE weekly_buyout_stats (
@@ -670,6 +695,8 @@ CREATE INDEX idx_wr_barcode ON weekly_rows(barcode);
 CREATE INDEX idx_wr_nm ON weekly_rows(nm_id);
 CREATE INDEX idx_wr_oper ON weekly_rows(supplier_oper_name);
 CREATE INDEX idx_wr_sale_dt ON weekly_rows(sale_dt);
+CREATE INDEX idx_wr_oper_srid ON weekly_rows(supplier_oper_name, srid);
+CREATE INDEX idx_wr_saledt_oper ON weekly_rows(sale_dt, supplier_oper_name);
 ```
 
 ---
@@ -719,7 +746,6 @@ CREATE INDEX idx_wr_sale_dt ON weekly_rows(sale_dt);
       "report": { "ok": true, "value": 2847, "stable": true, "prevValue": 2830, "lastAttempt": "..." },
       "advertising": { "ok": true, "value": 15230.50, "stable": true, "prevValue": 14900, "lastAttempt": "..." },
       "orders": { "ok": true, "value": 156, "stable": true, "prevValue": 148, "lastAttempt": "..." },
-      "storage": { "ok": true, "value": 3200, "stable": true, "prevValue": 0, "lastAttempt": "..." },
       "complete": true
     }
   ],

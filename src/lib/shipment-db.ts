@@ -15,6 +15,7 @@ let db: Database.Database | null = null;
 function getDb(): Database.Database {
   if (!db) {
     db = new Database(DB_PATH, { readonly: false });
+    db.pragma("busy_timeout = 5000");
     db.pragma("journal_mode = WAL");
     db.pragma("cache_size = -64000");
   }

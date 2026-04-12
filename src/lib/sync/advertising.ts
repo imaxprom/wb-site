@@ -47,6 +47,7 @@ export async function syncAdvertising(date: string): Promise<SourceStatus> {
     }
 
     const db = new Database(DB_PATH);
+    db.pragma("busy_timeout = 5000");
     db.prepare("DELETE FROM advertising WHERE date = ?").run(date);
     const ins = db.prepare("INSERT INTO advertising (date, campaign_name, campaign_id, amount, payment_type, nm_id) VALUES (?, ?, ?, ?, ?, ?)");
     db.transaction(() => {

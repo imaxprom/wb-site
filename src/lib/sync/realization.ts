@@ -63,6 +63,7 @@ export async function syncReport(date: string): Promise<SourceStatus> {
     }
 
     const db = new Database(DB_PATH);
+    db.pragma("busy_timeout = 5000");
     let totalRows = 0;
     const XLSX = await import("xlsx");
 

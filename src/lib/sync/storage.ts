@@ -47,6 +47,7 @@ export async function syncPaidStorage(date: string): Promise<SourceStatus> {
     }
 
     const db = new Database(DB_PATH);
+    db.pragma("busy_timeout = 5000");
     db.prepare("CREATE TABLE IF NOT EXISTS paid_storage (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, nm_id INTEGER NOT NULL, barcode TEXT, warehouse TEXT, warehouse_price REAL DEFAULT 0, barcodes_count INTEGER DEFAULT 0, vendor_code TEXT, subject TEXT, volume REAL DEFAULT 0)");
     db.prepare("CREATE INDEX IF NOT EXISTS idx_ps_date_nm ON paid_storage(date, nm_id)");
     db.prepare("DELETE FROM paid_storage WHERE date = ?").run(date);
