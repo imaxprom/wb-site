@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useEffect, useCallback } from "react";
-import { useData } from "@/components/DataProvider";
+import { useAnalyticsData } from "@/modules/analytics/lib/AnalyticsProvider";
 import { calculateShipment, calculateDeficit, getOrderStats } from "@/modules/analytics/lib/engine";
 import { StatCard } from "@/components/StatCard";
 import { RegionPieChart, OrdersLineChart } from "@/components/Charts";
@@ -16,7 +16,7 @@ function fmt(d: Date): string {
 }
 
 export default function AnalyticsPage() {
-  const { stock, products, settings, overrides, isLoaded, uploadDate } = useData();
+  const { stock, products, settings, overrides, isLoaded } = useAnalyticsData();
 
   // Date range state — default 30 days ending yesterday
   const [dateFrom, setDateFrom] = useState(() => {
