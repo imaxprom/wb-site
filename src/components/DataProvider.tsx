@@ -225,6 +225,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           boxLengthCm: typeof raw.boxLengthCm === "number" ? raw.boxLengthCm : 60,
           boxWidthCm: typeof raw.boxWidthCm === "number" ? raw.boxWidthCm : 40,
           boxHeightCm: typeof raw.boxHeightCm === "number" ? raw.boxHeightCm : 40,
+          uploadDays: typeof raw.uploadDays === "number" ? raw.uploadDays : 28,
+          maxArticlesPerBox: typeof raw.maxArticlesPerBox === "number" ? raw.maxArticlesPerBox : undefined,
+          shipmentsPerMonth: typeof raw.shipmentsPerMonth === "number" ? raw.shipmentsPerMonth : undefined,
+          minUnits: typeof raw.minUnits === "number" ? raw.minUnits : undefined,
+          roundTo: typeof raw.roundTo === "number" ? raw.roundTo : undefined,
+          packingVariant: typeof raw.packingVariant === "string" ? raw.packingVariant : undefined,
         };
       }
 
@@ -233,19 +239,6 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (cancelled) return;
-
-      // Init state
-      dispatch({
-        type: "INIT",
-        data: {
-          stock: [],
-          orders: [],
-          products: [],
-          uploadDate: null,
-          settings,
-          overrides,
-        },
-      });
 
       // 3. Load data from server
       try {
@@ -268,14 +261,32 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         ]);
 
         if (cancelled) return;
+
+        // Init with ALL data at once — no intermediate empty state
         dispatch({
-          type: "SET_DATA",
-          stock,
-          orders,
-          products,
-          uploadDate: meta.uploadDate || "",
+          type: "INIT",
+          data: {
+            stock,
+            orders,
+            products,
+            uploadDate: meta.uploadDate || "",
+            settings,
+            overrides,
+          },
         });
       } catch (err) {
+        // If data load fails, still init with settings so UI is usable
+        dispatch({
+          type: "INIT",
+          data: {
+            stock: [],
+            orders: [],
+            products: [],
+            uploadDate: null,
+            settings,
+            overrides,
+          },
+        });
         console.warn("Failed to load data from server API:", err);
       }
     }

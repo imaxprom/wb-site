@@ -11,40 +11,138 @@ import { useEffectiveBuyout } from "@/modules/shipment/lib/use-effective-buyout"
 import { InfoTip } from "@/components/Tooltip";
 import { calculateTrend, type TrendResult } from "@/lib/trend-engine";
 import type { ShipmentRowExtended } from "@/types";
+import { ArticleMultiSelect } from "./ArticleMultiSelect";
 
 // ─── Packing Visualization ──────────────────────────────────
 
 // ─── Вариант А: Карточки (сетка) ────────────────────────────
 
 function PackingCards({ result }: { result: PackingResult }) {
+  // Sort boxes by number of unique articles, then group identical boxes
+  const groups = useMemo(() => {
+    type BoxGroup = {
+      key: string;
+      firstBoxNumber: number;
+      lastBoxNumber: number;
+      boxNumbers: number[];
+      count: number;
+      articleCount: number;
+      box: typeof result.boxes[0];
+    };
+
+    // First: sort boxes by number of unique articles (1 article first, then 2, 3...)
+    const sorted = [...result.boxes].sort((a, b) => {
+      const aArticles = new Set(a.items.map(e => e.item.articleWB)).size;
+      const bArticles = new Set(b.items.map(e => e.item.articleWB)).size;
+      if (aArticles !== bArticles) return aArticles - bArticles;
+      return a.boxNumber - b.boxNumber;
+    });
+
+    // Then: group identical boxes (same items with same quantities)
+    const grouped: BoxGroup[] = [];
+    for (const box of sorted) {
+      const sig = box.items
+        .map(e => `${e.item.label}:${e.qty}`)
+        .sort()
+        .join("|");
+      const articleCount = new Set(box.items.map(e => e.item.articleWB)).size;
+
+      const last = grouped[grouped.length - 1];
+      if (last && last.key === sig) {
+        last.count++;
+        last.boxNumbers.push(box.boxNumber);
+        last.lastBoxNumber = Math.max(last.lastBoxNumber, box.boxNumber);
+        last.firstBoxNumber = Math.min(last.firstBoxNumber, box.boxNumber);
+      } else {
+        grouped.push({
+          key: sig,
+          firstBoxNumber: box.boxNumber,
+          lastBoxNumber: box.boxNumber,
+          boxNumbers: [box.boxNumber],
+          count: 1,
+          articleCount,
+          box,
+        });
+      }
+    }
+    return grouped;
+  }, [result.boxes]);
+
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-      {result.boxes.map((box) => (
-        <div key={box.boxNumber} className="bg-[var(--bg)] border border-[var(--border)] rounded-xl p-3">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-white">Короб {box.boxNumber}</span>
-            <span className="text-[10px] font-mono" style={{
-              color: box.fillPercent > 85 ? "var(--success)" : box.fillPercent > 50 ? "var(--accent)" : "var(--warning)"
-            }}>
-              {box.fillPercent.toFixed(0)}%
-            </span>
-          </div>
-          <div className="space-y-1 mb-2">
-            {box.items.map((entry, idx) => (
-              <div key={idx} className="flex justify-between text-xs">
-                <span className="text-[var(--text-muted)]">{entry.item.label}</span>
-                <span className="text-white font-medium">×{entry.qty}</span>
+      {groups.map((group) => {
+        const { box, count, boxNumbers } = group;
+        let label: string;
+        if (count === 1) {
+          label = `Короб ${boxNumbers[0]}`;
+        } else {
+          // Check if numbers are sequential
+          const sorted = [...boxNumbers].sort((a, b) => a - b);
+          const isSequential = sorted.every((n, i) => i === 0 || n === sorted[i - 1] + 1);
+          label = isSequential
+            ? `Короба ${sorted[0]}-${sorted[sorted.length - 1]}`
+            : `Короба ${sorted.join(", ")}`;
+        }
+        const fillColor = box.fillPercent > 85 ? "var(--success)" : box.fillPercent > 50 ? "var(--accent)" : "var(--warning)";
+
+        return (
+          <div key={group.key + boxNumbers[0]} className="bg-[var(--bg)] border border-[var(--border)] rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold text-white">{label}</span>
+                {count > 1 && (
+                  <span className="text-sm font-bold px-2 py-0.5 rounded-full" style={{
+                    background: "color-mix(in srgb, var(--accent) 20%, transparent)",
+                    color: "var(--accent)",
+                  }}>
+                    ×{count}
+                  </span>
+                )}
               </div>
-            ))}
+              <span className="text-[10px] font-mono" style={{ color: fillColor }}>
+                {box.fillPercent.toFixed(0)}%
+              </span>
+            </div>
+            <div className="space-y-1 mb-2">
+              {(() => {
+                // Split label into article and size for alignment
+                const rows = box.items.map(entry => {
+                  const parts = entry.item.label.split(" / ");
+                  const article = parts[0] || "";
+                  const size = parts[1] || "";
+                  const bc = entry.item.barcode || "";
+                  const bcStart = bc.slice(0, -6);
+                  const bcEnd = bc.slice(-6);
+                  return { article, size, bcStart, bcEnd, qty: entry.qty };
+                });
+                return (
+                  <table className="w-full text-xs">
+                    <tbody>
+                      {rows.map((row, idx) => (
+                        <tr key={idx}>
+                          <td className="text-[var(--text-muted)] pr-2 whitespace-nowrap">{row.article}</td>
+                          <td className="text-[var(--text-muted)] pr-3 whitespace-nowrap">{row.size}</td>
+                          <td className="font-mono pr-3 whitespace-nowrap">
+                            <span className="text-[var(--text-muted)]">{row.bcStart}</span>
+                            <span className="text-white text-sm font-semibold">{row.bcEnd}</span>
+                          </td>
+                          <td className="text-white font-medium text-right whitespace-nowrap">×{row.qty}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                );
+              })()}
+            </div>
+            <div className="w-full h-1.5 bg-[var(--border)]/30 rounded-full overflow-hidden">
+              <div className="h-full rounded-full" style={{
+                width: `${box.fillPercent}%`,
+                background: fillColor,
+              }} />
+            </div>
           </div>
-          <div className="w-full h-1.5 bg-[var(--border)]/30 rounded-full overflow-hidden">
-            <div className="h-full rounded-full" style={{
-              width: `${box.fillPercent}%`,
-              background: box.fillPercent > 85 ? "var(--success)" : box.fillPercent > 50 ? "var(--accent)" : "var(--warning)",
-            }} />
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -252,10 +350,11 @@ function TrendBadge({ trend, v2Need, v3Total }: { trend: TrendResult; v2Need?: n
 // ─── Main Component ─────────────────────────────────────────
 
 export default function ShipmentCalcV3() {
-  const { stock, orders, products, settings, overrides, updateSettings } = useData();
+  const { stock, orders, products, settings, overrides, updateSettings, isLoaded } = useData();
   const effectiveRegions = useEffectiveRegions();
   const getBuyout = useEffectiveBuyout();
-  const [selectedProduct, setSelectedProduct] = useState<string>("__all__");
+  const [selectedArticles, setSelectedArticles] = useState<Set<string>>(new Set());
+  const [articlesInitialized, setArticlesInitialized] = useState(false);
   const [packingVariant, setPackingVariant] = useState<PackingVariant>((settings.packingVariant as PackingVariant) ?? "cards");
   const [hideInactive, setHideInactive] = useState(true);
   const [postponedOpen, setPostponedOpen] = useState(false);
@@ -264,6 +363,14 @@ export default function ShipmentCalcV3() {
   const [shipmentsPerMonth, setShipmentsPerMonth] = useState(settings.shipmentsPerMonth ?? 4);
   const [minUnits, setMinUnits] = useState(settings.minUnits ?? 10);
   const [roundTo, setRoundTo] = useState(settings.roundTo ?? 5);
+
+  // Sync local state when settings load from API
+  React.useEffect(() => {
+    if (settings.maxArticlesPerBox !== undefined) setMaxArticlesPerBox(settings.maxArticlesPerBox);
+    if (settings.shipmentsPerMonth !== undefined) setShipmentsPerMonth(settings.shipmentsPerMonth);
+    if (settings.minUnits !== undefined) setMinUnits(settings.minUnits);
+    if (settings.roundTo !== undefined) setRoundTo(settings.roundTo);
+  }, [settings.maxArticlesPerBox, settings.shipmentsPerMonth, settings.minUnits, settings.roundTo]);
 
   const boxConfig: BoxConfig = useMemo(() => ({
     lengthMm: (settings.boxLengthCm || 60) * 10,
@@ -284,7 +391,7 @@ export default function ShipmentCalcV3() {
         ot.set(key, (ot.get(key) || 0) + 1);
       }
     }
-    const sorted = [...products].sort((a, b) => (st.get(b.articleWB) || 0) - (st.get(a.articleWB) || 0));
+    const sorted = [...products].sort((a, b) => (ot.get(b.articleWB) || 0) - (ot.get(a.articleWB) || 0));
     return { sortedProducts: sorted, stockTotals: st, orderTotals: ot };
   }, [products, stock, orders]);
 
@@ -293,25 +400,40 @@ export default function ShipmentCalcV3() {
     return sortedProducts.filter((p) => (stockTotals.get(p.articleWB) || 0) > 0 || (orderTotals.get(p.articleWB) || 0) > 0);
   }, [sortedProducts, hideInactive, stockTotals, orderTotals]);
 
-  const isAllMode = selectedProduct === "__all__";
+  // Auto-select all when products first load
+  React.useEffect(() => {
+    if (!articlesInitialized && filteredProducts.length > 0) {
+      setSelectedArticles(new Set(filteredProducts.map(p => p.articleWB)));
+      setArticlesInitialized(true);
+    }
+  }, [filteredProducts, articlesInitialized]);
+
+  // "Multi mode" — when more than 1 article selected (show combined table)
+  const isAllMode = selectedArticles.size !== 1;
 
   const uploadDays = settings.uploadDays ?? 28;
 
-  // Calculate V2 for all products
+  // Products to show (filtered by multiselect)
+  const activeProducts = useMemo(() => {
+    if (selectedArticles.size === 0) return [];
+    return filteredProducts.filter(p => selectedArticles.has(p.articleWB));
+  }, [filteredProducts, selectedArticles]);
+
+  // Calculate V2 for active products
   const allCalcs = useMemo(() => {
-    if (stock.length === 0 || filteredProducts.length === 0) return [];
-    return filteredProducts.map((p) =>
+    if (stock.length === 0 || activeProducts.length === 0) return [];
+    return activeProducts.map((p) =>
       calculateShipmentV2(p, stock, orders, getBuyout(p.articleWB), effectiveRegions, overrides[p.articleWB], uploadDays)
     );
-  }, [sortedProducts, stock, orders, effectiveRegions, overrides, getBuyout, uploadDays]);
+  }, [activeProducts, stock, orders, effectiveRegions, overrides, getBuyout, uploadDays]);
 
-  // Single product calc (when specific article selected)
+  // Single product calc (when exactly 1 selected)
   const singleCalc: ShipmentCalculationV2 | null = useMemo(() => {
-    if (isAllMode) return null;
-    const prod = products.find((p) => p.articleWB === selectedProduct);
+    if (isAllMode || activeProducts.length !== 1) return null;
+    const prod = activeProducts[0];
     if (!prod || stock.length === 0) return null;
     return calculateShipmentV2(prod, stock, orders, getBuyout(prod.articleWB), effectiveRegions, overrides[prod.articleWB], uploadDays);
-  }, [selectedProduct, isAllMode, products, stock, orders, effectiveRegions, overrides, getBuyout, uploadDays]);
+  }, [activeProducts, isAllMode, stock, orders, effectiveRegions, overrides, getBuyout, uploadDays]);
 
   // Effective rows and trend
   const { rows, trend, regionConfigs } = useMemo<{ rows: ShipmentRowExtended[]; trend: TrendResult | null; regionConfigs: typeof effectiveRegions }>(() => {
@@ -331,13 +453,13 @@ export default function ShipmentCalcV3() {
       const mergedTrend = calculateTrend(mergedWeekly);
       return { rows: merged, trend: mergedTrend, regionConfigs: allCalcs[0]?.regionConfigs || effectiveRegions };
     }
-    if (singleCalc) {
-      const prod = products.find((p) => p.articleWB === selectedProduct);
-      const extRows: ShipmentRowExtended[] = singleCalc.rows.map((r) => ({ ...r, articleWB: prod?.articleWB || "", articleName: prod?.name || "" }));
+    if (singleCalc && activeProducts.length === 1) {
+      const prod = activeProducts[0];
+      const extRows: ShipmentRowExtended[] = singleCalc.rows.map((r) => ({ ...r, articleWB: prod.articleWB, articleName: prod.name }));
       return { rows: extRows, trend: singleCalc.trend, regionConfigs: singleCalc.regionConfigs };
     }
     return { rows: [] as ShipmentRowExtended[], trend: null, regionConfigs: effectiveRegions };
-  }, [isAllMode, allCalcs, singleCalc, effectiveRegions, products, selectedProduct]);
+  }, [isAllMode, allCalcs, singleCalc, effectiveRegions, activeProducts]);
 
   // Threshold only uses minUnits — frequency is informational only
 
@@ -414,6 +536,21 @@ export default function ShipmentCalcV3() {
     return { totalSurplus: Math.round(surplus), totalDeficit: Math.round(deficit) };
   }, [rows]);
 
+  if (!isLoaded) {
+    return (
+      <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-12 text-center">
+        <div className="flex items-center justify-center gap-3 mb-4">
+          <svg className="animate-spin h-8 w-8 text-[var(--accent)]" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+        </div>
+        <p className="text-xl font-medium">Загрузка данных...</p>
+        <p className="text-base text-[var(--text-muted)] mt-2">Подождите, идёт загрузка остатков и заказов</p>
+      </div>
+    );
+  }
+
   if (stock.length === 0 || filteredProducts.length === 0) {
     return (
       <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-12 text-center">
@@ -440,24 +577,18 @@ export default function ShipmentCalcV3() {
     <div className="space-y-4">
       {/* Header */}
       <div className="flex flex-wrap items-center gap-4">
-        <select
-          value={selectedProduct}
-          onChange={(e) => setSelectedProduct(e.target.value)}
-          className="bg-[var(--bg-card)] border border-[var(--border)] rounded-lg px-4 py-2 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)] max-w-[400px] truncate"
-        >
-          <option value="__all__">Все артикулы ({filteredProducts.length})</option>
-          {filteredProducts.map((p) => (
-            <option key={p.articleWB} value={p.articleWB}>
-              {p.name} (WB: {p.articleWB})
-            </option>
-          ))}
-        </select>
+        <ArticleMultiSelect
+          products={filteredProducts}
+          selected={selectedArticles}
+          onChange={setSelectedArticles}
+          orderCounts={orderTotals}
+        />
 
         <label className="flex items-center gap-2 text-sm text-[var(--text-muted)] cursor-pointer select-none">
           <input
             type="checkbox"
             checked={hideInactive}
-            onChange={(e) => { setHideInactive(e.target.checked); setSelectedProduct("__all__"); }}
+            onChange={(e) => { setHideInactive(e.target.checked); setSelectedArticles(new Set()); }}
             className="accent-[var(--accent)] w-4 h-4"
           />
           Скрыть неактивные
