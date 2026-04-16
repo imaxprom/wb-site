@@ -160,28 +160,27 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
           <h3 className="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wide mb-4">Динамика показателей</h3>
-          <ResponsiveContainer width="100%" height={280}>
+          <ResponsiveContainer width="100%" height={260}>
             <BarChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#2a2a3a" />
-              <XAxis dataKey="date" tick={{ fill: "#8888a0", fontSize: 10 }} />
-              <YAxis tickFormatter={fmtM} tick={{ fill: "#8888a0", fontSize: 11 }} />
-              <Tooltip contentStyle={{ background: "#12121a", border: "1px solid #2a2a3a", borderRadius: 8, color: "#e4e4ef" }} itemStyle={{ color: "#e4e4ef" }} formatter={(v: unknown) => RUB(Number(v))} itemSorter={(item) => { const order: Record<string, number> = { "Заказы": 0, "Реклама": 1, "Прибыль": 2 }; return order[item.name as string] ?? 9; }} />
-              <Legend wrapperStyle={{ color: "#8888a0", fontSize: 12 }} />
+              <XAxis dataKey="date" tick={{ fill: "#8888a0", fontSize: 12 }} />
+              <YAxis tickFormatter={fmtM} tick={{ fill: "#8888a0", fontSize: 12 }} />
+              <Tooltip contentStyle={{ background: "#12121a", border: "1px solid #2a2a3a", borderRadius: 8, color: "#e4e4ef" }} itemStyle={{ color: "#e4e4ef" }} formatter={(v: unknown) => RUB(Number(v))} itemSorter={(item) => { const order: Record<string, number> = { "Реклама": 0, "Прибыль": 1 }; return order[item.name as string] ?? 9; }} />
+              <Legend iconSize={10} wrapperStyle={{ color: "#8888a0", fontSize: 14 }} formatter={(value: string) => <span style={{ verticalAlign: "middle" }}>{value}</span>} />
               <Bar dataKey="profit" name="Прибыль" stackId="stack" fill="#66BB6A" />
-              <Bar dataKey="ads" name="Реклама" stackId="stack" fill="#F4A236" />
-              <Bar dataKey="orders_rub" name="Заказы" stackId="stack" fill="#42A5F5" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="ads" name="Реклама" stackId="stack" fill="#F4A236" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
         <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
           <h3 className="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wide mb-4">Нарастающая: выручка vs прибыль</h3>
-          <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#2a2a3a" />
-              <XAxis dataKey="date" tick={{ fill: "#8888a0", fontSize: 10 }} />
-              <YAxis tickFormatter={fmtM} tick={{ fill: "#8888a0", fontSize: 11 }} />
+              <XAxis dataKey="date" tick={{ fill: "#8888a0", fontSize: 12 }} />
+              <YAxis tickFormatter={fmtM} tick={{ fill: "#8888a0", fontSize: 12 }} />
               <Tooltip contentStyle={{ background: "#12121a", border: "1px solid #2a2a3a", borderRadius: 8, color: "#e4e4ef" }} formatter={(v: unknown) => RUB(Number(v))} />
-              <Legend />
+              <Legend iconSize={10} wrapperStyle={{ color: "#8888a0", fontSize: 14 }} formatter={(value: string) => <span style={{ verticalAlign: "middle" }}>{value}</span>} />
               <Line type="monotone" dataKey="running_revenue" name="Выручка" stroke="var(--success)" strokeWidth={2} dot={false} />
               <Line type="monotone" dataKey="running_profit" name="Прибыль" stroke="var(--accent)" strokeWidth={2} dot={false} strokeDasharray="6 3" />
             </LineChart>

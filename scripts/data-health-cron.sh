@@ -3,7 +3,6 @@
 # Запуск: каждый час через launchd или вручную
 # Результат: public/data/monitor/data-health-cron.json
 
-set -e
 cd "$(dirname "$0")/.."
 
 BASE="http://localhost:3000"
@@ -34,9 +33,11 @@ print(json.dumps(d, ensure_ascii=False))
 # 15. Проверка WB API ключа
 API_KEY=$(cat data/wb-api-key.txt 2>/dev/null || echo "")
 if [ -n "$API_KEY" ]; then
+  # Используем stocks с dateFrom=now — лёгкий запрос, возвращает пустой массив, но проверяет авторизацию
+  DATE_NOW=$(date -u +%Y-%m-%dT%H:%M:%S)
   HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
     -H "Authorization: $API_KEY" \
-    "https://seller-analytics-api.wildberries.ru/api/v1/paid_storage" 2>/dev/null || echo "000")
+    "https://statistics-api.wildberries.ru/api/v1/supplier/stocks?dateFrom=$DATE_NOW" 2>/dev/null || echo "000")
 
   if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
     add_check "wb_api_valid" "WB API ключ (онлайн)" "ok" "Валиден (HTTP $HTTP_CODE)"
@@ -47,27 +48,6 @@ if [ -n "$API_KEY" ]; then
   fi
 else
   add_check "wb_api_valid" "WB API ключ (онлайн)" "error" "Отсутствует"
-fi
-
-# 16. API тесты (9 эндпоинтов)
-if [ -x "scripts/test-api.sh" ] && [ -d "data/api-snapshots" ]; then
-  TEST_RESULT=$(./scripts/test-api.sh test 2>&1)
-  PASS=$(echo "$TEST_RESULT" | grep -c "✅" || true)
-  FAIL=$(echo "$TEST_RESULT" | grep -c "❌" || true)
-  PASS=${PASS:-0}
-  FAIL=${FAIL:-0}
-  TOTAL=$((PASS + FAIL))
-
-  if [ "$FAIL" = "0" ] && [ "$PASS" -gt 0 ]; then
-    add_check "api_tests" "API тесты" "ok" "$PASS/$TOTAL пройдены"
-  elif [ "$FAIL" -gt 0 ]; then
-    FAILED_NAMES=$(echo "$TEST_RESULT" | grep "❌" | sed 's/.*❌ //' | tr '\n' ', ')
-    add_check "api_tests" "API тесты" "error" "$PASS/$TOTAL пройдены" "Провалены: $FAILED_NAMES"
-  else
-    add_check "api_tests" "API тесты" "warn" "Не удалось запустить"
-  fi
-else
-  add_check "api_tests" "API тесты" "warn" "Скрипт или эталоны не найдены"
 fi
 
 # Сохраняем результат

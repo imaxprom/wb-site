@@ -50,7 +50,8 @@ WATCHDOG_LOG = PROJECT_DIR / "data" / "watchdog.log"
 
 def log(msg):
     line = f"[{datetime.now().isoformat(timespec='seconds')}] {msg}"
-    print(line)
+    # НЕ используем print() — launchd перенаправляет stdout в тот же watchdog.log,
+    # что приводит к дублированию каждой строки.
     try:
         WATCHDOG_LOG.parent.mkdir(parents=True, exist_ok=True)
         with open(WATCHDOG_LOG, "a") as f:

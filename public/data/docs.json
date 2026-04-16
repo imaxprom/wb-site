@@ -59,6 +59,243 @@
       ]
     },
     {
+      "id": "wb-ads",
+      "icon": "📢",
+      "title": "WB Ads (Рекламный дашборд)",
+      "blocks": [
+        {
+          "type": "text",
+          "content": "Самостоятельный проект дашборда управления рекламой Wildberries. Порт 3001. Не зависит от MpHub (website). Путь: /Users/octopus/Projects/wb-ads"
+        },
+        {
+          "type": "schema",
+          "title": "Архитектура",
+          "lines": [
+            "┌─────────────────────────────────────────────────────────┐",
+            "│  Браузер (localhost:3001)                               │",
+            "│  page.tsx → AdsNavigation + AdsFilters + AdsTable       │",
+            "│           → ControlPanel (sync, auto-refresh, theme)    │",
+            "│           → SettingsPanel (auth, API-token, accounts)   │",
+            "└──────────────────────┬──────────────────────────────────┘",
+            "                       │ fetch()",
+            "                       ▼",
+            "┌─────────────────────────────────────────────────────────┐",
+            "│  Next.js API Routes                                     │",
+            "│  GET /api/dashboard?days=N    ← агрегация 11 SQL        │",
+            "│  POST /api/sync/*             ← 8 sync endpoints        │",
+            "│  POST /api/wb/auth/*          ← авторизация (Puppeteer) │",
+            "│  GET/POST /api/settings       ← настройки в БД          │",
+            "└──────────┬────────────┬────────────┬────────────────────┘",
+            "           ▼            ▼            ▼",
+            "     ┌──────────┐  ┌─────────┐  ┌──────────┐",
+            "     │ SQLite   │  │ WB API  │  │Puppeteer │",
+            "     │ ads.db   │  │ (7 API) │  │ (auth)   │",
+            "     │ 22 табл. │  │         │  │          │",
+            "     └──────────┘  └─────────┘  └──────────┘"
+          ]
+        },
+        {
+          "type": "list",
+          "title": "Стек технологий",
+          "items": [
+            "Next.js 16 — App Router + TypeScript",
+            "Tailwind CSS 4 — тёмная тема, 3 варианта (Violet/Arctic/Neon)",
+            "SQLite (better-sqlite3) — БД data/ads.db, 23 таблицы",
+            "Puppeteer — авторизация WB через headless Chrome (CDP)",
+            "recharts — графики (установлен, пока не используется в дашборде)"
+          ]
+        },
+        {
+          "type": "list",
+          "title": "14 столбцов таблицы",
+          "items": [
+            "Товар — фото + название + nmId + vendorCode (sticky left)",
+            "Предмет — категория (subject)",
+            "Цвета — количество + перечисление",
+            "Акции — заглушка (товары не участвуют в акциях)",
+            "★ Рейтинг — из sales-funnel/products API (feedbackRating)",
+            "Цена — цена поставки из WB Prices API",
+            "Остаток — только штуки",
+            "Корзины и заказы — SVG иконки, данные из sales_funnel_daily",
+            "ДРРз — доля рекламных расходов (adSpend/ordersSum×100)",
+            "Затраты рекл. — из campaign_stats_daily (НЕ by_nm)",
+            "Авто — автокампании (ставка + StatusBadge + затраты + бюджет)",
+            "Аукцион — поисковые кампании (по \"ПОИСК\" в названии)",
+            "CPC — кампании с payment_type=cpc (сейчас пусто)",
+            "Видимость — количество поисковых запросов из кластеров"
+          ]
+        },
+        {
+          "type": "list",
+          "title": "Sync endpoints (POST)",
+          "items": [
+            "/api/sync/campaigns — кампании + ставки → advert-api promotion/count + adverts",
+            "/api/sync/products — карточки + цены + рейтинг → Content + Prices + sales-funnel API",
+            "/api/sync/stocks — остатки по складам → Statistics API (полная перезапись)",
+            "/api/sync/stats — дневная статистика (вкл. паузированные!) → fullstats v3",
+            "/api/sync/balance — баланс + бюджеты → advert-api balance/budget",
+            "/api/sync/clusters — поисковые кластеры → normquery/stats v0 + get-bids",
+            "/api/sync/funnel?days=1 — воронка (корзины/заказы) → seller-analytics sales-funnel",
+            "/api/sync/auth-wb-funnel?days=7 — воронка Джем (viewCount!) → seller-content через Puppeteer + Authorizev3",
+            "/api/sync/all — запускает все по порядку"
+          ]
+        },
+        {
+          "type": "list",
+          "title": "WB API endpoints (7 серверов)",
+          "items": [
+            "advert-api.wildberries.ru — кампании, fullstats, баланс, бюджеты, кластеры",
+            "seller-analytics-api.wildberries.ru — воронка открытая (sales-funnel/products), рейтинг",
+            "seller-content.wildberries.ru — воронка Джем закрытая (viewCount, buyouts, cancels) через Puppeteer",
+            "content-api.wildberries.ru — карточки товаров (Content API v2)",
+            "discounts-prices-api.wildberries.ru — цены (Prices API v2)",
+            "statistics-api.wildberries.ru — остатки (Statistics API v1)",
+            "dp-calendar-api.wildberries.ru — акции/промо (Calendar API)",
+            "seller-auth.wildberries.ru — авторизация по телефону (через Puppeteer CDP)"
+          ]
+        },
+        {
+          "type": "list",
+          "title": "Ключевые решения по данным",
+          "items": [
+            "campaign_stats_daily для adOrders/adCarts — by_nm теряет ~15% данных",
+            "Stats sync включает паузированные (status 9+11) — fullstats отдаёт данные и для них",
+            "Период \"Сегодня\" = dateFrom = dateTo = today (не today-1)",
+            "Кампании показываются если есть расход за период, независимо от текущего статуса",
+            "Кластерные данные — weekly snapshot по MAX(date)",
+            "WB Analytics кэширует funnel ~15 мин на своей стороне",
+            "card.wb.ru отключён — нет buyer price, SPP, feedbacks count",
+            "wb-auth-http не работает — WB требует captcha_token от антибот-SDK"
+          ]
+        },
+        {
+          "type": "schema",
+          "title": "Основные таблицы БД (data/ads.db)",
+          "lines": [
+            "campaigns (332)        — рекламные кампании + bid_kopecks",
+            "campaign_stats_daily   — статистика по дням (с atbs)",
+            "campaign_stats_by_nm   — статистика по товарам (с atbs, неполные)",
+            "sales_funnel_daily     — воронка: корзины, заказы, выручка",
+            "products (29)          — карточки: цены, рейтинг, цвета",
+            "stocks                 — остатки по складам",
+            "search_cluster_stats   — поисковые кластеры",
+            "search_cluster_bids    — ставки по кластерам",
+            "balance_history        — баланс кабинета",
+            "campaign_budgets       — бюджеты кампаний",
+            "auth_wb_funnel_daily   — воронка Джем: viewCount, buyouts, cancels (Puppeteer)",
+            "settings               — настройки приложения (key-value)",
+            "accounts               — авторизованные телефоны",
+            "product_promotions     — акции (пусто)",
+            "minus_phrases (3754)   — минус-фразы (не в дашборде)",
+            "",
+            "Пустые/будущие:",
+            "positions, competitors, competitor_positions — wb-parser",
+            "automation_rules, automation_log — автоматизация",
+            "expense_history, payment_history — финансы"
+          ]
+        },
+        {
+          "type": "list",
+          "title": "Функциональность дашборда",
+          "items": [
+            "Табы: Выдача WB (заглушка) | Карточки | Реклама (заглушка) | Настройки",
+            "Таблица: 14 столбцов, sticky \"Товар\", горизонтальный скролл",
+            "Столбцы: drag-n-drop, resize ширины, скрытие через ⚙",
+            "Фильтры: поиск, период, архив, группировка (заглушка)",
+            "Сортировка: клик по заголовку (none→desc→asc→none)",
+            "Тултипы на заголовках (300ms задержка)",
+            "Модалка синхронизации: 8 шагов с прогрессом (✓/✕/spinner)",
+            "Автообновление: чекбокс + интервал (5-60 мин) + обратный отсчёт",
+            "3 темы: Violet, Arctic, Neon",
+            "Все настройки в БД через API (НЕ localStorage)",
+            "Настройки: авторизация WB по телефону + API-токен + таблицы аккаунтов/магазинов"
+          ]
+        },
+        {
+          "type": "schema",
+          "title": "Воронка Джем — закрытый API seller-content (viewCount)",
+          "lines": [
+            "Источник данных, недоступный через открытый WB API.",
+            "Содержит viewCount (показы карточки в выдаче) — верхняя часть воронки.",
+            "",
+            "Сервер: https://seller-content.wildberries.ru",
+            "Путь:   /ns/analytics-api/content-analytics/api/v1/sales-funnel",
+            "",
+            "Endpoints:",
+            "  POST /report/product/history  — воронка по дням для одного товара",
+            "  POST /report                  — сводный отчёт (current + previous period)",
+            "  POST /report/details          — детальный с пагинацией (limit/offset)",
+            "  GET  /seasonality?subjectID=N — сезонность по категории",
+            "  POST /seller/comparisons/market — сравнение с рынком",
+            "",
+            "Авторизация (отличается от открытого API!):",
+            "  1. Puppeteer-браузер открыт на seller.wildberries.ru (авторизован)",
+            "  2. Токен: localStorage[\"wb-eu-passport-v2.access-token\"] (долгоживущий JWT)",
+            "  3. Заголовок: Authorizev3: <token> (обязателен! без него → 401)",
+            "  4. credentials: \"include\" (отправляет cookies)",
+            "  5. wb-seller-lk НЕ нужен для этих endpoints",
+            "",
+            "Получение токена в коде:",
+            "  const token = await page.evaluate(() =>",
+            "    localStorage.getItem(\"wb-eu-passport-v2.access-token\")",
+            "  );",
+            "",
+            "Запрос:",
+            "  POST /report/product/history",
+            "  Body: {\"nmID\": 322000486, \"currentPeriod\": {\"start\": \"...\", \"end\": \"...\"}}",
+            "  Headers: Content-Type: application/json, Authorizev3: <token>",
+            "",
+            "Ответ (массив по дням, каждое поле = {current, previous}):",
+            "  viewCount          — показы в выдаче (УНИКАЛЬНО, нет в открытом API!)",
+            "  openCardCount      — переходы в карточку",
+            "  addToCartCount     — добавления в корзину",
+            "  addToWishlistCount — добавления в избранное",
+            "  orderCount/Sum     — заказы шт/руб",
+            "  buyoutCount/Sum    — выкупы шт/руб",
+            "  cancelCount/Sum    — отмены шт/руб",
+            "  viewToOpenConversion, openToCartConversion, cartToOrderConversion — конверсии %",
+            "  buyoutPercent      — процент выкупа %",
+            "",
+            "Таблица: auth_wb_funnel_daily (nm_id + date = PK, 16 метрик)",
+            "Route: POST /api/sync/auth-wb-funnel?days=N",
+            "Rate limit: ~1 req/sec (по одному товару)",
+            "",
+            "Почему раньше не работало:",
+            "  fetch с credentials:include БЕЗ заголовка Authorizev3 → 401",
+            "  Решение найдено через анализ расширения EVIRMA 2 (Chrome Web Store)",
+            "",
+            "Отличие от sales_funnel_daily (открытый API):",
+            "  sales_funnel_daily — seller-analytics-api, API-токен, НЕТ viewCount",
+            "  auth_wb_funnel_daily — seller-content, Puppeteer+Authorizev3, ЕСТЬ viewCount"
+          ]
+        },
+        {
+          "type": "list",
+          "title": "Известные ограничения",
+          "items": [
+            "card.wb.ru отключён — нет buyer price, SPP, feedbacks count",
+            "v1 normquery/stats — не работает для наших кампаний",
+            "campaigns.type = NULL — тип определяется по имени",
+            "Имя ИП/магазина — не подтягивается автоматически из WB",
+            "wb-auth-http — не работает (нужен captcha_token от антибот-SDK)",
+            "Кластеры — weekly snapshot, не фильтруются по периоду"
+          ]
+        },
+        {
+          "type": "list",
+          "title": "Данные магазина",
+          "items": [
+            "Бренд: IMSI",
+            "Магазин: IMSI Каталог",
+            "Supplier ID: 262998 (auth) / 1166225 (API key oid)",
+            "Телефон: 79992787246",
+            "13 рекламируемых товаров (трусы/стринги)",
+            "7 активных кампаний + ~17 на паузе"
+          ]
+        }
+      ]
+    },
+    {
       "id": "finance",
       "icon": "💰",
       "title": "Финансы",

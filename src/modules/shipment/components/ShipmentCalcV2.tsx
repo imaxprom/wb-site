@@ -8,6 +8,7 @@ import { useEffectiveRegions } from "@/modules/shipment/lib/use-effective-region
 import { calculateTrend } from "@/lib/trend-engine";
 import { useEffectiveBuyout } from "@/modules/shipment/lib/use-effective-buyout";
 import { exportShipmentExcelV2 } from "@/lib/export-excel-v2";
+import { exportShipmentExcelV2Table } from "@/lib/export-excel-v2-table";
 import type { Product } from "@/types";
 import { WarehouseBreakdown } from "./WarehouseBreakdown";
 import type { TrendResult } from "@/lib/trend-engine";
@@ -203,10 +204,16 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
     return { effectiveRows: [], effectiveRowsV1: [], effectiveTrend: null, effectiveRegionConfigs: effectiveRegions };
   }, [isAllMode, allCalculations, singleCalc, effectiveRegions]);
 
+  const [exportFormat, setExportFormat] = useState<"logistics" | "table">("table");
+
   const handleExport = useCallback(() => {
     if (allCalculations.length === 0) return;
-    exportShipmentExcelV2(allCalculations, overrides);
-  }, [allCalculations, overrides]);
+    if (exportFormat === "table") {
+      exportShipmentExcelV2Table(allCalculations, overrides);
+    } else {
+      exportShipmentExcelV2(allCalculations, overrides);
+    }
+  }, [allCalculations, overrides, exportFormat]);
 
   if (stock.length === 0 || sortedProducts.length === 0) {
     return (
@@ -259,13 +266,23 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
           Скрыть неактивные
         </label>
 
-        <button
-          onClick={handleExport}
-          disabled={allCalculations.length === 0}
-          className="ml-auto px-5 py-2 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white text-sm rounded-lg font-medium transition-colors disabled:opacity-40"
-        >
-          Сформировать отгрузку
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          <select
+            value={exportFormat}
+            onChange={(e) => setExportFormat(e.target.value as "logistics" | "table")}
+            className="bg-[var(--bg-card)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)]"
+          >
+            <option value="table">Таблица (План/Факт)</option>
+            <option value="logistics">Логистика (Коробки)</option>
+          </select>
+          <button
+            onClick={handleExport}
+            disabled={allCalculations.length === 0}
+            className="px-5 py-2 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white text-sm rounded-lg font-medium transition-colors disabled:opacity-40"
+          >
+            Сформировать отгрузку
+          </button>
+        </div>
       </div>
 
       {/* Trend panel (only in V2 mode) */}

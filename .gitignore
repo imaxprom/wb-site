@@ -6,3 +6,26 @@ node_modules/
 .DS_Store
 .env
 .env.local
+
+# Data (DB, logs, keys, tokens)
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.log
+data/wb-api-key.txt
+data/wb-tokens.json
+data/wb-cookies.json
+data/api-snapshots/
+data/reports/
+data/adv-nm-cache.json
+data/daily-sync-status.json
+
+# Build artifacts
+tsconfig.tsbuildinfo
+next-env.d.ts
+
+# Monitor state (dynamic)
+public/data/monitor/status.json
+public/data/monitor/repair-state.json
+public/data/monitor/repair-log.json
+public/data/monitor/data-health-cron.json

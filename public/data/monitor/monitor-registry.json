@@ -13,7 +13,7 @@
       "intervalMin": 10,
       "source": "APScheduler в bot.py"
     },
-    "lifecycle": "active",
+    "lifecycle": "archived",
     "nameRu": "Бот позиций"
   },
   {
