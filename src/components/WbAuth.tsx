@@ -2,14 +2,34 @@
 
 import { useState, useEffect, useRef } from "react";
 
-type Step = "loading" | "phone" | "captcha" | "code" | "authenticated";
+type Step = "loading" | "phone" | "captcha" | "code" | "supplier_select" | "authenticated";
 
 export function WbAuth() {
   const [step, setStep] = useState<Step>("loading");
-  const [phone, setPhone] = useState("+7");
+  const [phone, setPhone] = useState("+7 (");
+
+  function formatPhone(value: string): string {
+    // Strip everything except digits
+    const digits = value.replace(/\D/g, "");
+    // Always start with 7
+    const d = digits.startsWith("7") ? digits : "7" + digits;
+    // Max 11 digits (7 + 10)
+    const limited = d.slice(0, 11);
+    // Format: +7 (XXX) XXX-XX-XX
+    let result = "+7";
+    if (limited.length > 1) result += " (" + limited.slice(1, 4);
+    if (limited.length >= 4) result += ") ";
+    if (limited.length > 4) result += limited.slice(4, 7);
+    if (limited.length > 7) result += "-" + limited.slice(7, 9);
+    if (limited.length > 9) result += "-" + limited.slice(9, 11);
+    return result;
+  }
   const [code, setCode] = useState("");
   const [captchaText, setCaptchaText] = useState("");
   const [captchaImage, setCaptchaImage] = useState("");
+  const [suppliers, setSuppliers] = useState<string[]>([]);
+  const [currentSupplier, setCurrentSupplier] = useState("");
+  const [sessionInfo, setSessionInfo] = useState<{ supplier?: string; phone?: string }>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
@@ -30,15 +50,28 @@ export function WbAuth() {
     try {
       const res = await fetch("/api/wb/auth");
       const data = await res.json();
-      setStep(data.ok ? "authenticated" : "phone");
+      if (data.ok) {
+        setSessionInfo({ supplier: data.supplier, phone: data.phone });
+        setStep("authenticated");
+      } else {
+        setStep("phone");
+      }
     } catch {
       setStep("phone");
     }
   }
 
-  function handleStepResult(data: { ok: boolean; step: string; captchaImage?: string; error?: string; warning?: string }) {
+  function handleStepResult(data: { ok: boolean; step: string; captchaImage?: string; error?: string; warning?: string; suppliers?: string[]; currentSupplier?: string }) {
     if (!data.ok && data.step === "error") {
       setError(data.error || "Неизвестная ошибка");
+      return;
+    }
+
+    // If wrong code — show error but stay on code step
+    if (!data.ok && data.step === "code") {
+      setError(data.error || "Неверный код");
+      setCode("");
+      setStep("code");
       return;
     }
 
@@ -55,8 +88,12 @@ export function WbAuth() {
         setCode("");
         setStep("code");
         break;
+      case "supplier_select":
+        setSuppliers(data.suppliers || []);
+        setCurrentSupplier(data.currentSupplier || "");
+        setStep("supplier_select");
+        break;
       case "authenticated":
-        // Verify tokens were actually saved before showing success
         fetch("/api/wb/auth").then(r => r.json()).then(d => {
           if (d.ok) {
             setStep("authenticated");
@@ -144,13 +181,30 @@ export function WbAuth() {
     }
   }
 
+  async function handleSelectSupplier(name: string) {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/wb/auth/select-supplier", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ supplier: name }),
+      });
+      handleStepResult(await res.json());
+    } catch {
+      setError("Ошибка соединения с сервером");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleLogout() {
     setLoading(true);
     try {
       await fetch("/api/wb/auth", { method: "DELETE" });
     } catch {}
     setStep("phone");
-    setPhone("+7");
+    setPhone("+7 (");
     setCode("");
     setCaptchaText("");
     setCaptchaImage("");
@@ -170,7 +224,7 @@ export function WbAuth() {
     <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
       <div className="flex items-center justify-between mb-1">
         <h3 className="font-medium">Авторизация WB</h3>
-        {step !== "loading" && step !== "phone" && step !== "authenticated" && (
+        {(step === "captcha" || step === "code" || step === "supplier_select") && (
           <StepIndicator current={step} />
         )}
       </div>
@@ -196,9 +250,10 @@ export function WbAuth() {
           <input
             type="tel"
             value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            placeholder="+79001234567"
-            className="flex-1 max-w-xs bg-[var(--bg)] border border-[var(--border)] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--accent)] transition-colors"
+            onChange={(e) => setPhone(formatPhone(e.target.value))}
+            placeholder="+7 (900) 123-45-67"
+            maxLength={18}
+            className="w-52 bg-[var(--bg)] border border-[var(--border)] rounded-lg px-4 py-2.5 text-sm tracking-wide focus:outline-none focus:border-[var(--accent)] transition-colors"
             onKeyDown={(e) => e.key === "Enter" && handleSendPhone()}
             disabled={loading}
           />
@@ -292,6 +347,37 @@ export function WbAuth() {
         </div>
       )}
 
+      {/* --- SUPPLIER SELECT --- */}
+      {step === "supplier_select" && (
+        <div className="space-y-3">
+          <div className="rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/5 p-3 text-sm text-[var(--accent)]">
+            К номеру <span className="font-medium">{phone}</span> привязано несколько кабинетов. Выберите нужный:
+          </div>
+
+          <div className="space-y-2">
+            {suppliers.map((name) => (
+              <button
+                key={name}
+                onClick={() => handleSelectSupplier(name)}
+                disabled={loading}
+                className={`w-full text-left px-4 py-3 rounded-lg border text-sm font-medium transition-colors flex items-center justify-between ${
+                  name === currentSupplier
+                    ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]"
+                    : "border-[var(--border)] bg-[var(--bg)] text-[var(--text)] hover:border-[var(--accent)]/50"
+                } disabled:opacity-50`}
+              >
+                <span>{name}</span>
+                {name === currentSupplier && <span className="text-xs text-[var(--text-muted)]">текущий</span>}
+              </button>
+            ))}
+          </div>
+
+          <button onClick={handleBack} disabled={loading} className="btn-secondary text-sm">
+            Назад
+          </button>
+        </div>
+      )}
+
       {/* --- AUTHENTICATED --- */}
       {step === "authenticated" && (
         <div className="space-y-3">
@@ -301,17 +387,32 @@ export function WbAuth() {
             </div>
           )}
           <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-[var(--success)] animate-pulse" />
-            <span className="text-sm font-medium text-[var(--success)]">Авторизован в WB</span>
-          </div>
-          <button
-            onClick={handleLogout}
-            disabled={loading}
-            className="px-4 py-2 border border-[var(--danger)]/30 text-[var(--danger)] text-sm rounded-lg font-medium hover:bg-[var(--danger)]/10 transition-colors disabled:opacity-50"
-          >
-            Выйти
-          </button>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-[var(--success)] animate-pulse" />
+                <span className="text-xs text-[var(--text-muted)]">Статус</span>
+                <span className="text-sm font-medium text-[var(--success)]">Активен</span>
+              </div>
+              {sessionInfo.supplier && (
+                <div className="flex items-center gap-2 border-l border-[var(--border)] pl-4">
+                  <span className="text-xs text-[var(--text-muted)]">Кабинет</span>
+                  <span className="text-sm font-medium text-[var(--text)]">{sessionInfo.supplier}</span>
+                </div>
+              )}
+              {sessionInfo.phone && (
+                <div className="flex items-center gap-2 border-l border-[var(--border)] pl-4">
+                  <span className="text-xs text-[var(--text-muted)]">Телефон</span>
+                  <span className="text-sm font-mono text-[var(--text)]">{sessionInfo.phone}</span>
+                </div>
+              )}
+            </div>
+            <button
+              onClick={handleLogout}
+              disabled={loading}
+              className="px-4 py-2 border border-[var(--danger)]/30 text-[var(--danger)] text-sm rounded-lg font-medium hover:bg-[var(--danger)]/10 transition-colors disabled:opacity-50"
+            >
+              Выйти
+            </button>
           </div>
         </div>
       )}
@@ -328,14 +429,14 @@ function Spinner() {
   );
 }
 
-function StepIndicator({ current }: { current: "captcha" | "code" }) {
+function StepIndicator({ current }: { current: "captcha" | "code" | "supplier_select" }) {
   const steps = [
     { key: "phone", label: "Телефон" },
-    { key: "captcha", label: "Капча" },
     { key: "code", label: "SMS" },
+    { key: "supplier_select", label: "Кабинет" },
   ];
 
-  const currentIdx = current === "captcha" ? 1 : 2;
+  const currentIdx = current === "captcha" ? 1 : current === "code" ? 1 : 2;
 
   return (
     <div className="flex items-center gap-1.5 text-xs">

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cdpSubmitCode } from "@/lib/wb-auth-cdp";
+import { playwrightSubmitCode } from "@/lib/wb-auth-playwright";
 
 /**
- * POST /api/wb/auth/verify — Submit SMS code (CDP approach)
+ * POST /api/wb/auth/verify — Submit SMS code (Playwright on VPS)
  */
 
 export async function POST(req: NextRequest) {
@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
     if (!code) {
       return NextResponse.json({ ok: false, step: "error", error: "Укажите код" }, { status: 400 });
     }
-    const result = await cdpSubmitCode(code);
+    const result = await playwrightSubmitCode(code);
     return NextResponse.json(result);
   } catch (err) {
     return NextResponse.json({ ok: false, step: "error", error: String(err) }, { status: 500 });
