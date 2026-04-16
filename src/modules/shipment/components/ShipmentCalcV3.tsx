@@ -99,11 +99,33 @@ function PackingCards({ result }: { result: PackingResult }) {
                   </span>
                 )}
               </div>
-              <span className="text-[10px] font-mono" style={{ color: fillColor }}>
-                {box.fillPercent.toFixed(0)}%
-              </span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-mono" style={{ color: fillColor }}>
+                  {box.fillPercent.toFixed(0)}%
+                </span>
+                <span
+                  style={{
+                    width: 14,
+                    height: 14,
+                    borderRadius: "50%",
+                    background: `conic-gradient(${fillColor} ${box.fillPercent}%, color-mix(in srgb, var(--border) 60%, transparent) 0)`,
+                    position: "relative",
+                    display: "inline-block",
+                    flexShrink: 0,
+                  }}
+                >
+                  <span
+                    style={{
+                      position: "absolute",
+                      inset: 3,
+                      background: "var(--bg)",
+                      borderRadius: "50%",
+                    }}
+                  />
+                </span>
+              </div>
             </div>
-            <div className="space-y-1 mb-2">
+            <div className="space-y-1">
               {(() => {
                 // Split label into article and size for alignment
                 const rows = box.items.map(entry => {
@@ -134,12 +156,6 @@ function PackingCards({ result }: { result: PackingResult }) {
                 );
               })()}
             </div>
-            <div className="w-full h-1.5 bg-[var(--border)]/30 rounded-full overflow-hidden">
-              <div className="h-full rounded-full" style={{
-                width: `${box.fillPercent}%`,
-                background: fillColor,
-              }} />
-            </div>
           </div>
         );
       })}
@@ -147,74 +163,160 @@ function PackingCards({ result }: { result: PackingResult }) {
   );
 }
 
-// ─── Вариант Б: Таблица ─────────────────────────────────────
+// ─── Вариант Б: По артикулу + общий блок смешанных ──────────
 
-function PackingTable({ result }: { result: PackingResult }) {
-  // Collect all unique sizes across all boxes
-  const allSizes = Array.from(
-    new Set(result.boxes.flatMap((b) => b.items.map((i) => i.item.label)))
-  );
+function PackingByArticle({ result }: { result: PackingResult }) {
+  type SizeEntry = { item: PackingItem; boxCount: number; qtyPerBox: number };
+  type ArticleGroup = {
+    articleWB: string;
+    productName: string;
+    sizes: SizeEntry[];
+    totalBoxes: number;
+    totalItems: number;
+  };
+
+  const { articles, otherBoxes } = useMemo(() => {
+    const pureFull: typeof result.boxes = [];
+    const other: typeof result.boxes = [];
+    for (const box of result.boxes) {
+      const isSingleItem = box.items.length === 1;
+      const isFull = box.fillPercent >= 99;
+      if (isSingleItem && isFull) pureFull.push(box);
+      else other.push(box);
+    }
+
+    const map = new Map<string, ArticleGroup>();
+    for (const box of pureFull) {
+      const entry = box.items[0];
+      const { item, qty } = entry;
+      if (!map.has(item.articleWB)) {
+        map.set(item.articleWB, {
+          articleWB: item.articleWB,
+          productName: item.productName || item.articleName || "—",
+          sizes: [],
+          totalBoxes: 0,
+          totalItems: 0,
+        });
+      }
+      const g = map.get(item.articleWB)!;
+      const existing = g.sizes.find(s => s.item.id === item.id);
+      if (existing) {
+        existing.boxCount += 1;
+      } else {
+        g.sizes.push({ item, boxCount: 1, qtyPerBox: qty });
+      }
+      g.totalBoxes += 1;
+      g.totalItems += qty;
+    }
+
+    const LETTER_ORDER: Record<string, number> = { XS: 1, S: 2, M: 3, L: 4, XL: 5, XXL: 6, XXXL: 7 };
+    const sizeSortKey = (s: string): number => {
+      const num = s.match(/\d+/);
+      if (num) return parseInt(num[0], 10);
+      return LETTER_ORDER[s.trim().toUpperCase()] ?? 999;
+    };
+    for (const g of map.values()) {
+      g.sizes.sort((a, b) => sizeSortKey(a.item.size) - sizeSortKey(b.item.size));
+    }
+
+    return { articles: Array.from(map.values()), otherBoxes: other };
+  }, [result.boxes]);
 
   return (
-    <div className="overflow-auto">
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th></th>
-            {allSizes.map((size) => (
-              <th key={size} className="num">{size}</th>
-            ))}
-            <th className="num">Всего шт</th>
-            <th className="num">Заполн.</th>
-          </tr>
-        </thead>
-        <tbody>
-          {result.boxes.map((box) => {
-            const totalQty = box.items.reduce((s, i) => s + i.qty, 0);
-            return (
-              <tr key={box.boxNumber}>
-                <td className="font-medium text-white">Короб {box.boxNumber}</td>
-                {allSizes.map((size) => {
-                  const entry = box.items.find((i) => i.item.label === size);
-                  return (
-                    <td key={size} className="num">
-                      {entry ? (
-                        <span className="text-white font-medium">{entry.qty}</span>
-                      ) : (
-                        <span className="text-[var(--border)]">—</span>
-                      )}
-                    </td>
-                  );
-                })}
-                <td className="num font-bold">{totalQty}</td>
-                <td className="num">
-                  <span style={{
-                    color: box.fillPercent > 85 ? "var(--success)" : box.fillPercent > 50 ? "var(--accent)" : "var(--warning)"
-                  }}>
+    <div className="space-y-3">
+      {articles.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {articles.map(article => (
+            <div key={article.articleWB} className="bg-[var(--bg)] border border-[var(--border)] rounded-xl p-4">
+              <div className="flex items-baseline justify-between mb-3 pb-2 border-b border-[var(--border)]/40">
+                <div>
+                  <span className="font-mono text-sm text-[var(--text-muted)] mr-2">{article.articleWB}</span>
+                  <span className="text-sm font-semibold text-white">{article.productName}</span>
+                </div>
+              </div>
+              <table className="w-full text-xs">
+                <tbody>
+                  {article.sizes.map(s => {
+                    const bc = s.item.barcode || "";
+                    return (
+                      <tr key={s.item.id}>
+                        <td className="text-[var(--text-muted)] pr-3 whitespace-nowrap py-1">{s.item.size}</td>
+                        <td className="font-mono pr-3 whitespace-nowrap py-1">
+                          <span className="text-[var(--text-muted)]">{bc.slice(0, -6)}</span>
+                          <span className="text-white font-semibold text-sm">{bc.slice(-6)}</span>
+                        </td>
+                        <td className="text-white text-right font-semibold whitespace-nowrap py-1 tabular-nums">
+                          {s.boxCount}×{s.qtyPerBox}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <div className="mt-3 pt-2 border-t border-[var(--border)]/40 flex justify-between text-xs">
+                <span className="text-[var(--text-muted)]">{article.totalBoxes} полн. коробов</span>
+                <span className="text-white font-semibold">{article.totalItems} шт</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {otherBoxes.length > 0 && (
+        <div
+          className="rounded-xl p-4"
+          style={{
+            background: "color-mix(in srgb, var(--warning) 4%, transparent)",
+            border: "1px dashed color-mix(in srgb, var(--warning) 35%, transparent)",
+          }}
+        >
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--warning)" }}>
+              ⚠️ Смешанные и неполные коробы ({otherBoxes.length})
+            </span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+            {otherBoxes.map(box => (
+              <div
+                key={box.boxNumber}
+                className="bg-[var(--bg)] rounded-lg p-3 text-xs"
+                style={{ border: "1px solid color-mix(in srgb, var(--warning) 25%, transparent)" }}
+              >
+                <div className="flex justify-between items-baseline mb-2">
+                  <span className="text-white font-semibold text-sm">Короб №{box.boxNumber}</span>
+                  <span className="font-mono text-[10px]" style={{ color: "var(--warning)" }}>
                     {box.fillPercent.toFixed(0)}%
                   </span>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-        <tfoot>
-          <tr className="font-bold">
-            <td>Итого</td>
-            {allSizes.map((size) => {
-              const total = result.boxes.reduce((s, b) => s + (b.items.find((i) => i.item.label === size)?.qty || 0), 0);
-              return <td key={size} className="num">{total > 0 ? total : "—"}</td>;
-            })}
-            <td className="num">{result.totalItems}</td>
-            <td className="num">{result.totalBoxes} кор.</td>
-          </tr>
-        </tfoot>
-      </table>
+                </div>
+                <div className="space-y-0.5">
+                  {box.items.map((entry, idx) => (
+                    <div key={idx} className="font-mono text-[11px] text-[var(--text-muted)] leading-snug">
+                      {entry.item.articleWB} · <span className="text-white font-semibold">{entry.item.size} ×{entry.qty}</span>
+                    </div>
+                  ))}
+                </div>
+                {box.fillPercent < 99 && (
+                  <div
+                    className="mt-2 pt-1.5 text-[10px] italic"
+                    style={{
+                      borderTop: "1px solid color-mix(in srgb, var(--warning) 15%, transparent)",
+                      color: "var(--warning)",
+                    }}
+                  >
+                    ↑ свободно ~{Math.round(100 - box.fillPercent)}%
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-// ─── Вариант В: Вертикальные столбцы ────────────────────────
+
+// ─── Вариант В (прежний): Вертикальные столбцы ──────────────
 
 function PackingColumns({ result }: { result: PackingResult }) {
   const maxVol = result.usableVolume;
@@ -283,7 +385,7 @@ function PackingView({ result, regionName, variant }: { result: PackingResult; r
       </div>
 
       {variant === "cards" && <PackingCards result={result} />}
-      {variant === "table" && <PackingTable result={result} />}
+      {variant === "table" && <PackingByArticle result={result} />}
       {variant === "columns" && <PackingColumns result={result} />}
     </div>
   );
@@ -370,7 +472,8 @@ export default function ShipmentCalcV3() {
     if (settings.shipmentsPerMonth !== undefined) setShipmentsPerMonth(settings.shipmentsPerMonth);
     if (settings.minUnits !== undefined) setMinUnits(settings.minUnits);
     if (settings.roundTo !== undefined) setRoundTo(settings.roundTo);
-  }, [settings.maxArticlesPerBox, settings.shipmentsPerMonth, settings.minUnits, settings.roundTo]);
+    if (settings.packingVariant !== undefined) setPackingVariant(settings.packingVariant as PackingVariant);
+  }, [settings.maxArticlesPerBox, settings.shipmentsPerMonth, settings.minUnits, settings.roundTo, settings.packingVariant]);
 
   const boxConfig: BoxConfig = useMemo(() => ({
     lengthMm: (settings.boxLengthCm || 60) * 10,
@@ -717,16 +820,26 @@ export default function ShipmentCalcV3() {
       </div>}
 
       {/* Packing by region */}
-      {packingByRegion.map(({ region, packing }) => (
-        packing.totalBoxes > 0 && (
-          <PackingView
-            key={region.id}
-            result={packing}
-            regionName={region.shortName}
-            variant={packingVariant}
-          />
-        )
-      ))}
+      {packingVariant === "columns" ? (
+        <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-8 text-center">
+          <div className="text-4xl mb-3">📊</div>
+          <h3 className="text-base font-bold text-white mb-2">Сводная таблица перенесена</h3>
+          <p className="text-sm text-[var(--text-muted)] max-w-md mx-auto">
+            Этот вариант доступен в <span className="text-[var(--accent)] font-medium">V2 Динамика</span> → режим <span className="text-[var(--accent)] font-medium">«Кораба»</span>.
+          </p>
+        </div>
+      ) : (
+        packingByRegion.map(({ region, packing }) => (
+          packing.totalBoxes > 0 && (
+            <PackingView
+              key={region.id}
+              result={packing}
+              regionName={region.shortName}
+              variant={packingVariant}
+            />
+          )
+        ))
+      )}
 
       {/* Postponed items */}
       {packingByRegion.some((p) => p.postponed && p.postponed.length > 0) && (

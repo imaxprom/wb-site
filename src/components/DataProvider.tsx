@@ -231,6 +231,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           minUnits: typeof raw.minUnits === "number" ? raw.minUnits : undefined,
           roundTo: typeof raw.roundTo === "number" ? raw.roundTo : undefined,
           packingVariant: typeof raw.packingVariant === "string" ? raw.packingVariant : undefined,
+          v2ShipmentsPerMonth: typeof raw.v2ShipmentsPerMonth === "number" ? raw.v2ShipmentsPerMonth : undefined,
+          v2MinUnits: typeof raw.v2MinUnits === "number" ? raw.v2MinUnits : undefined,
+          v2RoundTo: typeof raw.v2RoundTo === "number" ? raw.v2RoundTo : undefined,
+          v2MaxArticlesPerBox: typeof raw.v2MaxArticlesPerBox === "number" ? raw.v2MaxArticlesPerBox : undefined,
+          v2ViewMode: typeof raw.v2ViewMode === "string" ? raw.v2ViewMode : undefined,
+          shipmentCalcMode: typeof raw.shipmentCalcMode === "string" ? raw.shipmentCalcMode : undefined,
         };
       }
 

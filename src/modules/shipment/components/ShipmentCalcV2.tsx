@@ -9,10 +9,13 @@ import { calculateTrend } from "@/lib/trend-engine";
 import { useEffectiveBuyout } from "@/modules/shipment/lib/use-effective-buyout";
 import { exportShipmentExcelV2 } from "@/lib/export-excel-v2";
 import { exportShipmentExcelV2Table } from "@/lib/export-excel-v2-table";
+import { exportShipmentExcelSummary } from "@/lib/export-excel-summary";
 import type { Product } from "@/types";
 import { WarehouseBreakdown } from "./WarehouseBreakdown";
 import type { TrendResult } from "@/lib/trend-engine";
 import { InfoTip } from "@/components/Tooltip";
+import { packItems, unitVolumeLiters, type PackingItem, type BoxConfig } from "@/lib/packing-engine";
+import { PackingSummaryTable } from "./PackingSummaryTable";
 
 // ─── Trend Badge ────────────────────────────────────────────
 
@@ -126,12 +129,21 @@ function WeeklyChart({ trend }: { trend: TrendResult }) {
 // ─── Main Component ─────────────────────────────────────────
 
 export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "v1" | "v2" }) {
-  const { stock, orders, products, settings, overrides, isLoaded } = useData();
+  const { stock, orders, products, settings, overrides, updateSettings, isLoaded } = useData();
   const effectiveRegions = useEffectiveRegions();
   const getBuyout = useEffectiveBuyout();
   const [selectedProduct, setSelectedProduct] = useState<string>("__all__");
   const mode = initialMode;
   const [hideInactive, setHideInactive] = useState(true);
+
+  // V2 Dynamics — only box-rounding setting (0.5 | 1) + view mode
+  const [v2BoxRounding, setV2BoxRounding] = useState<number>(settings.v2RoundTo ?? 1);
+  const [v2ViewMode, setV2ViewMode] = useState<"units" | "boxes">((settings.v2ViewMode as "units" | "boxes") ?? "units");
+
+  React.useEffect(() => {
+    if (settings.v2RoundTo !== undefined) setV2BoxRounding(settings.v2RoundTo);
+    if (settings.v2ViewMode !== undefined) setV2ViewMode(settings.v2ViewMode as "units" | "boxes");
+  }, [settings.v2RoundTo, settings.v2ViewMode]);
 
   const sortedProducts = useMemo(() => {
     const stockTotals = new Map<string, number>();
@@ -193,10 +205,10 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
         effectiveRegionConfigs: allCalculations[0]?.regionConfigs || effectiveRegions,
       };
     }
-    if (singleCalc) {
+    if (singleCalc && product) {
       return {
-        effectiveRows: singleCalc.rows,
-        effectiveRowsV1: singleCalc.rowsV1,
+        effectiveRows: singleCalc.rows.map(r => ({ ...r, articleWB: product.articleWB, articleName: product.name })),
+        effectiveRowsV1: singleCalc.rowsV1.map(r => ({ ...r, articleWB: product.articleWB, articleName: product.name })),
         effectiveTrend: singleCalc.trend,
         effectiveRegionConfigs: singleCalc.regionConfigs,
       };
@@ -204,16 +216,7 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
     return { effectiveRows: [], effectiveRowsV1: [], effectiveTrend: null, effectiveRegionConfigs: effectiveRegions };
   }, [isAllMode, allCalculations, singleCalc, effectiveRegions]);
 
-  const [exportFormat, setExportFormat] = useState<"logistics" | "table">("table");
-
-  const handleExport = useCallback(() => {
-    if (allCalculations.length === 0) return;
-    if (exportFormat === "table") {
-      exportShipmentExcelV2Table(allCalculations, overrides);
-    } else {
-      exportShipmentExcelV2(allCalculations, overrides);
-    }
-  }, [allCalculations, overrides, exportFormat]);
+  const [exportFormat, setExportFormat] = useState<"logistics" | "table" | "summary">("table");
 
   if (!isLoaded) {
     return (
@@ -250,6 +253,67 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
   // V2 need: sum of deficit with trend
   const v2Need = effectiveRows.reduce((s, r) => s + r.regions.reduce((rs, reg) => rs + Math.max(0, Math.ceil(reg.plan - reg.fact)), 0), 0);
 
+  // V2 packing (for "boxes" view)
+  const v2BoxConfig: BoxConfig = useMemo(() => ({
+    lengthMm: (settings.boxLengthCm || 60) * 10,
+    widthMm: (settings.boxWidthCm || 40) * 10,
+    heightMm: (settings.boxHeightCm || 40) * 10,
+    fillRate: 1.0,
+  }), [settings.boxLengthCm, settings.boxWidthCm, settings.boxHeightCm]);
+
+  const v2PackingByRegion = useMemo(() => {
+    if (mode !== "v2" || effectiveRows.length === 0 || !effectiveRegionConfigs.length) return [];
+    return effectiveRegionConfigs.map((region) => {
+      const items: PackingItem[] = [];
+      for (const row of effectiveRows) {
+        const regionData = row.regions.find((r) => r.regionId === region.id);
+        const fullDeficit = Math.ceil(regionData ? Math.max(0, regionData.plan - regionData.fact) : 0);
+        if (fullDeficit <= 0) continue;
+        // Round up to nearest (perBox * v2BoxRounding): 1 = whole box, 0.5 = half-box
+        const step = row.perBox * v2BoxRounding;
+        const needed = step > 0 ? Math.ceil(fullDeficit / step) * step : fullDeficit;
+        items.push({
+          id: `${row.barcode}-${region.id}`,
+          label: row.articleWB ? `${row.articleWB} / ${row.size}` : row.size,
+          articleWB: row.articleWB || "",
+          articleName: row.articleName || "",
+          productName: overrides[row.articleWB || ""]?.customName || row.articleName || "",
+          size: row.size,
+          barcode: row.barcode,
+          needed,
+          perBox: row.perBox,
+          unitVolume: unitVolumeLiters(v2BoxConfig, row.perBox),
+        });
+      }
+      return {
+        region: { id: region.id, shortName: region.shortName },
+        packing: packItems(items, v2BoxConfig, 999, 1, 1),
+      };
+    }).filter((p) => p.packing.totalBoxes > 0);
+  }, [mode, effectiveRows, effectiveRegionConfigs, v2BoxRounding, v2BoxConfig, overrides]);
+
+  const v2RowMeta = useMemo(() => {
+    const map: Record<string, { plan: number; fact: number; need: number }> = {};
+    for (const row of effectiveRows) {
+      const plan = row.regions.reduce((s, r) => s + r.plan, 0);
+      const fact = row.regions.reduce((s, r) => s + r.fact, 0);
+      const need = row.regions.reduce((s, r) => s + Math.max(0, Math.ceil(r.plan - r.fact)), 0);
+      map[row.barcode] = { plan, fact, need };
+    }
+    return map;
+  }, [effectiveRows]);
+
+  const handleExport = useCallback(() => {
+    if (allCalculations.length === 0) return;
+    if (exportFormat === "summary") {
+      exportShipmentExcelSummary({ packingByRegion: v2PackingByRegion, rowMeta: v2RowMeta });
+    } else if (exportFormat === "table") {
+      exportShipmentExcelV2Table(allCalculations, overrides);
+    } else {
+      exportShipmentExcelV2(allCalculations, overrides);
+    }
+  }, [allCalculations, overrides, exportFormat, v2PackingByRegion, v2RowMeta]);
+
   return (
     <div className="space-y-4">
       {/* Product selector + mode toggle */}
@@ -284,11 +348,12 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
         <div className="ml-auto flex items-center gap-2">
           <select
             value={exportFormat}
-            onChange={(e) => setExportFormat(e.target.value as "logistics" | "table")}
+            onChange={(e) => setExportFormat(e.target.value as "logistics" | "table" | "summary")}
             className="bg-[var(--bg-card)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)]"
           >
             <option value="table">Таблица (План/Факт)</option>
             <option value="logistics">Логистика (Коробки)</option>
+            <option value="summary">Сводная по артикулам</option>
           </select>
           <button
             onClick={handleExport}
@@ -300,28 +365,53 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
         </div>
       </div>
 
-      {/* Trend panel (only in V2 mode) */}
+      {/* Trend panel + Settings (only in V2 mode) */}
       {mode === "v2" && trend && (
         <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-4">
           <div className="flex flex-col lg:flex-row gap-4">
-            {/* Chart */}
-            <div className="flex-1">
-              <h3 className="text-sm font-bold text-white mb-2">📊 Динамика заказов по неделям</h3>
-              <WeeklyChart trend={trend} />
-            </div>
-            {/* Summary */}
-            <div className="lg:w-72 space-y-3">
-              <h3 className="text-sm font-bold text-white">{trend.direction === "up" ? "📈" : trend.direction === "down" ? "📉" : "📊"} Тренд<InfoTip term="trend" /></h3>
-              <TrendBadge trend={trend} v1Need={v1Need} v2Need={v2Need} />
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div className="bg-[var(--bg)] rounded-lg p-2 text-center">
-                  <div className="text-[var(--text-muted)]">Множитель<InfoTip term="multiplier" /></div>
-                  <div className="text-white font-bold text-sm">×{trend.multiplier.toFixed(2)}</div>
+            {/* Left: Chart + Trend summary */}
+            <div className="flex-1 flex flex-col lg:flex-row gap-4">
+              <div className="flex-1">
+                <h3 className="text-sm font-bold text-white mb-2">📊 Динамика заказов по неделям</h3>
+                <WeeklyChart trend={trend} />
+              </div>
+              <div className="lg:w-56 space-y-2">
+                <h3 className="text-sm font-bold text-white">{trend.direction === "up" ? "📈" : trend.direction === "down" ? "📉" : "📊"} Тренд<InfoTip term="trend" /></h3>
+                <TrendBadge trend={trend} v1Need={v1Need} v2Need={v2Need} />
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="bg-[var(--bg)] rounded-lg p-1.5 text-center">
+                    <div className="text-[var(--text-muted)] text-[10px]">Множитель<InfoTip term="multiplier" /></div>
+                    <div className="text-white font-bold text-sm">×{trend.multiplier.toFixed(2)}</div>
+                  </div>
+                  <div className="bg-[var(--bg)] rounded-lg p-1.5 text-center">
+                    <div className="text-[var(--text-muted)] text-[10px]">Δ/неделю<InfoTip term="deltaWeek" /></div>
+                    <div className="font-bold text-sm" style={{ color: trend.slope >= 0 ? "var(--success)" : "var(--danger)" }}>
+                      {trend.slope >= 0 ? "+" : ""}{formatNumber(Math.round(trend.slope))}
+                    </div>
+                  </div>
                 </div>
-                <div className="bg-[var(--bg)] rounded-lg p-2 text-center">
-                  <div className="text-[var(--text-muted)]">Δ/неделю<InfoTip term="deltaWeek" /></div>
-                  <div className="font-bold text-sm" style={{ color: trend.slope >= 0 ? "var(--success)" : "var(--danger)" }}>
-                    {trend.slope >= 0 ? "+" : ""}{formatNumber(Math.round(trend.slope))}
+              </div>
+            </div>
+
+            {/* Right 1/4: V2 Settings */}
+            <div className="lg:w-52 lg:border-l lg:border-[var(--border)] lg:pl-4 space-y-3">
+              <h3 className="text-sm font-bold text-white">⚙️ Настройки</h3>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-[var(--text-muted)]">Округление до короба</span>
+                  <select value={v2BoxRounding} onChange={(e) => { const v = Number(e.target.value); setV2BoxRounding(v); updateSettings({ v2RoundTo: v }); }} className="w-14 bg-[var(--bg)] border border-[var(--border)] rounded px-1 py-1 text-center text-xs focus:outline-none focus:border-[var(--accent)]">
+                    <option value={0.5}>0.5</option>
+                    <option value={1}>1</option>
+                  </select>
+                </div>
+                <div className="pt-1 border-t border-[var(--border)]">
+                  <div className="text-[10px] text-[var(--text-muted)] mb-1">Вид</div>
+                  <div className="flex rounded-lg border border-[var(--border)] overflow-hidden">
+                    {(["units", "boxes"] as const).map((key) => (
+                      <button key={key} onClick={() => { setV2ViewMode(key); updateSettings({ v2ViewMode: key }); }}
+                        className={`flex-1 px-2 py-1 text-[10px] font-medium transition-colors border-l first:border-l-0 border-[var(--border)] ${v2ViewMode === key ? "bg-[var(--accent)]/20 text-[var(--accent)]" : "text-[var(--text-muted)] hover:text-white"}`}
+                      >{key === "units" ? "Штуки" : "Кораба"}</button>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -330,7 +420,21 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
         </div>
       )}
 
-      {/* Table */}
+      {/* Boxes view */}
+      {mode === "v2" && v2ViewMode === "boxes" && (
+        <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-bold text-white">📦 Кораба — сводная по артикулам</h3>
+            <div className="text-xs text-[var(--text-muted)]">
+              {v2PackingByRegion.reduce((s, p) => s + p.packing.totalBoxes, 0)} коробов · {v2PackingByRegion.reduce((s, p) => s + p.packing.totalItems, 0)} шт
+            </div>
+          </div>
+          <PackingSummaryTable packingByRegion={v2PackingByRegion} rowMeta={v2RowMeta} />
+        </div>
+      )}
+
+      {/* Table (units view) */}
+      {(mode !== "v2" || v2ViewMode === "units") && (
       <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] overflow-auto max-h-[65vh]">
         <table className="data-table">
           <thead>
@@ -436,6 +540,7 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
           </tfoot>
         </table>
       </div>
+      )}
 
       {/* Warehouse breakdown */}
       {singleCalc && <WarehouseBreakdown calculation={singleCalc} />}

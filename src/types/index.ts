@@ -146,4 +146,11 @@ export interface AppSettings {
   minUnits?: number;
   roundTo?: number;
   packingVariant?: string;
+  // V2 Dynamics independent settings
+  v2ShipmentsPerMonth?: number;
+  v2MinUnits?: number;
+  v2RoundTo?: number;
+  v2MaxArticlesPerBox?: number;
+  v2ViewMode?: string; // "units" | "boxes"
+  shipmentCalcMode?: string; // "v1" | "v2" | "v3"
 }

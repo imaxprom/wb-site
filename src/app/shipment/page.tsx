@@ -6,6 +6,7 @@ import ShipmentCalcV3 from "@/modules/shipment/components/ShipmentCalcV3";
 import ProductsTab from "@/modules/shipment/components/ProductsTab";
 import UploadTab from "@/modules/shipment/components/UploadTab";
 import ShipmentSettings from "@/modules/shipment/components/ShipmentSettings";
+import { useData } from "@/components/DataProvider";
 
 function TabBtn({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
@@ -27,8 +28,13 @@ type Tab = "calc" | "products" | "upload" | "settings";
 type CalcMode = "v1" | "v2" | "v3";
 
 export default function ShipmentPage() {
+  const { settings, updateSettings, isLoaded } = useData();
   const [tab, setTab] = useState<Tab>("calc");
-  const [calcMode, setCalcMode] = useState<CalcMode>("v3");
+  const calcMode = settings.shipmentCalcMode as CalcMode | undefined;
+
+  const switchCalcMode = (mode: CalcMode) => {
+    updateSettings({ shipmentCalcMode: mode });
+  };
 
   return (
     <div className="space-y-6">
@@ -40,12 +46,24 @@ export default function ShipmentPage() {
         <TabBtn label="Настройки отгрузки" active={tab === "settings"} onClick={() => setTab("settings")} />
       </div>
 
-      {tab === "calc" && (
+      {tab === "calc" && !isLoaded && (
+        <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-12 text-center">
+          <div className="flex items-center justify-center gap-3">
+            <svg className="animate-spin h-6 w-6 text-[var(--accent)]" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <span className="text-[var(--text-muted)]">Загрузка настроек…</span>
+          </div>
+        </div>
+      )}
+
+      {tab === "calc" && isLoaded && (
         <>
           {/* Mode switcher */}
           <div className="flex rounded-lg border border-[var(--border)] overflow-hidden w-fit">
             <button
-              onClick={() => setCalcMode("v1")}
+              onClick={() => switchCalcMode("v1")}
               className={`px-4 py-2 text-sm font-medium transition-colors ${
                 calcMode === "v1"
                   ? "bg-[var(--bg-card-hover)] text-white"
@@ -55,7 +73,7 @@ export default function ShipmentPage() {
               V1 Стандарт
             </button>
             <button
-              onClick={() => setCalcMode("v2")}
+              onClick={() => switchCalcMode("v2")}
               className={`px-4 py-2 text-sm font-medium transition-colors border-l border-[var(--border)] ${
                 calcMode === "v2"
                   ? "bg-[var(--accent)]/20 text-[var(--accent)]"
@@ -65,7 +83,7 @@ export default function ShipmentPage() {
               V2 Динамика
             </button>
             <button
-              onClick={() => setCalcMode("v3")}
+              onClick={() => switchCalcMode("v3")}
               className={`px-4 py-2 text-sm font-medium transition-colors border-l border-[var(--border)] ${
                 calcMode === "v3"
                   ? "bg-[var(--success)]/20 text-[var(--success)]"
@@ -77,10 +95,12 @@ export default function ShipmentPage() {
           </div>
 
           {/* Render based on mode */}
-          {calcMode === "v3" ? (
-            <ShipmentCalcV3 />
-          ) : (
-            <ShipmentCalcV2 initialMode={calcMode} />
+          {calcMode === "v3" && <ShipmentCalcV3 />}
+          {(calcMode === "v1" || calcMode === "v2") && <ShipmentCalcV2 initialMode={calcMode} />}
+          {!calcMode && (
+            <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-8 text-center text-[var(--text-muted)]">
+              Выберите режим расчёта: V1 Стандарт, V2 Динамика или V3 Умный.
+            </div>
           )}
         </>
       )}
