@@ -243,13 +243,10 @@ export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMet
     }
     setV(ws, r, SVERKA_C, null, { ...sampleStyle, border: { ...BORDER_ALL_THIN, left: BORDER_THICK, right: BORDER_THICK } });
     if (isBoxes) {
-      const sampleBoxRefs = Array.from({ length: N }, (_, i) => ref(r, 8 + i * 2));
-      const sampleUnitRefs = Array.from({ length: N }, (_, i) => ref(r, 8 + i * 2 + 1));
-      setF(ws, r, SHIP_BOXES_C, `=IF(SUM(${sampleBoxRefs.join(",")})=0,"",SUM(${sampleBoxRefs.join(",")}))`, 0, { ...sampleStyle, border: { ...BORDER_ALL_THIN, left: BORDER_THICK } });
-      setF(ws, r, SHIP_UNITS_C, `=IF(SUM(${sampleUnitRefs.join(",")})=0,"",SUM(${sampleUnitRefs.join(",")}))`, 0, sampleStyle);
+      setV(ws, r, SHIP_BOXES_C, null, { ...sampleStyle, border: { ...BORDER_ALL_THIN, left: BORDER_THICK } });
+      setV(ws, r, SHIP_UNITS_C, null, sampleStyle);
     } else {
-      const sampleUnitRefs = Array.from({ length: N }, (_, i) => ref(r, 8 + i));
-      setF(ws, r, SHIP_UNITS_C, `=IF(SUM(${sampleUnitRefs.join(",")})=0,"",SUM(${sampleUnitRefs.join(",")}))`, 0, { ...sampleStyle, border: { ...BORDER_ALL_THIN, left: BORDER_THICK } });
+      setV(ws, r, SHIP_UNITS_C, null, { ...sampleStyle, border: { ...BORDER_ALL_THIN, left: BORDER_THICK } });
     }
     setV(ws, r, DELTA_C, null, { ...sampleStyle, border: { ...BORDER_ALL_THIN, right: BORDER_THICK } });
     r += 1;
