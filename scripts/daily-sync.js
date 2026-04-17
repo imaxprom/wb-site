@@ -696,96 +696,62 @@ async function retroactiveCheck() {
 
 // --- Source 4: Weekly realization report (final, via API key) ---
 
-async function syncWeeklyReport() {
-  const apiKey = getApiKey();
-  if (!apiKey) { log("  Weekly: нет API ключа, пропуск"); return; }
+const WEEKLY_COLS = [
+  "rrd_id", "realizationreport_id", "date_from", "date_to", "rr_dt", "sale_dt", "order_dt",
+  "supplier_oper_name", "nm_id", "sa_name", "ts_name", "barcode", "brand_name", "subject_name",
+  "quantity", "retail_price", "retail_price_withdisc_rub", "retail_amount",
+  "ppvz_for_pay", "ppvz_sales_commission", "acquiring_fee", "delivery_rub",
+  "delivery_amount", "return_amount", "storage_fee", "penalty", "acceptance",
+  "rebill_logistic_cost", "additional_payment", "commission_percent",
+  "ppvz_spp_prc", "ppvz_kvw_prc_base", "ppvz_kvw_prc", "ppvz_supplier_name",
+  "site_country", "office_name", "deduction", "bonus_type_name", "source"
+];
 
-  // Determine last Monday-Sunday period
-  const now = new Date();
-  const msk = new Date(now.getTime() + 3 * 60 * 60 * 1000);
-  const dayOfWeek = msk.getDay(); // 0=Sun, 1=Mon
-  // Last Monday = today - (dayOfWeek === 0 ? 6 : dayOfWeek - 1) - 7
-  const daysToLastMonday = (dayOfWeek === 0 ? 6 : dayOfWeek - 1) + 7;
-  const lastMonday = new Date(msk);
-  lastMonday.setDate(msk.getDate() - daysToLastMonday);
-  const lastSunday = new Date(lastMonday);
-  lastSunday.setDate(lastMonday.getDate() + 6);
-
-  const fmtDate = (d) => d.toISOString().slice(0, 10);
-  const dateFrom = fmtDate(lastMonday);
-  const dateTo = fmtDate(lastSunday);
-
-  const db = new Database(DB_PATH);
-  log(`  Weekly report ${dateFrom} — ${dateTo}...`);
-
+/**
+ * Синхронизирует один еженедельный период (Пн-Вс) в таблицу realization.
+ * Idempotent: сравнивает count+SUM(quantity) с тем, что в БД, пишет только при различии.
+ * Возвращает { status: "skip"|"imported"|"updated"|"empty"|"error", count, qty, error }
+ */
+async function syncWeeklyPeriod(dateFrom, dateTo, apiKey) {
+  let allRows = [];
+  let rrdid = 0;
+  let page = 0;
   try {
-    // Fetch from WB API (may need multiple pages via rrdid)
-    let allRows = [];
-    let rrdid = 0;
-    let page = 0;
-
     while (true) {
       page++;
       const url = `https://statistics-api.wildberries.ru/api/v5/supplier/reportDetailByPeriod?dateFrom=${dateFrom}&dateTo=${dateTo}&rrdid=${rrdid}&limit=100000`;
       const res = await fetch(url, { headers: { Authorization: apiKey } });
-      if (!res.ok) {
-        log(`  Weekly API error: ${res.status}`);
-        break;
-      }
+      if (!res.ok) return { status: "error", error: `HTTP ${res.status}` };
       const data = await res.json();
       if (!data || data.length === 0) break;
       allRows = allRows.concat(data);
       rrdid = data[data.length - 1].rrd_id || 0;
-      log(`  Page ${page}: +${data.length} rows (total: ${allRows.length})`);
       if (data.length < 100000) break;
     }
+  } catch (err) {
+    return { status: "error", error: err.message || String(err) };
+  }
 
-    if (allRows.length === 0) {
-      log(`  Weekly: отчёт за ${dateFrom}—${dateTo} пуст или ещё не готов`);
-      db.close();
-      return;
-    }
+  if (allRows.length === 0) return { status: "empty" };
 
-    // Dedup по содержимому: сравниваем суммы quantity и кол-во строк.
-    // Ключ — date_from/date_to (границы отчёта), а не sale_dt, т.к. еженедельный
-    // отчёт может содержать корректировки с sale_dt вне периода.
-    const apiQtySum = allRows.reduce((s, r) => s + (r.quantity || 0), 0);
+  const apiQtySum = allRows.reduce((s, r) => s + (r.quantity || 0), 0);
+  const db = new Database(DB_PATH);
+  try {
     const existing = db.prepare(
       "SELECT COUNT(*) as cnt, COALESCE(SUM(quantity), 0) as qty_sum FROM realization WHERE source = 'weekly_final' AND date_from = ? AND date_to = ?"
     ).get(dateFrom, dateTo);
+
     if (existing.cnt === allRows.length && existing.qty_sum === apiQtySum) {
-      log(`  Weekly ${dateFrom}—${dateTo}: содержимое совпадает (${existing.cnt} строк, qty=${apiQtySum}), skip`);
-      db.close();
-      return;
+      return { status: "skip", count: existing.cnt, qty: existing.qty_sum };
     }
-    if (existing.cnt > 0) {
-      log(`  Weekly ${dateFrom}—${dateTo}: данные изменились (было ${existing.cnt}/${existing.qty_sum}, стало ${allRows.length}/${apiQtySum}), переимпорт`);
+
+    const isUpdate = existing.cnt > 0;
+    if (isUpdate) {
       db.prepare("DELETE FROM realization WHERE source = 'weekly_final' AND date_from = ? AND date_to = ?").run(dateFrom, dateTo);
     }
 
-    // НЕ удаляем daily — оставляем для сверки на вкладке «Сверка»
-    // daily данные нужны как третий столбец: "7 дней ежедневный"
-    const dailyCount = db.prepare(
-      "SELECT COUNT(*) as cnt FROM realization WHERE source = 'daily' AND sale_dt >= ? AND sale_dt <= ?"
-    ).get(dateFrom, dateTo);
-    if (dailyCount.cnt > 0) {
-      log(`  Daily за ${dateFrom}—${dateTo}: ${dailyCount.cnt} записей сохранены для сверки`);
-    }
-
-    // Insert final rows (38 columns, matching realization table minus auto-id)
-    const cols = [
-      "rrd_id", "realizationreport_id", "date_from", "date_to", "rr_dt", "sale_dt", "order_dt",
-      "supplier_oper_name", "nm_id", "sa_name", "ts_name", "barcode", "brand_name", "subject_name",
-      "quantity", "retail_price", "retail_price_withdisc_rub", "retail_amount",
-      "ppvz_for_pay", "ppvz_sales_commission", "acquiring_fee", "delivery_rub",
-      "delivery_amount", "return_amount", "storage_fee", "penalty", "acceptance",
-      "rebill_logistic_cost", "additional_payment", "commission_percent",
-      "ppvz_spp_prc", "ppvz_kvw_prc_base", "ppvz_kvw_prc", "ppvz_supplier_name",
-      "site_country", "office_name", "deduction", "bonus_type_name", "source"
-    ];
-    const insertStmt = db.prepare(`INSERT INTO realization (${cols.join(",")}) VALUES (${cols.map(() => "?").join(",")})`);
-
-    const tx = db.transaction(() => {
+    const insertStmt = db.prepare(`INSERT INTO realization (${WEEKLY_COLS.join(",")}) VALUES (${WEEKLY_COLS.map(() => "?").join(",")})`);
+    db.transaction(() => {
       for (const r of allRows) {
         insertStmt.run(
           r.rrd_id || 0, r.realizationreport_id || 0,
@@ -803,16 +769,64 @@ async function syncWeeklyReport() {
           "weekly_final"
         );
       }
-    });
-    tx();
+    })();
 
-    log(`  Weekly: загружено ${allRows.length} строк за ${dateFrom}—${dateTo}`);
-    db.close();
-  } catch (err) {
-    log(`  Weekly error: ${err.message}`);
+    return { status: isUpdate ? "updated" : "imported", count: allRows.length, qty: apiQtySum };
+  } finally {
     db.close();
   }
 }
+
+/** Вычисляет dateFrom/dateTo для недели: w=1 — прошлая неделя, w=2 — позапрошлая, и т.д. */
+function computeWeek(w) {
+  const msk = new Date(Date.now() + 3 * 60 * 60 * 1000);
+  const dow = msk.getDay(); // 0=Sun
+  const daysToLastMonday = (dow === 0 ? 6 : dow - 1) + 7 + (w - 1) * 7;
+  const mon = new Date(msk);
+  mon.setDate(msk.getDate() - daysToLastMonday);
+  const sun = new Date(mon);
+  sun.setDate(mon.getDate() + 6);
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  return { dateFrom: fmt(mon), dateTo: fmt(sun) };
+}
+
+/** Синкает N последних еженедельных отчётов (по умолчанию 8). */
+async function syncWeeklyReportRange(weeks = 8) {
+  const apiKey = getApiKey();
+  if (!apiKey) { log("  Weekly: нет API ключа, пропуск"); return; }
+  log(`  Weekly retroactive check (${weeks} нед):`);
+  for (let w = 1; w <= weeks; w++) {
+    const { dateFrom, dateTo } = computeWeek(w);
+    const r = await syncWeeklyPeriod(dateFrom, dateTo, apiKey);
+    if (r.status === "skip") {
+      log(`    ${dateFrom}…${dateTo}: skip (${r.count}/${r.qty})`);
+    } else if (r.status === "imported") {
+      log(`    ${dateFrom}…${dateTo}: ИМПОРТ ${r.count} строк / qty ${r.qty}`);
+    } else if (r.status === "updated") {
+      log(`    ${dateFrom}…${dateTo}: ОБНОВЛЕНО ${r.count} строк / qty ${r.qty}`);
+    } else if (r.status === "empty") {
+      log(`    ${dateFrom}…${dateTo}: отчёт WB пуст`);
+    } else if (r.status === "error") {
+      log(`    ${dateFrom}…${dateTo}: ERROR ${r.error}`);
+    }
+  }
+}
+
+/** Тонкая обёртка для совместимости — синк только прошлой недели. */
+async function syncWeeklyReport() {
+  const apiKey = getApiKey();
+  if (!apiKey) { log("  Weekly: нет API ключа, пропуск"); return; }
+  const { dateFrom, dateTo } = computeWeek(1);
+  log(`  Weekly report ${dateFrom} — ${dateTo}...`);
+  const r = await syncWeeklyPeriod(dateFrom, dateTo, apiKey);
+  if (r.status === "skip") log(`  Weekly: skip (${r.count}/${r.qty})`);
+  else if (r.status === "imported") log(`  Weekly: импорт ${r.count} строк`);
+  else if (r.status === "updated") log(`  Weekly: обновлено ${r.count} строк`);
+  else if (r.status === "empty") log(`  Weekly: отчёт WB пуст`);
+  else if (r.status === "error") log(`  Weekly ERROR: ${r.error}`);
+}
+
+module.exports = { syncWeeklyReportRange, syncWeeklyReport };
 
 // --- Main ---
 
@@ -854,13 +868,22 @@ async function main() {
   // импортированных отчётов (нужно только при первом запуске после деплоя).
   await bootstrapReportMeta();
 
-  // Weekly report — только Пн-Ср (WB публикует в этом окне).
-  // В остальные дни weekly не появится, запрос пустой.
+  // Weekly:
+  // - Пн-Ср: раз в сутки (первый тик дня) проверяем 8 недель (поиск
+  //   корректировок WB задним числом). В остальные часы этого дня — только
+  //   прошлая неделя.
+  // - Чт-Вс: weekly не дёргается (WB не публикует).
   const mskNow = new Date(Date.now() + 3 * 60 * 60 * 1000);
-  const dow = mskNow.getUTCDay(); // 0=Sun, 1=Mon, 2=Tue, 3=Wed
+  const dow = mskNow.getUTCDay();
   if (dow >= 1 && dow <= 3) {
-    log("  Weekly report check...");
-    await syncWeeklyReport();
+    const todayIso = mskNow.toISOString().slice(0, 10);
+    if (status.lastRetroWeeklyCheck !== todayIso) {
+      await syncWeeklyReportRange(8);
+      status.lastRetroWeeklyCheck = todayIso;
+    } else {
+      log("  Weekly report check...");
+      await syncWeeklyReport();
+    }
   }
 
   // Ретроактивная проверка 5 предыдущих дней — запускается ВСЕГДА,
@@ -909,7 +932,9 @@ async function main() {
   log("Done.");
 }
 
-main().catch(err => {
-  log("FATAL: " + err.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(err => {
+    log("FATAL: " + err.message);
+    process.exit(1);
+  });
+}
