@@ -35,8 +35,21 @@ export async function syncOrders(date: string, prevValue: number): Promise<Sourc
 
     const db = new Database(DB_PATH);
     db.pragma("busy_timeout = 5000");
-    db.prepare("INSERT OR REPLACE INTO orders_funnel (date, order_sum, order_count, buyout_sum, buyout_count) VALUES (?, ?, ?, ?, ?)")
-      .run(date, day.orderSum, day.orderCount, day.buyoutSum || 0, day.buyoutCount || 0);
+
+    // Idempotency: проверяем, совпадают ли текущие данные в БД с тем, что пришло.
+    const existing = db.prepare(
+      "SELECT order_sum, order_count, buyout_sum, buyout_count FROM orders_funnel WHERE date = ?"
+    ).get(date) as { order_sum: number; order_count: number; buyout_sum: number; buyout_count: number } | undefined;
+    const unchanged = existing
+      && Math.abs((existing.order_sum || 0) - day.orderSum) < 0.01
+      && (existing.order_count || 0) === (day.orderCount || 0)
+      && Math.abs((existing.buyout_sum || 0) - (day.buyoutSum || 0)) < 0.01
+      && (existing.buyout_count || 0) === (day.buyoutCount || 0);
+
+    if (!unchanged) {
+      db.prepare("INSERT OR REPLACE INTO orders_funnel (date, order_sum, order_count, buyout_sum, buyout_count) VALUES (?, ?, ?, ?, ?)")
+        .run(date, day.orderSum, day.orderCount, day.buyoutSum || 0, day.buyoutCount || 0);
+    }
     db.close();
 
     s.ok = true;

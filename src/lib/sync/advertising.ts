@@ -76,13 +76,24 @@ export async function syncAdvertising(date: string): Promise<SourceStatus> {
 
     const resolveNm = (advertId: number) => adverts.map.get(advertId) || cachedNmMap.get(advertId) || 0;
 
-    db.prepare("DELETE FROM advertising WHERE date = ?").run(date);
-    const ins = db.prepare("INSERT INTO advertising (date, campaign_name, campaign_id, amount, payment_type, nm_id) VALUES (?, ?, ?, ?, ?, ?)");
-    db.transaction(() => {
-      for (const e of entries) {
-        ins.run(date, e.campName || "", e.advertId || 0, e.updSum || 0, e.paymentType || "Баланс", resolveNm(e.advertId || 0));
-      }
-    })();
+    // Idempotency: сверяем с тем, что уже лежит в БД.
+    // Если сумма и кол-во записей совпадают — не трогаем.
+    const existingStats = db.prepare(
+      "SELECT COUNT(*) as cnt, COALESCE(SUM(amount), 0) as sum FROM advertising WHERE date = ?"
+    ).get(date) as { cnt: number; sum: number };
+    const unchanged =
+      existingStats.cnt === entries.length &&
+      Math.abs(existingStats.sum - total) < 0.01;
+
+    if (!unchanged) {
+      db.prepare("DELETE FROM advertising WHERE date = ?").run(date);
+      const ins = db.prepare("INSERT INTO advertising (date, campaign_name, campaign_id, amount, payment_type, nm_id) VALUES (?, ?, ?, ?, ?, ?)");
+      db.transaction(() => {
+        for (const e of entries) {
+          ins.run(date, e.campName || "", e.advertId || 0, e.updSum || 0, e.paymentType || "Баланс", resolveNm(e.advertId || 0));
+        }
+      })();
+    }
     db.close();
 
     s.ok = true;

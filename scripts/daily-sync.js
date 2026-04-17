@@ -272,13 +272,24 @@ async function syncAdvertising(date) {
 
     const resolveNm = (advertId) => adverts.map.get(advertId) || cachedNmMap.get(advertId) || 0;
 
-    db.prepare("DELETE FROM advertising WHERE date = ?").run(date);
-    const ins = db.prepare("INSERT INTO advertising (date, campaign_name, campaign_id, amount, payment_type, nm_id) VALUES (?, ?, ?, ?, ?, ?)");
-    db.transaction(() => {
-      for (const e of entries) {
-        ins.run(date, e.campName || "", e.advertId || 0, e.updSum || 0, e.paymentType || "Баланс", resolveNm(e.advertId || 0));
-      }
-    })();
+    // Idempotency: сравниваем текущие данные в БД со свежими от WB.
+    // Если суммы и кол-во записей совпадают — DELETE+INSERT не делаем.
+    const existingStats = db.prepare(
+      "SELECT COUNT(*) as cnt, COALESCE(SUM(amount), 0) as sum FROM advertising WHERE date = ?"
+    ).get(date);
+    const unchanged =
+      existingStats.cnt === entries.length &&
+      Math.abs(existingStats.sum - total) < 0.01;
+
+    if (!unchanged) {
+      db.prepare("DELETE FROM advertising WHERE date = ?").run(date);
+      const ins = db.prepare("INSERT INTO advertising (date, campaign_name, campaign_id, amount, payment_type, nm_id) VALUES (?, ?, ?, ?, ?, ?)");
+      db.transaction(() => {
+        for (const e of entries) {
+          ins.run(date, e.campName || "", e.advertId || 0, e.updSum || 0, e.paymentType || "Баланс", resolveNm(e.advertId || 0));
+        }
+      })();
+    }
     db.close();
 
     result.ok = true;
@@ -315,8 +326,17 @@ async function syncOrders(date, prevValue) {
     if (!day || day.orderSum === 0) { result.error = "Нет заказов"; return result; }
 
     const db = new Database(DB_PATH);
-    db.prepare("INSERT OR REPLACE INTO orders_funnel (date, order_sum, order_count, buyout_sum, buyout_count) VALUES (?, ?, ?, ?, ?)")
-      .run(date, day.orderSum, day.orderCount, day.buyoutSum || 0, day.buyoutCount || 0);
+    // Idempotency: если в БД уже те же значения — пропускаем INSERT OR REPLACE.
+    const existing = db.prepare("SELECT order_sum, order_count, buyout_sum, buyout_count FROM orders_funnel WHERE date = ?").get(date);
+    const unchanged = existing
+      && Math.abs((existing.order_sum || 0) - day.orderSum) < 0.01
+      && (existing.order_count || 0) === (day.orderCount || 0)
+      && Math.abs((existing.buyout_sum || 0) - (day.buyoutSum || 0)) < 0.01
+      && (existing.buyout_count || 0) === (day.buyoutCount || 0);
+    if (!unchanged) {
+      db.prepare("INSERT OR REPLACE INTO orders_funnel (date, order_sum, order_count, buyout_sum, buyout_count) VALUES (?, ?, ?, ?, ?)")
+        .run(date, day.orderSum, day.orderCount, day.buyoutSum || 0, day.buyoutCount || 0);
+    }
     db.close();
 
     result.ok = true;
