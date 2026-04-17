@@ -171,10 +171,10 @@ export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMet
       // Plan / Fact
       setV(ws, r, 4, meta ? Math.round(meta.plan) : null, normal);
       setV(ws, r, 5, meta ? Math.round(meta.fact) : null, muted);
-      // Need: formula MAX(0, Plan - Fact). Computed display fallback.
-      const planRef = ref(r, 4);
-      const factRef = ref(r, 5);
-      setF(ws, r, 6, `=MAX(0,${planRef}-${factRef})`, meta ? Math.round(meta.need) : 0, bold);
+      // Need: статическое значение от сайта (сумма per-region max(0, plan-fact)).
+      // Формула MAX(0,Plan-Fact) была бы неверной — она схлопывает регионы в одну сумму
+      // и излишки в одном регионе искусственно компенсируют дефицит в другом.
+      setV(ws, r, 6, meta ? Math.round(meta.need) : null, bold);
       // Stock — user input (empty grey)
       setV(ws, r, 7, null, gray);
 
