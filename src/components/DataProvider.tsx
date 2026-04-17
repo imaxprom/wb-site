@@ -236,6 +236,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           v2RoundTo: typeof raw.v2RoundTo === "number" ? raw.v2RoundTo : undefined,
           v2MaxArticlesPerBox: typeof raw.v2MaxArticlesPerBox === "number" ? raw.v2MaxArticlesPerBox : undefined,
           v2ViewMode: typeof raw.v2ViewMode === "string" ? raw.v2ViewMode : undefined,
+          v2UnitRounding: typeof raw.v2UnitRounding === "number" ? raw.v2UnitRounding : undefined,
           shipmentCalcMode: typeof raw.shipmentCalcMode === "string" ? raw.shipmentCalcMode : undefined,
         };
       }

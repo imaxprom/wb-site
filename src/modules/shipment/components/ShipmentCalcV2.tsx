@@ -7,15 +7,14 @@ import { formatNumber } from "@/lib/utils";
 import { useEffectiveRegions } from "@/modules/shipment/lib/use-effective-regions";
 import { calculateTrend } from "@/lib/trend-engine";
 import { useEffectiveBuyout } from "@/modules/shipment/lib/use-effective-buyout";
-import { exportShipmentExcelV2 } from "@/lib/export-excel-v2";
-import { exportShipmentExcelV2Table } from "@/lib/export-excel-v2-table";
 import { exportShipmentExcelSummary } from "@/lib/export-excel-summary";
 import type { Product } from "@/types";
 import { WarehouseBreakdown } from "./WarehouseBreakdown";
 import type { TrendResult } from "@/lib/trend-engine";
 import { InfoTip } from "@/components/Tooltip";
 import { packItems, unitVolumeLiters, type PackingItem, type BoxConfig } from "@/lib/packing-engine";
-import { PackingSummaryTable } from "./PackingSummaryTable";
+import { PackingSummaryTable, aggregatePackingByRegion, type SummaryArticle } from "./PackingSummaryTable";
+import { ArticleMultiSelect } from "./ArticleMultiSelect";
 
 // ─── Trend Badge ────────────────────────────────────────────
 
@@ -132,54 +131,69 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
   const { stock, orders, products, settings, overrides, updateSettings, isLoaded } = useData();
   const effectiveRegions = useEffectiveRegions();
   const getBuyout = useEffectiveBuyout();
-  const [selectedProduct, setSelectedProduct] = useState<string>("__all__");
+  const [selectedArticles, setSelectedArticles] = useState<Set<string>>(new Set());
+  const [articlesInitialized, setArticlesInitialized] = useState(false);
   const mode = initialMode;
   const [hideInactive, setHideInactive] = useState(true);
 
-  // V2 Dynamics — only box-rounding setting (0.5 | 1) + view mode
+  // V2 Dynamics — two independent rounding settings + view mode
   const [v2BoxRounding, setV2BoxRounding] = useState<number>(settings.v2RoundTo ?? 1);
+  const [v2UnitRounding, setV2UnitRounding] = useState<number>(settings.v2UnitRounding ?? 1);
   const [v2ViewMode, setV2ViewMode] = useState<"units" | "boxes">((settings.v2ViewMode as "units" | "boxes") ?? "units");
 
   React.useEffect(() => {
     if (settings.v2RoundTo !== undefined) setV2BoxRounding(settings.v2RoundTo);
+    if (settings.v2UnitRounding !== undefined) setV2UnitRounding(settings.v2UnitRounding);
     if (settings.v2ViewMode !== undefined) setV2ViewMode(settings.v2ViewMode as "units" | "boxes");
-  }, [settings.v2RoundTo, settings.v2ViewMode]);
+  }, [settings.v2RoundTo, settings.v2UnitRounding, settings.v2ViewMode]);
 
-  const sortedProducts = useMemo(() => {
+  const { sortedProducts, orderTotals } = useMemo(() => {
     const stockTotals = new Map<string, number>();
     for (const s of stock) {
       stockTotals.set(s.articleWB, (stockTotals.get(s.articleWB) || 0) + s.totalOnWarehouses);
     }
-    const orderTotals = new Map<string, number>();
+    const orderTotalsMap = new Map<string, number>();
     for (const o of orders) {
       if (!o.isCancel) {
         const key = String(o.articleWB);
-        orderTotals.set(key, (orderTotals.get(key) || 0) + 1);
+        orderTotalsMap.set(key, (orderTotalsMap.get(key) || 0) + 1);
       }
     }
     let sorted = [...products].sort((a, b) => (stockTotals.get(b.articleWB) || 0) - (stockTotals.get(a.articleWB) || 0));
     if (hideInactive) {
-      sorted = sorted.filter((p) => (stockTotals.get(p.articleWB) || 0) > 0 || (orderTotals.get(p.articleWB) || 0) > 0);
+      sorted = sorted.filter((p) => (stockTotals.get(p.articleWB) || 0) > 0 || (orderTotalsMap.get(p.articleWB) || 0) > 0);
     }
-    return sorted;
+    return { sortedProducts: sorted, orderTotals: orderTotalsMap };
   }, [products, stock, orders, hideInactive]);
 
-  const isAllMode = selectedProduct === "__all__";
+  // Auto-select all products on first load
+  React.useEffect(() => {
+    if (!articlesInitialized && sortedProducts.length > 0) {
+      setSelectedArticles(new Set(sortedProducts.map(p => p.articleWB)));
+      setArticlesInitialized(true);
+    }
+  }, [sortedProducts, articlesInitialized]);
+
+  const activeProducts = useMemo(() => {
+    if (selectedArticles.size === 0) return [];
+    return sortedProducts.filter(p => selectedArticles.has(p.articleWB));
+  }, [sortedProducts, selectedArticles]);
+
+  const isAllMode = selectedArticles.size !== 1;
 
   const product = useMemo(() => {
     if (isAllMode) return null;
-    if (selectedProduct) return products.find((p) => p.articleWB === selectedProduct);
-    return sortedProducts[0];
-  }, [products, sortedProducts, selectedProduct, isAllMode]);
+    return activeProducts[0];
+  }, [activeProducts, isAllMode]);
 
   const uploadDays = settings.uploadDays ?? 28;
 
   const allCalculations = useMemo(() => {
-    if (!sortedProducts.length || !stock.length) return [];
-    return sortedProducts.map((p) =>
+    if (!activeProducts.length || !stock.length) return [];
+    return activeProducts.map((p) =>
       calculateShipmentV2(p, stock, orders, getBuyout(p.articleWB), effectiveRegions, overrides[p.articleWB], uploadDays)
     );
-  }, [sortedProducts, stock, orders, effectiveRegions, overrides, getBuyout, uploadDays]);
+  }, [activeProducts, stock, orders, effectiveRegions, overrides, getBuyout, uploadDays]);
 
   const singleCalc: ShipmentCalculationV2 | null = useMemo(() => {
     if (isAllMode || !product || stock.length === 0) return null;
@@ -215,8 +229,6 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
     }
     return { effectiveRows: [], effectiveRowsV1: [], effectiveTrend: null, effectiveRegionConfigs: effectiveRegions };
   }, [isAllMode, allCalculations, singleCalc, effectiveRegions]);
-
-  const [exportFormat, setExportFormat] = useState<"logistics" | "table" | "summary">("table");
 
   if (!isLoaded) {
     return (
@@ -261,15 +273,15 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
     fillRate: 1.0,
   }), [settings.boxLengthCm, settings.boxWidthCm, settings.boxHeightCm]);
 
-  const v2PackingByRegion = useMemo(() => {
+  // Articles aggregated for BOXES mode (via packing-engine)
+  const v2ArticlesBoxes = useMemo<SummaryArticle[]>(() => {
     if (mode !== "v2" || effectiveRows.length === 0 || !effectiveRegionConfigs.length) return [];
-    return effectiveRegionConfigs.map((region) => {
+    const packingByRegion = effectiveRegionConfigs.map((region) => {
       const items: PackingItem[] = [];
       for (const row of effectiveRows) {
         const regionData = row.regions.find((r) => r.regionId === region.id);
         const fullDeficit = Math.ceil(regionData ? Math.max(0, regionData.plan - regionData.fact) : 0);
         if (fullDeficit <= 0) continue;
-        // Round up to nearest (perBox * v2BoxRounding): 1 = whole box, 0.5 = half-box
         const step = row.perBox * v2BoxRounding;
         const needed = step > 0 ? Math.ceil(fullDeficit / step) * step : fullDeficit;
         items.push({
@@ -290,7 +302,70 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
         packing: packItems(items, v2BoxConfig, 999, 1, 1),
       };
     }).filter((p) => p.packing.totalBoxes > 0);
+    return aggregatePackingByRegion(packingByRegion);
   }, [mode, effectiveRows, effectiveRegionConfigs, v2BoxRounding, v2BoxConfig, overrides]);
+
+  // Articles aggregated for UNITS mode (direct from effectiveRows, no packing)
+  const v2ArticlesUnits = useMemo<SummaryArticle[]>(() => {
+    if (mode !== "v2" || effectiveRows.length === 0 || !effectiveRegionConfigs.length) return [];
+    const map = new Map<string, SummaryArticle>();
+    for (const row of effectiveRows) {
+      const aid = row.articleWB || "";
+      if (!map.has(aid)) {
+        map.set(aid, {
+          articleWB: aid,
+          productName: overrides[aid]?.customName || row.articleName || "—",
+          sizes: [],
+          totalUnits: 0,
+        });
+      }
+      const art = map.get(aid)!;
+      let sr = art.sizes.find(s => s.item.barcode === row.barcode);
+      if (!sr) {
+        sr = {
+          item: {
+            id: row.barcode,
+            label: aid ? `${aid} / ${row.size}` : row.size,
+            articleWB: aid,
+            articleName: row.articleName || "",
+            productName: overrides[aid]?.customName || row.articleName || "",
+            size: row.size,
+            barcode: row.barcode,
+            needed: 0,
+            perBox: row.perBox,
+            unitVolume: 0,
+          },
+          qtyByRegion: {},
+        };
+        art.sizes.push(sr);
+      }
+      for (const reg of row.regions) {
+        const deficit = Math.max(0, Math.ceil(reg.plan - reg.fact));
+        if (deficit <= 0) continue;
+        const rounded = v2UnitRounding > 0 ? Math.ceil(deficit / v2UnitRounding) * v2UnitRounding : deficit;
+        sr.qtyByRegion[reg.regionId] = (sr.qtyByRegion[reg.regionId] || 0) + rounded;
+        art.totalUnits += rounded;
+      }
+    }
+    // Drop empty articles
+    for (const [k, art] of map) {
+      if (art.totalUnits === 0) map.delete(k);
+    }
+    // Sort sizes within article, articles by volume
+    const LETTER_ORDER: Record<string, number> = { XS: 1, S: 2, M: 3, L: 4, XL: 5, XXL: 6, XXXL: 7 };
+    const sizeSortKey = (s: string): number => {
+      const num = s.match(/\d+/);
+      if (num) return parseInt(num[0], 10);
+      return LETTER_ORDER[s.trim().toUpperCase()] ?? 999;
+    };
+    for (const art of map.values()) {
+      art.sizes.sort((a, b) => sizeSortKey(a.item.size) - sizeSortKey(b.item.size));
+    }
+    return Array.from(map.values()).sort((a, b) => b.totalUnits - a.totalUnits);
+  }, [mode, effectiveRows, effectiveRegionConfigs, v2UnitRounding, overrides]);
+
+  const v2Articles = v2ViewMode === "boxes" ? v2ArticlesBoxes : v2ArticlesUnits;
+  const v2SummaryRegions = effectiveRegionConfigs.map(r => ({ id: r.id, shortName: r.shortName }));
 
   const v2RowMeta = useMemo(() => {
     const map: Record<string, { plan: number; fact: number; need: number }> = {};
@@ -305,31 +380,24 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
 
   const handleExport = useCallback(() => {
     if (allCalculations.length === 0) return;
-    if (exportFormat === "summary") {
-      exportShipmentExcelSummary({ packingByRegion: v2PackingByRegion, rowMeta: v2RowMeta });
-    } else if (exportFormat === "table") {
-      exportShipmentExcelV2Table(allCalculations, overrides);
-    } else {
-      exportShipmentExcelV2(allCalculations, overrides);
-    }
-  }, [allCalculations, overrides, exportFormat, v2PackingByRegion, v2RowMeta]);
+    exportShipmentExcelSummary({
+      articles: v2Articles,
+      regions: v2SummaryRegions,
+      viewMode: v2ViewMode,
+      rowMeta: v2RowMeta,
+    });
+  }, [allCalculations, v2Articles, v2SummaryRegions, v2ViewMode, v2RowMeta]);
 
   return (
     <div className="space-y-4">
       {/* Product selector + mode toggle */}
       <div className="flex flex-wrap items-center gap-4">
-        <select
-          value={selectedProduct}
-          onChange={(e) => setSelectedProduct(e.target.value)}
-          className="bg-[var(--bg-card)] border border-[var(--border)] rounded-lg px-4 py-2 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)] max-w-[400px] truncate"
-        >
-          <option value="__all__">Все артикулы ({sortedProducts.length})</option>
-          {sortedProducts.map((p) => (
-            <option key={p.articleWB} value={p.articleWB}>
-              {p.name} (WB: {p.articleWB})
-            </option>
-          ))}
-        </select>
+        <ArticleMultiSelect
+          products={sortedProducts}
+          selected={selectedArticles}
+          onChange={setSelectedArticles}
+          orderCounts={orderTotals}
+        />
 
         <div className="flex items-center gap-2 text-sm text-[var(--text-muted)]">
           <span>% выкупа<InfoTip term="buyoutRate" />:</span>
@@ -341,20 +409,11 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
         </div>
 
         <label className="flex items-center gap-2 text-sm text-[var(--text-muted)] cursor-pointer select-none">
-          <input type="checkbox" checked={hideInactive} onChange={(e) => { setHideInactive(e.target.checked); setSelectedProduct("__all__"); }} className="accent-[var(--accent)] w-4 h-4" />
+          <input type="checkbox" checked={hideInactive} onChange={(e) => { setHideInactive(e.target.checked); setArticlesInitialized(false); }} className="accent-[var(--accent)] w-4 h-4" />
           Скрыть неактивные
         </label>
 
-        <div className="ml-auto flex items-center gap-2">
-          <select
-            value={exportFormat}
-            onChange={(e) => setExportFormat(e.target.value as "logistics" | "table" | "summary")}
-            className="bg-[var(--bg-card)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--accent)]"
-          >
-            <option value="table">Таблица (План/Факт)</option>
-            <option value="logistics">Логистика (Коробки)</option>
-            <option value="summary">Сводная по артикулам</option>
-          </select>
+        <div className="ml-auto">
           <button
             onClick={handleExport}
             disabled={allCalculations.length === 0}
@@ -398,11 +457,31 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
               <h3 className="text-sm font-bold text-white">⚙️ Настройки</h3>
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-[var(--text-muted)]">Округление до короба</span>
+                  <span className="text-[var(--text-muted)]">Округл. до короба</span>
                   <select value={v2BoxRounding} onChange={(e) => { const v = Number(e.target.value); setV2BoxRounding(v); updateSettings({ v2RoundTo: v }); }} className="w-14 bg-[var(--bg)] border border-[var(--border)] rounded px-1 py-1 text-center text-xs focus:outline-none focus:border-[var(--accent)]">
                     <option value={0.5}>0.5</option>
                     <option value={1}>1</option>
                   </select>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-[var(--text-muted)]">Округл. штук до</span>
+                  <input
+                    type="number"
+                    list="v2-unit-rounding-list"
+                    min={1}
+                    value={v2UnitRounding}
+                    onChange={(e) => {
+                      const v = Math.max(1, Number(e.target.value) || 1);
+                      setV2UnitRounding(v);
+                      updateSettings({ v2UnitRounding: v });
+                    }}
+                    className="w-14 bg-[var(--bg)] border border-[var(--border)] rounded px-1 py-1 text-center text-xs focus:outline-none focus:border-[var(--accent)]"
+                  />
+                  <datalist id="v2-unit-rounding-list">
+                    <option value="1" />
+                    <option value="5" />
+                    <option value="10" />
+                  </datalist>
                 </div>
                 <div className="pt-1 border-t border-[var(--border)]">
                   <div className="text-[10px] text-[var(--text-muted)] mb-1">Вид</div>
@@ -420,21 +499,20 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
         </div>
       )}
 
-      {/* Boxes view */}
-      {mode === "v2" && v2ViewMode === "boxes" && (
+      {/* Summary view (boxes or units) */}
+      {mode === "v2" && (
         <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-4">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-bold text-white">📦 Кораба — сводная по артикулам</h3>
-            <div className="text-xs text-[var(--text-muted)]">
-              {v2PackingByRegion.reduce((s, p) => s + p.packing.totalBoxes, 0)} коробов · {v2PackingByRegion.reduce((s, p) => s + p.packing.totalItems, 0)} шт
-            </div>
+            <h3 className="text-sm font-bold text-white">
+              {v2ViewMode === "boxes" ? "📦 Кораба" : "🔢 Штуки"} — сводная по артикулам
+            </h3>
           </div>
-          <PackingSummaryTable packingByRegion={v2PackingByRegion} rowMeta={v2RowMeta} />
+          <PackingSummaryTable articles={v2Articles} regions={v2SummaryRegions} viewMode={v2ViewMode} rowMeta={v2RowMeta} />
         </div>
       )}
 
-      {/* Table (units view) */}
-      {(mode !== "v2" || v2ViewMode === "units") && (
+      {/* V1 Table */}
+      {(mode as string) !== "v2" && (
       <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] overflow-auto max-h-[65vh]">
         <table className="data-table">
           <thead>

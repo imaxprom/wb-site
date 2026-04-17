@@ -176,13 +176,19 @@ export function toRegionConfigs(
       return false;
     }).length;
 
-    // Динамический shortName из округов + их процентов
-    const dynName = g.districts
-      .map(d => {
-        const pct = total > 0 ? ((districtCounts.get(d) || 0) / total * 100).toFixed(1) : '0.0';
-        return `${shortDistrict(d)} ${pct}%`;
-      })
-      .join(' + ');
+    // Динамический shortName: разбивка "ФО X% + СНГ Y% = Z%"
+    const rfInGroup = g.districts.reduce((s, d) => s + (districtCounts.get(d) || 0), 0);
+    const cisInGroup = groupOrders - rfInGroup;
+    const rfPct = total > 0 ? (rfInGroup / total * 100).toFixed(1) : '0.0';
+    const cisPct = total > 0 ? (cisInGroup / total * 100).toFixed(1) : '0.0';
+    const totalPct = total > 0 ? (groupOrders / total * 100).toFixed(1) : '0.0';
+    const districtStr = g.districts.map(d => shortDistrict(d)).join('+');
+    let dynName = '';
+    if (districtStr) {
+      dynName = cisInGroup > 0
+        ? `${districtStr} ${rfPct}% + СНГ ${cisPct}% = ${totalPct}%`
+        : `${districtStr} ${totalPct}%`;
+    }
 
     return {
       id: g.id,

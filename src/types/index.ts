@@ -152,5 +152,6 @@ export interface AppSettings {
   v2RoundTo?: number;
   v2MaxArticlesPerBox?: number;
   v2ViewMode?: string; // "units" | "boxes"
+  v2UnitRounding?: number;
   shipmentCalcMode?: string; // "v1" | "v2" | "v3"
 }

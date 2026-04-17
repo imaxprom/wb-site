@@ -2,11 +2,14 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { FALLBACK_WAREHOUSES } from "@/lib/warehouses-fallback";
+import { shortDistrict } from "@/modules/shipment/lib/engine";
 
 interface WarehousePickerProps {
   regionName: string;
   /** Warehouses already assigned to ANY region (with region name) */
   assignedWarehouses: Map<string, string>;
+  /** Optional map: warehouseName → federal district (from WB Tariffs API) */
+  warehouseDistricts?: Record<string, string>;
   onAdd: (warehouses: string[]) => void;
   onClose: () => void;
 }
@@ -14,6 +17,7 @@ interface WarehousePickerProps {
 export function WarehousePicker({
   regionName,
   assignedWarehouses,
+  warehouseDistricts = {},
   onAdd,
   onClose,
 }: WarehousePickerProps) {
@@ -148,6 +152,13 @@ export function WarehousePicker({
 
                   {/* Name */}
                   <span className="flex-1">{wh}</span>
+
+                  {/* Federal district badge (from WB Tariffs API) */}
+                  {warehouseDistricts[wh] && !assignedTo && (
+                    <span className="text-[10px] text-[var(--accent)] bg-[var(--accent)]/10 px-1.5 py-0.5 rounded">
+                      {shortDistrict(warehouseDistricts[wh])}
+                    </span>
+                  )}
 
                   {/* Assigned badge */}
                   {assignedTo && (
