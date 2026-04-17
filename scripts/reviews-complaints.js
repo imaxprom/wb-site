@@ -194,6 +194,7 @@ function generateComplaint(review, allowedReasons, config, manager, previousText
     // Claude CLI на wb-site недоступен (RU IP блокируется Anthropic).
     // Идём через SSH на claude-cli VM (.106), где настроен tinyproxy через Germany.
     // Скрипт ~/claude-proxy.sh принимает prompt из stdin + system prompt как $1.
+    const esc = (s) => "'" + s.replace(/'/g, "'\\''") + "'";
     const proc = spawn("ssh", [
       "-o", "BatchMode=yes",
       "-o", "ConnectTimeout=10",
@@ -201,7 +202,7 @@ function generateComplaint(review, allowedReasons, config, manager, previousText
       "-o", "StrictHostKeyChecking=accept-new",
       "-i", "/home/makson/.ssh/id_ed25519",
       "makson@192.168.55.106",
-      "bash", "/home/makson/claude-proxy.sh", sysPrompt,
+      `bash /home/makson/claude-proxy.sh ${esc(sysPrompt)}`,
     ], {
       timeout: 120000,
     });

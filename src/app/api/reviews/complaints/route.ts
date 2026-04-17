@@ -148,9 +148,10 @@ async function generateComplaint(
 
   const { spawn } = await import("child_process");
   return new Promise((resolve) => {
-    // Claude CLI на wb-site недоступен (RU IP блокируется Anthropic).
-    // Идём через SSH на claude-cli VM (.106): там настроен tinyproxy через Germany.
-    // claude-proxy.sh принимает prompt из stdin, sysPrompt как $1.
+    // Claude CLI на wb-site недоступен (RU IP). Идём через SSH на .106 (tinyproxy Germany).
+    // ВАЖНО: SSH склеивает remote-аргументы в shell-команду. sysPrompt может содержать
+    // скобки, кавычки — экранируем в одинарные кавычки.
+    const esc = (s: string) => "'" + s.replace(/'/g, "'\\''") + "'";
     const proc = spawn("ssh", [
       "-o", "BatchMode=yes",
       "-o", "ConnectTimeout=10",
@@ -158,7 +159,7 @@ async function generateComplaint(
       "-o", "StrictHostKeyChecking=accept-new",
       "-i", "/home/makson/.ssh/id_ed25519",
       "makson@192.168.55.106",
-      "bash", "/home/makson/claude-proxy.sh", sysPrompt,
+      `bash /home/makson/claude-proxy.sh ${esc(sysPrompt)}`,
     ], {
       timeout: 120000,
     });
