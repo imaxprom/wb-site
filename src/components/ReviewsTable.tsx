@@ -69,20 +69,21 @@ function ComplaintCell({ reviewId, complaintStatus, complainingId, onComplaint }
 }) {
   const [showConfirm, setShowConfirm] = useState(false);
 
+  // Pending — спиннер "Генерация..."
+  if (complaintStatus === "pending" || complainingId === reviewId) {
+    return (
+      <span className="text-[10px] px-2 py-1 rounded border border-[var(--accent)] text-[var(--accent)] whitespace-nowrap flex items-center gap-1.5">
+        <span className="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+        Генерация...
+      </span>
+    );
+  }
+
   if (complaintStatus) {
     const info = COMPLAINT_LABELS[complaintStatus];
     return (
       <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${info?.cls || "bg-[var(--border)] text-[var(--text-muted)]"}`}>
         {info?.label || complaintStatus}
-      </span>
-    );
-  }
-
-  if (complainingId === reviewId) {
-    return (
-      <span className="text-[10px] px-2 py-1 rounded border border-[var(--accent)] text-[var(--accent)] whitespace-nowrap flex items-center gap-1.5">
-        <span className="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-        Генерация...
       </span>
     );
   }
