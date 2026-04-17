@@ -24,8 +24,9 @@ data/daily-sync-status.json
 tsconfig.tsbuildinfo
 next-env.d.ts
 
-# Monitor state (dynamic)
+# Monitor state (dynamic, per-environment — не коммитим и не деплоим)
 public/data/monitor/status.json
 public/data/monitor/repair-state.json
 public/data/monitor/repair-log.json
 public/data/monitor/data-health-cron.json
+public/data/monitor/changes.json
