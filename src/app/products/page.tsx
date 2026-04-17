@@ -7,7 +7,7 @@ import type { Product } from "@/types";
 import Link from "next/link";
 
 export default function ProductsPage() {
-  const { stock, orders, products, isLoaded } = useData();
+  const { stock, products, isLoaded } = useData();
   const [expandedProduct, setExpandedProduct] = useState<string | null>(null);
   const [showEmpty, setShowEmpty] = useState(false);
 

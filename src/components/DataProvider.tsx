@@ -137,16 +137,14 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    const [ordersRes, aggRes, stockRes, productsRes, metaRes] = await Promise.all([
-      fetch(`/api/data/orders?days=${days}`),
+    const [aggRes, stockRes, productsRes, metaRes] = await Promise.all([
       fetch(`/api/data/orders-aggregated?days=${days}`),
       fetch("/api/data/stock"),
       fetch("/api/data/products"),
       fetch("/api/data/meta"),
     ]);
 
-    const [orders, orderAggregates, stock, products, meta] = await Promise.all([
-      ordersRes.ok ? (ordersRes.json() as Promise<OrderRecord[]>) : Promise.resolve([]),
+    const [orderAggregates, stock, products, meta] = await Promise.all([
       aggRes.ok ? (aggRes.json() as Promise<OrderAggregates>) : Promise.resolve(null),
       stockRes.ok ? (stockRes.json() as Promise<StockItem[]>) : Promise.resolve([]),
       productsRes.ok ? (productsRes.json() as Promise<Product[]>) : Promise.resolve([]),
@@ -156,7 +154,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     dispatch({
       type: "SET_DATA",
       stock,
-      orders,
+      orders: [],
       orderAggregates,
       products,
       uploadDate: meta.uploadDate || new Date().toISOString(),
@@ -259,8 +257,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       try {
         const days = [28, 35, 42, 49, 56].includes(uploadDays) ? uploadDays : 28;
 
-        const [ordersRes2, aggRes, stockRes, productsRes, metaRes] = await Promise.all([
-          fetch(`/api/data/orders?days=${days}`),
+        const [aggRes, stockRes, productsRes, metaRes] = await Promise.all([
           fetch(`/api/data/orders-aggregated?days=${days}`),
           fetch("/api/data/stock"),
           fetch("/api/data/products"),
@@ -269,8 +266,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
         if (cancelled) return;
 
-        const [orders, orderAggregates, stock, products, meta] = await Promise.all([
-          ordersRes2.ok ? (ordersRes2.json() as Promise<OrderRecord[]>) : Promise.resolve([]),
+        const [orderAggregates, stock, products, meta] = await Promise.all([
           aggRes.ok ? (aggRes.json() as Promise<OrderAggregates>) : Promise.resolve(null),
           stockRes.ok ? (stockRes.json() as Promise<StockItem[]>) : Promise.resolve([]),
           productsRes.ok ? (productsRes.json() as Promise<Product[]>) : Promise.resolve([]),
@@ -284,7 +280,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           type: "INIT",
           data: {
             stock,
-            orders,
+            orders: [],
             orderAggregates,
             products,
             uploadDate: meta.uploadDate || "",

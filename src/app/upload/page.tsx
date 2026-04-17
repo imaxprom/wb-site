@@ -9,8 +9,8 @@ import Link from "next/link";
 type SyncState = "idle" | "loading" | "success" | "error";
 
 export default function UploadPage() {
-  const { stock, orders, products, uploadDate, clearAllData, syncFromWB } = useData();
-  const hasData = stock.length > 0 || orders.length > 0;
+  const { stock, orderAggregates, products, uploadDate, clearAllData, syncFromWB } = useData();
+  const hasData = stock.length > 0 || (orderAggregates?.totalOrders ?? 0) > 0;
   const [hasKey, setHasKey] = useState(false);
   const [days, setDays] = useState(30);
   const [syncState, setSyncState] = useState<SyncState>("idle");
@@ -121,7 +121,7 @@ export default function UploadPage() {
           <div className="grid grid-cols-3 gap-4 text-sm">
             <div>
               <p className="text-[var(--text-muted)]">Заказы</p>
-              <p className="text-lg font-bold">{formatNumber(orders.length)}</p>
+              <p className="text-lg font-bold">{formatNumber(orderAggregates?.totalOrders ?? 0)}</p>
               <p className="text-xs text-[var(--text-muted)]">штук</p>
             </div>
             <div>
