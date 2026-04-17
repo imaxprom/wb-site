@@ -715,6 +715,25 @@ export function getLastComplaintByManager(accountId: number, managerName: string
   return row?.explanation || null;
 }
 
+/**
+ * Проверка эффективности — если последние N поданных жалоб по аккаунту
+ * все отклонены (rejected), возвращает true → стоит сделать паузу.
+ * Учитываются только жалобы с resolved статусом (approved/rejected),
+ * pending и submitted игнорируются (ещё рассматриваются).
+ */
+export function shouldPauseByRecentRejections(accountId: number, lastN: number = 5): { pause: boolean; rejected: number; approved: number } {
+  const d = getDb();
+  const rows = d.prepare(`
+    SELECT status FROM review_complaints
+    WHERE account_id = ? AND status IN ('approved','rejected')
+    ORDER BY COALESCE(resolved_at, submitted_at) DESC
+    LIMIT ?
+  `).all(accountId, lastN) as { status: string }[];
+  const approved = rows.filter(r => r.status === 'approved').length;
+  const rejected = rows.filter(r => r.status === 'rejected').length;
+  return { pause: rows.length >= lastN && approved === 0, rejected, approved };
+}
+
 /** Перезапись AI-содержимого (когда pending-запись создана без AI-данных,
  *  а потом Claude сгенерил) */
 export function updateComplaintContent(id: number, reasonId: number, explanation: string, managerName: string): void {
