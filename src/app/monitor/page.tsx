@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { StatCard } from "@/components/StatCard";
 import { DataHealthCard } from "@/components/DataHealthCard";
+import { AuthStatusCard } from "@/components/AuthStatusCard";
 
 // ─── InfoTip ──────────────────────────────────────────────────
 
@@ -613,6 +614,9 @@ export default function MonitorPage() {
 
       {/* Watchdog status */}
       <WatchdogBanner />
+
+      {/* WB connection status (API + ЛК) */}
+      <AuthStatusCard />
 
       {/* Data health */}
       <DataHealthCard />

@@ -1,0 +1,1080 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Вариант В — сводная таблица отгрузки</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --card: #141414;
+    --card-alt: #181818;
+    --border: #2a2a2a;
+    --border-soft: #232323;
+    --text: #e5e5e5;
+    --muted: #808080;
+    --muted-soft: #5a5a5a;
+    --accent: #818cf8;
+    --success: #22c55e;
+    --warning: #eab308;
+    --amber: #f59e0b;
+    --article-bg: rgba(34, 197, 94, 0.08);
+    --article-border: rgba(34, 197, 94, 0.3);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 14px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+
+  .nav { display: flex; gap: 12px; margin-bottom: 24px; font-size: 12px; flex-wrap: wrap; }
+  .nav a {
+    color: var(--accent); text-decoration: none;
+    padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px;
+  }
+  .nav a:hover { background: rgba(129,140,248,0.1); }
+
+  .wrap {
+    background: #0f0f0f;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    overflow-x: auto;
+  }
+
+  table.summary {
+    border-collapse: collapse;
+    font-size: 12px;
+    width: 100%;
+    min-width: 1200px;
+  }
+
+  table.summary th, table.summary td {
+    border: 1px solid var(--border);
+    padding: 6px 10px;
+    text-align: center;
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+
+  table.summary thead th {
+    background: var(--card-alt);
+    color: var(--text);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    position: sticky;
+    top: 0;
+    z-index: 3;
+  }
+
+  /* Region group header */
+  .region-group {
+    background: rgba(129, 140, 248, 0.1) !important;
+    color: var(--accent) !important;
+  }
+  /* Single continuous accent line at the very bottom of the header */
+  table.summary thead tr:last-child th,
+  table.summary thead tr:first-child th[rowspan="2"] {
+    border-bottom: 2px solid var(--accent) !important;
+  }
+
+  /* Article info column (left) */
+  .article-cell {
+    background: var(--art-bg, rgba(129, 140, 248, 0.08));
+    border-left: 3px solid var(--art-accent, var(--accent)) !important;
+    text-align: left;
+    padding: 10px 12px !important;
+    vertical-align: middle;
+    min-width: 170px;
+  }
+  .article-name {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--art-text, var(--text));
+    margin-bottom: 4px;
+    line-height: 1.3;
+  }
+  /* Black divider row between articles */
+  table.summary tr.article-break td {
+    padding: 0 !important;
+    height: 10px;
+    background: #0a0a0a !important;
+    border: none !important;
+  }
+  .article-meta {
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .article-meta b { color: var(--text); font-weight: 600; }
+
+  /* Data cells */
+  td.size { text-align: left; padding-left: 12px !important; color: var(--text); font-weight: 500; font-family: "SF Mono", Menlo, monospace; font-size: 12px; }
+  td.perbox { color: var(--text); font-variant-numeric: tabular-nums; }
+  td.barcode { font-family: "SF Mono", Menlo, monospace; color: var(--muted); letter-spacing: 0.3px; }
+  td.stock { color: var(--muted-soft); background: rgba(128, 128, 128, 0.03); }
+
+  td.boxes {
+    color: var(--text);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+  td.boxes:hover {
+    background: rgba(129, 140, 248, 0.1);
+    outline: 1px solid rgba(129, 140, 248, 0.4);
+  }
+  td.units {
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    background: rgba(255, 255, 255, 0.02);
+  }
+  td.empty { color: var(--muted-soft); }
+
+  /* Editable (user-input) cell */
+  td.editable {
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    cursor: text;
+    background: rgba(129, 140, 248, 0.04);
+    border-style: dashed !important;
+    border-color: rgba(129, 140, 248, 0.25) !important;
+    transition: background 0.12s;
+  }
+  td.editable:hover {
+    background: rgba(129, 140, 248, 0.1);
+    border-color: var(--accent) !important;
+  }
+  td.editable.empty::after {
+    content: "+";
+    color: var(--muted-soft);
+    font-size: 14px;
+    opacity: 0.4;
+  }
+
+  /* Сверка column */
+  td.sverka {
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    background: rgba(255,255,255,0.01);
+  }
+  td.sverka.positive { color: var(--success); }
+  td.sverka.zero { color: var(--muted); }
+  td.sverka.negative {
+    color: #f87171;
+    background: rgba(248, 113, 113, 0.08);
+  }
+
+  /* Отгружено column */
+  td.shipped {
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    color: var(--accent);
+    background: rgba(129, 140, 248, 0.05);
+  }
+
+  /* Formula column headers */
+  th.formula-col {
+    background: rgba(129, 140, 248, 0.15) !important;
+    color: var(--accent) !important;
+    border-bottom: 2px solid var(--accent) !important;
+    min-width: 70px;
+  }
+  .formula-note {
+    font-size: 9px;
+    font-weight: 400;
+    color: var(--muted);
+    text-transform: none;
+    letter-spacing: 0;
+    display: block;
+    margin-top: 2px;
+  }
+
+  /* Override (manually edited) cell */
+  td.boxes.override {
+    background: rgba(129, 140, 248, 0.15);
+    color: var(--accent);
+    font-weight: 700;
+  }
+  td.boxes.override::after {
+    content: "✎";
+    margin-left: 6px;
+    color: var(--accent);
+    font-size: 10px;
+  }
+
+  /* Sample row */
+  tr.sample td {
+    background: rgba(234, 179, 8, 0.05);
+    color: var(--muted);
+    font-style: italic;
+  }
+  tr.sample td.size { color: var(--warning); font-style: italic; }
+  tr.sample td.boxes:hover { background: rgba(129, 140, 248, 0.1); }
+
+  /* Article separator */
+  tr.article-end td { border-bottom: 2px solid var(--accent) !important; }
+
+  /* Total row */
+  tr.total td {
+    background: rgba(34, 197, 94, 0.08);
+    font-weight: 700;
+    color: var(--text);
+    font-size: 13px;
+    border-top: 2px solid var(--success);
+  }
+  tr.total td.label {
+    text-align: left;
+    padding-left: 12px !important;
+    color: var(--success);
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+  }
+
+  .controls {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 16px;
+    align-items: center;
+  }
+  .btn {
+    padding: 6px 14px;
+    background: var(--card-alt);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .btn:hover { background: rgba(129, 140, 248, 0.1); border-color: var(--accent); }
+  .btn-reset {
+    background: rgba(234, 179, 8, 0.1);
+    color: var(--warning);
+    border-color: rgba(234, 179, 8, 0.3);
+  }
+
+  .legend-box {
+    font-size: 11px;
+    color: var(--muted);
+    padding: 10px 14px;
+    background: rgba(129, 140, 248, 0.05);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    margin-top: 16px;
+    line-height: 1.6;
+  }
+  .legend-box b { color: var(--text); }
+
+  .tag-edit {
+    display: inline-block;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(129, 140, 248, 0.15);
+    color: var(--accent);
+    margin-left: 8px;
+  }
+
+  /* ═══════════════════════════════════════════════ */
+  /* Variants of article cell styling                */
+  /* ═══════════════════════════════════════════════ */
+
+  .variant-section {
+    margin-bottom: 40px;
+    padding: 20px;
+    background: #0f0f0f;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  .variant-title {
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 4px;
+    color: var(--text);
+  }
+  .variant-desc {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 14px;
+    line-height: 1.5;
+  }
+
+  /* Variant 1: Neutral + thin accent border-left */
+  .v1 td.article-cell {
+    background: rgba(255, 255, 255, 0.02) !important;
+    border-left: 3px solid var(--accent) !important;
+  }
+  .v1 tr.article-break td { padding: 0 !important; height: 10px; background: #0a0a0a !important; border-left: none !important; border-right: none !important; }
+
+  /* Variant 2: Transparent + colored badge */
+  .v2 td.article-cell {
+    background: transparent !important;
+    border-left: 1px solid var(--border) !important;
+  }
+  .v2 .article-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 10px;
+    background: rgba(129, 140, 248, 0.15);
+    color: var(--accent);
+    margin-bottom: 6px;
+    font-weight: 700;
+  }
+  .v2 tr.article-break td { padding: 0 !important; height: 10px; background: #0a0a0a !important; border-left: none !important; border-right: none !important; }
+
+  /* Variant 3: Color rotation per article */
+  .v3 td.article-cell {
+    background: var(--art-bg) !important;
+    border-left: 3px solid var(--art-accent) !important;
+  }
+  .v3 tr.article-break td { padding: 0 !important; height: 10px; background: #0a0a0a !important; border-left: none !important; border-right: none !important; }
+
+  /* Variant 4: No bg, just thick divider */
+  .v4 td.article-cell {
+    background: transparent !important;
+    border-left: 1px solid var(--border) !important;
+  }
+  .v4 tr.article-divider td {
+    padding: 0 !important;
+    height: 3px;
+    background: var(--accent) !important;
+    border: none !important;
+    opacity: 0.6;
+  }
+
+  /* Re-usable mini-table */
+  .mini-wrap { overflow-x: auto; }
+  .mini-table {
+    border-collapse: collapse;
+    font-size: 12px;
+    width: 100%;
+    min-width: 900px;
+  }
+  .mini-table th, .mini-table td {
+    border: 1px solid var(--border);
+    padding: 6px 10px;
+    text-align: center;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+  .mini-table thead th {
+    background: var(--card-alt);
+    font-size: 11px;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .mini-table .article-cell { text-align: left; padding: 10px 12px !important; min-width: 170px; }
+  .mini-table .article-name { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 4px; line-height: 1.3; }
+  .mini-table .article-meta { font-size: 11px; color: var(--muted); line-height: 1.4; }
+  .mini-table .article-meta b { color: var(--text); }
+  .mini-table td.size { text-align: left; padding-left: 12px !important; font-family: "SF Mono", monospace; }
+  .mini-table td.boxes { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .mini-table td.units { color: var(--muted); font-variant-numeric: tabular-nums; background: rgba(255,255,255,0.02); }
+  .mini-table td.editable {
+    background: rgba(129, 140, 248, 0.04);
+    border-style: dashed !important;
+    border-color: rgba(129, 140, 248, 0.25) !important;
+  }
+  .mini-table td.sverka { font-weight: 700; }
+  .mini-table td.sverka.positive { color: var(--success); }
+  .mini-table td.sverka.negative { color: #f87171; background: rgba(248, 113, 113, 0.08); }
+  .mini-table td.sverka.zero { color: var(--muted); }
+  .mini-table td.shipped { color: var(--accent); font-weight: 700; background: rgba(129, 140, 248, 0.05); }
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <a href="/packing-preview.html">Стили полоски</a>
+  <a href="/packing-by-article.html">Карточки по артикулу</a>
+  <a href="/packing-summary-table.html">Сводная таблица</a>
+</div>
+
+<h1>🎨 Выбор стиля карточки артикула + разделителя</h1>
+<p class="subtitle">
+  4 варианта, как уменьшить доминирование зелёного и разделить артикулы. Ниже — полная таблица в текущем (проблемном) виде для сравнения.
+</p>
+
+<!-- ═══════════ Вариант 1: нейтральный фон + тонкая accent-полоса ═══════════ -->
+<div class="variant-section">
+  <div class="variant-title">1️⃣ Нейтрально + тонкая accent-полоса</div>
+  <div class="variant-desc">
+    Серый полупрозрачный фон (без зелёного), слева — 3px accent-полоса. Между артикулами — пустая строка 10px (dark gap).
+  </div>
+  <div class="mini-wrap">
+    <table class="mini-table v1">
+      <thead>
+        <tr>
+          <th rowspan="2" style="min-width: 170px;">Артикул</th>
+          <th rowspan="2">Размер</th>
+          <th rowspan="2">perBox</th>
+          <th rowspan="2">Склад</th>
+          <th colspan="2" class="region-group">Рязань</th>
+          <th colspan="2" class="region-group">СПб</th>
+          <th rowspan="2">Сверка</th>
+          <th rowspan="2">Отгр</th>
+        </tr>
+        <tr><th>Кор.</th><th>Шт.</th><th>Кор.</th><th>Шт.</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="article-cell" rowspan="4">
+            <div class="article-name">Слипы в рубчик</div>
+            <div class="article-meta"><b>7 шт / 7 цветов</b><br>WB: <b>165140159</b></div>
+          </td>
+          <td class="size">L 40-42</td><td>90</td><td class="editable">6</td>
+          <td class="boxes">2</td><td class="units">180</td>
+          <td class="boxes">1</td><td class="units">90</td>
+          <td class="sverka positive">+1</td><td class="shipped">5</td>
+        </tr>
+        <tr>
+          <td class="size">XL 42-44</td><td>90</td><td class="editable">5</td>
+          <td class="boxes">2</td><td class="units">180</td>
+          <td class="boxes">1</td><td class="units">90</td>
+          <td class="sverka zero">0</td><td class="shipped">5</td>
+        </tr>
+        <tr>
+          <td class="size">XXL 44-46</td><td>90</td><td class="editable">5</td>
+          <td class="boxes">4</td><td class="units">360</td>
+          <td class="boxes">1</td><td class="units">90</td>
+          <td class="sverka negative">−2</td><td class="shipped">7</td>
+        </tr>
+        <tr>
+          <td class="size" style="color: var(--warning); font-style: italic;">образец</td><td>—</td>
+          <td class="editable"></td>
+          <td class="editable"></td><td class="units">—</td>
+          <td class="editable"></td><td class="units">—</td>
+          <td class="sverka zero">—</td><td class="shipped">—</td>
+        </tr>
+        <tr class="article-break"><td colspan="10"></td></tr>
+        <tr>
+          <td class="article-cell" rowspan="4">
+            <div class="article-name">Слип футер</div>
+            <div class="article-meta"><b>5 шт / 3 цвета</b><br>WB: <b>322000486</b></div>
+          </td>
+          <td class="size">XL 42-44</td><td>90</td><td class="editable">7</td>
+          <td class="boxes">3</td><td class="units">270</td>
+          <td class="boxes">1</td><td class="units">90</td>
+          <td class="sverka positive">+2</td><td class="shipped">5</td>
+        </tr>
+        <tr>
+          <td class="size">XXL 44-46</td><td>90</td><td class="editable">4</td>
+          <td class="boxes">2</td><td class="units">180</td>
+          <td class="boxes">1</td><td class="units">90</td>
+          <td class="sverka zero">0</td><td class="shipped">4</td>
+        </tr>
+        <tr>
+          <td class="size">3XL 48-50</td><td>80</td><td class="editable">5</td>
+          <td class="boxes">2</td><td class="units">160</td>
+          <td class="boxes">1</td><td class="units">80</td>
+          <td class="sverka positive">+1</td><td class="shipped">4</td>
+        </tr>
+        <tr>
+          <td class="size" style="color: var(--warning); font-style: italic;">образец</td><td>—</td>
+          <td class="editable"></td>
+          <td class="editable"></td><td class="units">—</td>
+          <td class="editable"></td><td class="units">—</td>
+          <td class="sverka zero">—</td><td class="shipped">—</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════ Вариант 2: прозрачный + цветной бейдж ═══════════ -->
+<div class="variant-section">
+  <div class="variant-title">2️⃣ Прозрачный фон + цветной бейдж артикула</div>
+  <div class="variant-desc">
+    Никакого фона в колонке — просто текст. Компактный цветной пилюля-бейдж сверху, чтобы «ухватить» имя артикула. Самый тихий.
+  </div>
+  <div class="mini-wrap">
+    <table class="mini-table v2">
+      <thead>
+        <tr>
+          <th rowspan="2" style="min-width: 170px;">Артикул</th>
+          <th rowspan="2">Размер</th>
+          <th rowspan="2">perBox</th>
+          <th rowspan="2">Склад</th>
+          <th colspan="2" class="region-group">Рязань</th>
+          <th colspan="2" class="region-group">СПб</th>
+          <th rowspan="2">Сверка</th>
+          <th rowspan="2">Отгр</th>
+        </tr>
+        <tr><th>Кор.</th><th>Шт.</th><th>Кор.</th><th>Шт.</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="article-cell" rowspan="4">
+            <div class="article-badge">АРТИКУЛ</div>
+            <div class="article-name">Слипы в рубчик</div>
+            <div class="article-meta"><b>7 шт / 7 цветов</b><br>WB: <b>165140159</b></div>
+          </td>
+          <td class="size">L 40-42</td><td>90</td><td class="editable">6</td>
+          <td class="boxes">2</td><td class="units">180</td>
+          <td class="boxes">1</td><td class="units">90</td>
+          <td class="sverka positive">+1</td><td class="shipped">5</td>
+        </tr>
+        <tr>
+          <td class="size">XL 42-44</td><td>90</td><td class="editable">5</td>
+          <td class="boxes">2</td><td class="units">180</td>
+          <td class="boxes">1</td><td class="units">90</td>
+          <td class="sverka zero">0</td><td class="shipped">5</td>
+        </tr>
+        <tr>
+          <td class="size">XXL 44-46</td><td>90</td><td class="editable">5</td>
+          <td class="boxes">4</td><td class="units">360</td>
+          <td class="boxes">1</td><td class="units">90</td>
+          <td class="sverka negative">−2</td><td class="shipped">7</td>
+        </tr>
+        <tr>
+          <td class="size" style="color: var(--warning); font-style: italic;">образец</td><td>—</td>
+          <td class="editable"></td>
+          <td class="editable"></td><td class="units">—</td>
+          <td class="editable"></td><td class="units">—</td>
+          <td class="sverka zero">—</td><td class="shipped">—</td>
+        </tr>
+        <tr class="article-break"><td colspan="10"></td></tr>
+        <tr>
+          <td class="article-cell" rowspan="4">
+            <div class="article-badge">АРТИКУЛ</div>
+            <div class="article-name">Слип футер</div>
+            <div class="article-meta"><b>5 шт / 3 цвета</b><br>WB: <b>322000486</b></div>
+          </td>
+          <td class="size">XL 42-44</td><td>90</td><td class="editable">7</td>
+          <td class="boxes">3</td><td class="units">270</td>
+          <td class="boxes">1</td><td class="units">90</td>
+          <td class="sverka positive">+2</td><td class="shipped">5</td>
+        </tr>
+        <tr>
+          <td class="size">XXL 44-46</td><td>90</td><td class="editable">4</td>
+          <td class="boxes">2</td><td class="units">180</td>
+          <td class="boxes">1</td><td class="units">90</td>
+          <td class="sverka zero">0</td><td class="shipped">4</td>
+        </tr>
+        <tr>
+          <td class="size">3XL 48-50</td><td>80</td><td class="editable">5</td>
+          <td class="boxes">2</td><td class="units">160</td>
+          <td class="boxes">1</td><td class="units">80</td>
+          <td class="sverka positive">+1</td><td class="shipped">4</td>
+        </tr>
+        <tr>
+          <td class="size" style="color: var(--warning); font-style: italic;">образец</td><td>—</td>
+          <td class="editable"></td>
+          <td class="editable"></td><td class="units">—</td>
+          <td class="editable"></td><td class="units">—</td>
+          <td class="sverka zero">—</td><td class="shipped">—</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════ Вариант 3: ротация цветов по артикулу ═══════════ -->
+<div class="variant-section">
+  <div class="variant-title">3️⃣ Разные цвета у разных артикулов</div>
+  <div class="variant-desc">
+    Каждый артикул — свой цвет: accent (фиолетовый) / amber (жёлтый) / cyan (голубой) / эмералд и т.д. Быстро находишь «свой» блок глазом. Но если артикулов много — рябит.
+  </div>
+  <div class="mini-wrap">
+    <table class="mini-table v3">
+      <thead>
+        <tr>
+          <th rowspan="2" style="min-width: 170px;">Артикул</th>
+          <th rowspan="2">Размер</th>
+          <th rowspan="2">perBox</th>
+          <th rowspan="2">Склад</th>
+          <th colspan="2" class="region-group">Рязань</th>
+          <th colspan="2" class="region-group">СПб</th>
+          <th rowspan="2">Сверка</th>
+          <th rowspan="2">Отгр</th>
+        </tr>
+        <tr><th>Кор.</th><th>Шт.</th><th>Кор.</th><th>Шт.</th></tr>
+      </thead>
+      <tbody>
+        <tr style="--art-bg: rgba(129, 140, 248, 0.08); --art-accent: #818cf8;">
+          <td class="article-cell" rowspan="4">
+            <div class="article-name" style="color: #a5b4fc;">Слипы в рубчик</div>
+            <div class="article-meta"><b>7 шт / 7 цветов</b><br>WB: <b>165140159</b></div>
+          </td>
+          <td class="size">L 40-42</td><td>90</td><td class="editable">6</td>
+          <td class="boxes">2</td><td class="units">180</td>
+          <td class="boxes">1</td><td class="units">90</td>
+          <td class="sverka positive">+1</td><td class="shipped">5</td>
+        </tr>
+        <tr style="--art-bg: rgba(129, 140, 248, 0.08); --art-accent: #818cf8;">
+          <td class="size">XL 42-44</td><td>90</td><td class="editable">5</td>
+          <td class="boxes">2</td><td class="units">180</td>
+          <td class="boxes">1</td><td class="units">90</td>
+          <td class="sverka zero">0</td><td class="shipped">5</td>
+        </tr>
+        <tr style="--art-bg: rgba(129, 140, 248, 0.08); --art-accent: #818cf8;">
+          <td class="size">XXL 44-46</td><td>90</td><td class="editable">5</td>
+          <td class="boxes">4</td><td class="units">360</td>
+          <td class="boxes">1</td><td class="units">90</td>
+          <td class="sverka negative">−2</td><td class="shipped">7</td>
+        </tr>
+        <tr style="--art-bg: rgba(129, 140, 248, 0.08); --art-accent: #818cf8;">
+          <td class="size" style="color: var(--warning); font-style: italic;">образец</td><td>—</td>
+          <td class="editable"></td>
+          <td class="editable"></td><td class="units">—</td>
+          <td class="editable"></td><td class="units">—</td>
+          <td class="sverka zero">—</td><td class="shipped">—</td>
+        </tr>
+        <tr class="article-break"><td colspan="10"></td></tr>
+        <tr style="--art-bg: rgba(245, 158, 11, 0.08); --art-accent: #f59e0b;">
+          <td class="article-cell" rowspan="4">
+            <div class="article-name" style="color: #fcd34d;">Слип футер</div>
+            <div class="article-meta"><b>5 шт / 3 цвета</b><br>WB: <b>322000486</b></div>
+          </td>
+          <td class="size">XL 42-44</td><td>90</td><td class="editable">7</td>
+          <td class="boxes">3</td><td class="units">270</td>
+          <td class="boxes">1</td><td class="units">90</td>
+          <td class="sverka positive">+2</td><td class="shipped">5</td>
+        </tr>
+        <tr style="--art-bg: rgba(245, 158, 11, 0.08); --art-accent: #f59e0b;">
+          <td class="size">XXL 44-46</td><td>90</td><td class="editable">4</td>
+          <td class="boxes">2</td><td class="units">180</td>
+          <td class="boxes">1</td><td class="units">90</td>
+          <td class="sverka zero">0</td><td class="shipped">4</td>
+        </tr>
+        <tr style="--art-bg: rgba(245, 158, 11, 0.08); --art-accent: #f59e0b;">
+          <td class="size">3XL 48-50</td><td>80</td><td class="editable">5</td>
+          <td class="boxes">2</td><td class="units">160</td>
+          <td class="boxes">1</td><td class="units">80</td>
+          <td class="sverka positive">+1</td><td class="shipped">4</td>
+        </tr>
+        <tr style="--art-bg: rgba(245, 158, 11, 0.08); --art-accent: #f59e0b;">
+          <td class="size" style="color: var(--warning); font-style: italic;">образец</td><td>—</td>
+          <td class="editable"></td>
+          <td class="editable"></td><td class="units">—</td>
+          <td class="editable"></td><td class="units">—</td>
+          <td class="sverka zero">—</td><td class="shipped">—</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════ Вариант 4: без заливки, только accent-линия между артикулами ═══════════ -->
+<div class="variant-section">
+  <div class="variant-title">4️⃣ Без фона + accent-линия между артикулами</div>
+  <div class="variant-desc">
+    Никакой заливки в колонке артикула вообще (прозрачно, как остальные ячейки). Между артикулами — горизонтальная accent-полоса 3px. Самый минималистичный.
+  </div>
+  <div class="mini-wrap">
+    <table class="mini-table v4">
+      <thead>
+        <tr>
+          <th rowspan="2" style="min-width: 170px;">Артикул</th>
+          <th rowspan="2">Размер</th>
+          <th rowspan="2">perBox</th>
+          <th rowspan="2">Склад</th>
+          <th colspan="2" class="region-group">Рязань</th>
+          <th colspan="2" class="region-group">СПб</th>
+          <th rowspan="2">Сверка</th>
+          <th rowspan="2">Отгр</th>
+        </tr>
+        <tr><th>Кор.</th><th>Шт.</th><th>Кор.</th><th>Шт.</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="article-cell" rowspan="4">
+            <div class="article-name">Слипы в рубчик</div>
+            <div class="article-meta"><b>7 шт / 7 цветов</b><br>WB: <b>165140159</b></div>
+          </td>
+          <td class="size">L 40-42</td><td>90</td><td class="editable">6</td>
+          <td class="boxes">2</td><td class="units">180</td>
+          <td class="boxes">1</td><td class="units">90</td>
+          <td class="sverka positive">+1</td><td class="shipped">5</td>
+        </tr>
+        <tr>
+          <td class="size">XL 42-44</td><td>90</td><td class="editable">5</td>
+          <td class="boxes">2</td><td class="units">180</td>
+          <td class="boxes">1</td><td class="units">90</td>
+          <td class="sverka zero">0</td><td class="shipped">5</td>
+        </tr>
+        <tr>
+          <td class="size">XXL 44-46</td><td>90</td><td class="editable">5</td>
+          <td class="boxes">4</td><td class="units">360</td>
+          <td class="boxes">1</td><td class="units">90</td>
+          <td class="sverka negative">−2</td><td class="shipped">7</td>
+        </tr>
+        <tr>
+          <td class="size" style="color: var(--warning); font-style: italic;">образец</td><td>—</td>
+          <td class="editable"></td>
+          <td class="editable"></td><td class="units">—</td>
+          <td class="editable"></td><td class="units">—</td>
+          <td class="sverka zero">—</td><td class="shipped">—</td>
+        </tr>
+        <tr class="article-divider"><td colspan="10"></td></tr>
+        <tr>
+          <td class="article-cell" rowspan="4">
+            <div class="article-name">Слип футер</div>
+            <div class="article-meta"><b>5 шт / 3 цвета</b><br>WB: <b>322000486</b></div>
+          </td>
+          <td class="size">XL 42-44</td><td>90</td><td class="editable">7</td>
+          <td class="boxes">3</td><td class="units">270</td>
+          <td class="boxes">1</td><td class="units">90</td>
+          <td class="sverka positive">+2</td><td class="shipped">5</td>
+        </tr>
+        <tr>
+          <td class="size">XXL 44-46</td><td>90</td><td class="editable">4</td>
+          <td class="boxes">2</td><td class="units">180</td>
+          <td class="boxes">1</td><td class="units">90</td>
+          <td class="sverka zero">0</td><td class="shipped">4</td>
+        </tr>
+        <tr>
+          <td class="size">3XL 48-50</td><td>80</td><td class="editable">5</td>
+          <td class="boxes">2</td><td class="units">160</td>
+          <td class="boxes">1</td><td class="units">80</td>
+          <td class="sverka positive">+1</td><td class="shipped">4</td>
+        </tr>
+        <tr>
+          <td class="size" style="color: var(--warning); font-style: italic;">образец</td><td>—</td>
+          <td class="editable"></td>
+          <td class="editable"></td><td class="units">—</td>
+          <td class="editable"></td><td class="units">—</td>
+          <td class="sverka zero">—</td><td class="shipped">—</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<hr style="border: none; border-top: 1px solid var(--border); margin: 40px 0;">
+
+<h1>📊 Текущий (проблемный) вариант</h1>
+<p class="subtitle">
+  Ниже — исходная таблица полностью зелёного цвета без разделителей (для сравнения с вариантами выше).
+</p>
+
+<div class="controls">
+  <button class="btn">⬇ Экспорт в Excel</button>
+  <button class="btn btn-reset">↺ Сбросить все правки</button>
+  <span style="color: var(--muted); font-size: 11px; margin-left: auto;">
+    💡 Клик на «Коробов» → редактировать
+  </span>
+</div>
+
+<div class="wrap">
+<table class="summary">
+  <thead>
+    <!-- First header row: region groups -->
+    <tr>
+      <th rowspan="2" style="min-width: 170px;">Артикул</th>
+      <th rowspan="2">Размер</th>
+      <th rowspan="2">Штук<br>в коробе</th>
+      <th rowspan="2">Баркод</th>
+      <th rowspan="2">Всего на<br>складе</th>
+      <th colspan="2" class="region-group">Рязань (ЦФО)</th>
+      <th colspan="2" class="region-group">СПб Шушары (СЗФО)</th>
+      <th colspan="2" class="region-group">Казань (ПФО)</th>
+      <th colspan="2" class="region-group">Краснодар (ЮФО)</th>
+      <th rowspan="2" class="formula-col">Сверка<span class="formula-note">Склад − Отгр.</span></th>
+      <th rowspan="2" class="formula-col">Отгружено<span class="formula-note">Σ коробов</span></th>
+    </tr>
+    <!-- Second header row: К / Ш -->
+    <tr>
+      <th>Коробов</th><th>Штук</th>
+      <th>Коробов</th><th>Штук</th>
+      <th>Коробов</th><th>Штук</th>
+      <th>Коробов</th><th>Штук</th>
+    </tr>
+  </thead>
+
+  <tbody>
+    <!-- ══════ Артикул 1: Слипы в рубчик ══════ -->
+    <tr>
+      <td class="article-cell" rowspan="8" style="--art-bg: rgba(129, 140, 248, 0.08); --art-accent: #818cf8; --art-text: #a5b4fc;">
+        <div class="article-name">Слипы в рубчик</div>
+        <div class="article-meta">
+          <b>7 шт / 7 цветов</b><br>
+          Артикул WB:<br>
+          <b style="font-family: 'SF Mono', monospace;">165140159</b>
+        </div>
+      </td>
+      <td class="size">L (XL) 40-42</td>
+      <td class="perbox">90</td>
+      <td class="barcode">2043450654919</td>
+      <td class="editable">6</td>
+      <td class="boxes">2</td><td class="units">180</td>
+      <td class="boxes">1</td><td class="units">90</td>
+      <td class="boxes">1</td><td class="units">90</td>
+      <td class="boxes">1</td><td class="units">90</td>
+      <td class="sverka positive">+1</td>
+      <td class="shipped">5</td>
+    </tr>
+    <tr>
+      <td class="size">XL 42-44</td>
+      <td class="perbox">90</td>
+      <td class="barcode">2043450621317</td>
+      <td class="editable">5</td>
+      <td class="boxes">2</td><td class="units">180</td>
+      <td class="boxes">1</td><td class="units">90</td>
+      <td class="boxes">1</td><td class="units">90</td>
+      <td class="boxes">1</td><td class="units">90</td>
+      <td class="sverka zero">0</td>
+      <td class="shipped">5</td>
+    </tr>
+    <tr>
+      <td class="size">XXL 44-46</td>
+      <td class="perbox">90</td>
+      <td class="barcode">2043450625865</td>
+      <td class="editable">5</td>
+      <td class="boxes override">4</td><td class="units">360</td>
+      <td class="boxes">1</td><td class="units">90</td>
+      <td class="boxes">1</td><td class="units">90</td>
+      <td class="boxes">1</td><td class="units">90</td>
+      <td class="sverka negative">−2</td>
+      <td class="shipped">7</td>
+    </tr>
+    <tr>
+      <td class="size">XXXL 46-48</td>
+      <td class="perbox">80</td>
+      <td class="barcode">2038048627401</td>
+      <td class="editable">8</td>
+      <td class="boxes">2</td><td class="units">160</td>
+      <td class="boxes">1</td><td class="units">80</td>
+      <td class="boxes">1</td><td class="units">80</td>
+      <td class="boxes">1</td><td class="units">80</td>
+      <td class="sverka positive">+3</td>
+      <td class="shipped">5</td>
+    </tr>
+    <tr>
+      <td class="size">3XL 48-50</td>
+      <td class="perbox">80</td>
+      <td class="barcode">2038048383333</td>
+      <td class="editable">10</td>
+      <td class="boxes">2</td><td class="units">160</td>
+      <td class="boxes">1</td><td class="units">80</td>
+      <td class="boxes">1</td><td class="units">80</td>
+      <td class="boxes">1</td><td class="units">80</td>
+      <td class="sverka positive">+5</td>
+      <td class="shipped">5</td>
+    </tr>
+    <tr>
+      <td class="size">4XL 50-52</td>
+      <td class="perbox">70</td>
+      <td class="barcode">2038048383753</td>
+      <td class="editable">5</td>
+      <td class="boxes">2</td><td class="units">140</td>
+      <td class="boxes">1</td><td class="units">70</td>
+      <td class="boxes">1</td><td class="units">70</td>
+      <td class="boxes">1</td><td class="units">70</td>
+      <td class="sverka zero">0</td>
+      <td class="shipped">5</td>
+    </tr>
+    <tr>
+      <td class="size">5XL 52-54</td>
+      <td class="perbox">70</td>
+      <td class="barcode">2038048384422</td>
+      <td class="editable">4</td>
+      <td class="boxes">2</td><td class="units">140</td>
+      <td class="boxes">1</td><td class="units">70</td>
+      <td class="boxes">1</td><td class="units">70</td>
+      <td class="boxes">1</td><td class="units">70</td>
+      <td class="sverka negative">−1</td>
+      <td class="shipped">5</td>
+    </tr>
+    <tr class="sample article-end">
+      <td class="size">образец</td>
+      <td class="perbox">—</td>
+      <td class="barcode">—</td>
+      <td class="editable empty"></td>
+      <td class="editable">1</td><td class="units">—</td>
+      <td class="editable empty"></td><td class="units">—</td>
+      <td class="editable empty"></td><td class="units">—</td>
+      <td class="editable empty"></td><td class="units">—</td>
+      <td class="sverka zero">—</td>
+      <td class="shipped">1</td>
+    </tr>
+
+    <!-- black divider -->
+    <tr class="article-break"><td colspan="15"></td></tr>
+
+    <!-- ══════ Артикул 2: Слип футер ══════ -->
+    <tr>
+      <td class="article-cell" rowspan="6" style="--art-bg: rgba(245, 158, 11, 0.08); --art-accent: #f59e0b; --art-text: #fcd34d;">
+        <div class="article-name">Слип футер</div>
+        <div class="article-meta">
+          <b>5 шт / 3 цвета</b><br>
+          Артикул WB:<br>
+          <b style="font-family: 'SF Mono', monospace;">322000486</b>
+        </div>
+      </td>
+      <td class="size">XL 42-44</td>
+      <td class="perbox">90</td>
+      <td class="barcode">2042679166388</td>
+      <td class="editable">7</td>
+      <td class="boxes">3</td><td class="units">270</td>
+      <td class="boxes">1</td><td class="units">90</td>
+      <td class="boxes">1</td><td class="units">90</td>
+      <td class="boxes empty">—</td><td class="units">—</td>
+      <td class="sverka positive">+2</td>
+      <td class="shipped">5</td>
+    </tr>
+    <tr>
+      <td class="size">XXL 44-46</td>
+      <td class="perbox">90</td>
+      <td class="barcode">2042679167262</td>
+      <td class="editable">4</td>
+      <td class="boxes">2</td><td class="units">180</td>
+      <td class="boxes">1</td><td class="units">90</td>
+      <td class="boxes">1</td><td class="units">90</td>
+      <td class="boxes empty">—</td><td class="units">—</td>
+      <td class="sverka zero">0</td>
+      <td class="shipped">4</td>
+    </tr>
+    <tr>
+      <td class="size">XXXL 46-48</td>
+      <td class="perbox">80</td>
+      <td class="barcode">2042679169150</td>
+      <td class="editable">6</td>
+      <td class="boxes override">5</td><td class="units">400</td>
+      <td class="boxes">1</td><td class="units">80</td>
+      <td class="boxes">1</td><td class="units">80</td>
+      <td class="boxes empty">—</td><td class="units">—</td>
+      <td class="sverka negative">−1</td>
+      <td class="shipped">7</td>
+    </tr>
+    <tr>
+      <td class="size">3XL 48-50</td>
+      <td class="perbox">80</td>
+      <td class="barcode">2042679170798</td>
+      <td class="editable">5</td>
+      <td class="boxes">2</td><td class="units">160</td>
+      <td class="boxes">1</td><td class="units">80</td>
+      <td class="boxes">1</td><td class="units">80</td>
+      <td class="boxes empty">—</td><td class="units">—</td>
+      <td class="sverka positive">+1</td>
+      <td class="shipped">4</td>
+    </tr>
+    <tr>
+      <td class="size">4XL 50-52</td>
+      <td class="perbox">70</td>
+      <td class="barcode">2042679177483</td>
+      <td class="editable">3</td>
+      <td class="boxes">2</td><td class="units">140</td>
+      <td class="boxes">1</td><td class="units">70</td>
+      <td class="boxes">1</td><td class="units">70</td>
+      <td class="boxes empty">—</td><td class="units">—</td>
+      <td class="sverka negative">−1</td>
+      <td class="shipped">4</td>
+    </tr>
+    <tr class="sample article-end">
+      <td class="size">образец</td>
+      <td class="perbox">—</td>
+      <td class="barcode">—</td>
+      <td class="editable empty"></td>
+      <td class="editable">1</td><td class="units">—</td>
+      <td class="editable empty"></td><td class="units">—</td>
+      <td class="editable empty"></td><td class="units">—</td>
+      <td class="editable empty"></td><td class="units">—</td>
+      <td class="sverka zero">—</td>
+      <td class="shipped">1</td>
+    </tr>
+
+    <!-- black divider -->
+    <tr class="article-break"><td colspan="15"></td></tr>
+
+    <!-- ══════ Артикул 3: Худи ══════ -->
+    <tr>
+      <td class="article-cell" rowspan="4" style="--art-bg: rgba(56, 189, 248, 0.08); --art-accent: #38bdf8; --art-text: #7dd3fc;">
+        <div class="article-name">Худи оверсайз</div>
+        <div class="article-meta">
+          <b>3 шт / 5 цветов</b><br>
+          Артикул WB:<br>
+          <b style="font-family: 'SF Mono', monospace;">488712039</b>
+        </div>
+      </td>
+      <td class="size">XS</td>
+      <td class="perbox">60</td>
+      <td class="barcode">4612345001234</td>
+      <td class="editable">4</td>
+      <td class="boxes">2</td><td class="units">120</td>
+      <td class="boxes">1</td><td class="units">60</td>
+      <td class="boxes empty">—</td><td class="units">—</td>
+      <td class="boxes empty">—</td><td class="units">—</td>
+      <td class="sverka positive">+1</td>
+      <td class="shipped">3</td>
+    </tr>
+    <tr>
+      <td class="size">S</td>
+      <td class="perbox">60</td>
+      <td class="barcode">4612345001241</td>
+      <td class="editable">6</td>
+      <td class="boxes">3</td><td class="units">180</td>
+      <td class="boxes">2</td><td class="units">120</td>
+      <td class="boxes empty">—</td><td class="units">—</td>
+      <td class="boxes empty">—</td><td class="units">—</td>
+      <td class="sverka positive">+1</td>
+      <td class="shipped">5</td>
+    </tr>
+    <tr>
+      <td class="size">M</td>
+      <td class="perbox">60</td>
+      <td class="barcode">4612345001258</td>
+      <td class="editable">4</td>
+      <td class="boxes">2</td><td class="units">120</td>
+      <td class="boxes">2</td><td class="units">120</td>
+      <td class="boxes empty">—</td><td class="units">—</td>
+      <td class="boxes empty">—</td><td class="units">—</td>
+      <td class="sverka zero">0</td>
+      <td class="shipped">4</td>
+    </tr>
+    <tr class="sample article-end">
+      <td class="size">образец</td>
+      <td class="perbox">—</td>
+      <td class="barcode">—</td>
+      <td class="editable empty"></td>
+      <td class="editable">1</td><td class="units">—</td>
+      <td class="editable empty"></td><td class="units">—</td>
+      <td class="editable empty"></td><td class="units">—</td>
+      <td class="editable empty"></td><td class="units">—</td>
+      <td class="sverka zero">—</td>
+      <td class="shipped">1</td>
+    </tr>
+
+    <!-- ══════ Итого ══════ -->
+    <tr class="total">
+      <td class="label" colspan="4">ИТОГО</td>
+      <td>82</td>
+      <td>40</td><td>2 890</td>
+      <td>17</td><td>1 280</td>
+      <td>12</td><td>980</td>
+      <td>7</td><td>570</td>
+      <td class="sverka positive">+9</td>
+      <td class="shipped">76</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="legend-box">
+  <b>Как читать:</b><br>
+  • Левая колонка — «ручка» артикула: имя, кол-во размеров/цветов, артикул WB<br>
+  • На каждый артикул — N строк по размерам + строка «образец» (жёлтым курсивом, редактируется вручную)<br>
+  • <b>Всего на складе</b> — <span style="border: 1px dashed rgba(129,140,248,0.4); padding: 0 4px; border-radius: 3px; background: rgba(129,140,248,0.08);">редактируемое</span> поле (пунктирная рамка), вводишь сам сколько у тебя есть на складе<br>
+  • Регионы идут парами: <b>Коробов</b> (редактируется) → <b>Штук</b> (автоподсчёт = коробов × perBox)<br>
+  • <span class="tag-edit">✎</span> — ячейка с ручным override (отличается от авторасчёта)<br>
+  • <b>Отгружено</b> = Σ коробов по всем регионам (включая образец)<br>
+  • <b>Сверка</b> = Всего на складе − Отгружено. <span style="color: var(--success);">+зелёный</span> = всё ок, <span style="color: #f87171;">−красный</span> = недостаёт товара<br>
+  • Итоговая строка внизу: по каждому региону и финальная сверка
+</div>
+
+<p style="color: var(--muted); font-size: 11px; text-align: center; margin: 30px 0;">
+  Данные — мок. В реальности регионы берутся из `useEffectiveRegions()`, артикулы и размеры — из расчёта V3.
+</p>
+
+</body>
+</html>

@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Укладка по артикулу — варианты</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --card: #141414;
+    --card-alt: #181818;
+    --border: #2a2a2a;
+    --border-soft: #232323;
+    --text: #e5e5e5;
+    --muted: #808080;
+    --muted-soft: #5a5a5a;
+    --accent: #818cf8;
+    --success: #22c55e;
+    --warning: #eab308;
+    --amber: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 14px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 32px; }
+
+  .section {
+    margin-bottom: 40px;
+    padding: 20px;
+    background: #0f0f0f;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  .section-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+  .section-title { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  .section-desc { font-size: 12px; color: var(--muted); margin-bottom: 16px; line-height: 1.5; }
+
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+
+  /* Base card */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .card-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .art-wb { font-family: "SF Mono", Menlo, monospace; font-size: 13px; color: var(--muted); margin-right: 10px; }
+  .art-name { font-size: 14px; font-weight: 600; color: var(--text); }
+  .head-right { font-size: 11px; color: var(--muted); text-align: right; }
+
+  table.sizes { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.sizes td { padding: 4px 0; white-space: nowrap; }
+  .sz { color: var(--muted); padding-right: 12px; }
+  .bc { font-family: "SF Mono", Menlo, monospace; color: var(--muted); padding-right: 12px; }
+  .bc-b { color: var(--text); font-weight: 600; font-size: 13px; }
+  .qty { text-align: right; font-variant-numeric: tabular-nums; }
+  .qty-mult { color: var(--text); font-weight: 600; }
+  .qty-partial { color: var(--amber); font-weight: 500; margin-left: 4px; font-size: 11px; }
+
+  .card-foot {
+    margin-top: 12px; padding-top: 10px;
+    border-top: 1px solid var(--border-soft);
+    display: flex; justify-content: space-between;
+    font-size: 11px; color: var(--muted);
+  }
+  .card-foot b { color: var(--text); font-weight: 600; }
+
+  .subhead {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--muted-soft); margin: 6px 0 4px; font-weight: 600;
+  }
+  .subhead:first-child { margin-top: 0; }
+
+  .mixed-row {
+    font-size: 11px; color: var(--muted);
+    padding: 2px 0; font-family: "SF Mono", Menlo, monospace;
+  }
+  .mixed-row b { color: var(--text); font-weight: 600; }
+
+  .badge-top {
+    display: inline-block; padding: 1px 8px; font-size: 10px;
+    border-radius: 999px; background: rgba(129, 140, 248, 0.15);
+    color: var(--accent); margin-left: 6px;
+  }
+  .pill-amber {
+    display: inline-block; padding: 1px 6px; font-size: 10px;
+    border-radius: 6px; background: rgba(245, 158, 11, 0.15);
+    color: var(--amber); margin-left: 6px;
+  }
+
+  .legend {
+    font-size: 11px; color: var(--muted); margin-top: 20px;
+    padding: 12px 16px; background: rgba(129, 140, 248, 0.05);
+    border-left: 3px solid var(--accent); border-radius: 4px; line-height: 1.6;
+  }
+  .legend b { color: var(--text); }
+
+  .nav { display: flex; gap: 12px; margin-bottom: 24px; font-size: 12px; flex-wrap: wrap; }
+  .nav a {
+    color: var(--accent); text-decoration: none;
+    padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px;
+  }
+  .nav a:hover { background: rgba(129,140,248,0.1); }
+
+  /* ═══ V3 (shared mixed block) ═══ */
+  .shared-mixed {
+    margin-top: 14px;
+    padding: 14px 16px;
+    background: rgba(245, 158, 11, 0.04);
+    border: 1px dashed rgba(245, 158, 11, 0.35);
+    border-radius: 10px;
+  }
+  .shared-mixed-head {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; font-weight: 700; color: var(--amber);
+    margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .mixed-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+  }
+  .mixed-card {
+    background: var(--card);
+    border: 1px solid rgba(245, 158, 11, 0.25);
+    border-radius: 8px; padding: 10px 12px;
+    font-size: 11px;
+  }
+  .mixed-card-head {
+    display: flex; justify-content: space-between;
+    margin-bottom: 6px; font-weight: 600;
+  }
+  .mixed-box-num { color: var(--text); font-size: 12px; }
+  .mixed-percent { color: var(--amber); font-family: "SF Mono", monospace; font-size: 10px; }
+  .mixed-content {
+    font-family: "SF Mono", Menlo, monospace; line-height: 1.5;
+    color: var(--muted);
+  }
+  .mixed-content b { color: var(--text); font-weight: 600; }
+  .mixed-hint {
+    margin-top: 6px; padding-top: 6px;
+    border-top: 1px solid rgba(245, 158, 11, 0.15);
+    font-size: 10px; color: var(--amber); font-style: italic;
+  }
+
+  /* ═══ V4 (visual chunks) ═══ */
+  .chunks-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .chunks-table td { padding: 5px 0; white-space: nowrap; vertical-align: middle; }
+  .chunks-row { display: inline-flex; gap: 3px; }
+  .chunk {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border-radius: 3px;
+    background: var(--success);
+  }
+  .chunk.full { background: var(--success); }
+  .chunk.partial {
+    background: repeating-linear-gradient(
+      45deg,
+      var(--amber) 0px,
+      var(--amber) 2px,
+      rgba(245,158,11,0.3) 2px,
+      rgba(245,158,11,0.3) 4px
+    );
+  }
+  .chunk.empty { background: transparent; border: 1px dashed var(--border); }
+  .chunks-label { color: var(--text); font-weight: 500; padding-left: 10px; font-size: 11px; }
+
+  /* ═══ V5 (packer recipe) ═══ */
+  .recipe-item {
+    display: flex; align-items: baseline;
+    padding: 5px 0;
+    font-size: 12px;
+  }
+  .recipe-mark { color: var(--success); font-weight: 700; margin-right: 10px; width: 14px; font-size: 16px; }
+  .recipe-count {
+    font-family: "SF Mono", Menlo, monospace;
+    font-weight: 700;
+    color: var(--text);
+    margin-right: 10px;
+    min-width: 50px;
+  }
+  .recipe-desc { color: var(--muted); flex: 1; }
+  .recipe-desc b { color: var(--text); }
+  .recipe-bc { font-family: "SF Mono", Menlo, monospace; color: var(--muted-soft); font-size: 11px; margin-left: 6px; }
+  .recipe-divider {
+    font-size: 10px; color: var(--amber);
+    text-transform: uppercase; letter-spacing: 0.5px;
+    font-weight: 700; margin: 10px 0 4px;
+    padding-top: 10px; border-top: 1px dashed rgba(245, 158, 11, 0.3);
+  }
+  .recipe-mark.mix { color: var(--amber); }
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <a href="/packing-preview.html">← Стили полоски заполнения</a>
+  <a href="/packing-by-article.html">Карточка = артикул в регионе</a>
+</div>
+
+<h1>📦 Укладка — ЦФО · карточка = артикул</h1>
+<p class="subtitle">
+  5 вариантов компоновки. Все используют одинаковые данные: 3 артикула, есть полные коробы, неполные (78%/89%) и смешанные (один короб с двумя размерами или двумя артикулами).
+</p>
+
+
+<!-- ═══════════ A: inline ═══════════ -->
+<div class="section">
+  <div class="section-header">
+    <div class="section-title">1️⃣ Таблица + inline-разбивка <span class="badge-top">A</span></div>
+  </div>
+  <div class="section-desc">
+    Одна строка на размер. <b>Полные коробы × штук</b>, рядом через «+» штуки из смешанного короба (жёлтым).
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-head"><div><span class="art-wb">322000486</span><span class="art-name">Слип рубчик</span></div><div class="head-right">ЦФО</div></div>
+      <table class="sizes">
+        <tbody>
+          <tr><td class="sz">46-48 (XXXL)</td><td class="bc"><span>2042679</span><span class="bc-b">169150</span></td><td class="qty"><span class="qty-mult">4×80</span><span class="qty-partial">+ 50</span></td></tr>
+          <tr><td class="sz">42-44 (XL)</td><td class="bc"><span>2042679</span><span class="bc-b">166388</span></td><td class="qty"><span class="qty-mult">1×90</span><span class="qty-partial">+ 30</span></td></tr>
+          <tr><td class="sz">52-54 (5XL)</td><td class="bc"><span>2042679</span><span class="bc-b">205360</span></td><td class="qty"><span class="qty-mult">2×70</span></td></tr>
+          <tr><td class="sz">44-46 (XXL)</td><td class="bc"><span>2042679</span><span class="bc-b">167262</span></td><td class="qty"><span class="qty-mult">2×90</span></td></tr>
+          <tr><td class="sz">48-50 (3XL)</td><td class="bc"><span>2042679</span><span class="bc-b">170798</span></td><td class="qty"><span class="qty-mult">2×80</span></td></tr>
+          <tr><td class="sz">50-52 (4XL)</td><td class="bc"><span>2042679</span><span class="bc-b">177483</span></td><td class="qty"><span class="qty-mult">2×70</span></td></tr>
+          <tr><td class="sz">40-42 (L)</td><td class="bc"><span>2042798</span><span class="bc-b">684350</span></td><td class="qty"><span class="qty-partial">40</span></td></tr>
+        </tbody>
+      </table>
+      <div class="card-foot"><span>13 полных + 2 смешанных</span><span><b>1 110 шт</b></span></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><div><span class="art-wb">165140159</span><span class="art-name">Свитер кашемир</span></div><div class="head-right">ЦФО</div></div>
+      <table class="sizes">
+        <tbody>
+          <tr><td class="sz">48-50 (3XL)</td><td class="bc"><span>2038048</span><span class="bc-b">383333</span></td><td class="qty"><span class="qty-mult">3×80</span><span class="qty-partial">+ 30</span></td></tr>
+          <tr><td class="sz">44-46 (XXL)</td><td class="bc"><span>2043450</span><span class="bc-b">625865</span></td><td class="qty"><span class="qty-mult">2×90</span><span class="qty-partial">+ 70</span></td></tr>
+          <tr><td class="sz">42-44 (XL) <span class="pill-amber">89%</span></td><td class="bc"><span>2043450</span><span class="bc-b">621317</span></td><td class="qty"><span class="qty-partial">80</span></td></tr>
+          <tr><td class="sz">52-54 (5XL)</td><td class="bc"><span>2038048</span><span class="bc-b">384422</span></td><td class="qty"><span class="qty-mult">3×70</span></td></tr>
+          <tr><td class="sz">40-42 (L)</td><td class="bc"><span>2043450</span><span class="bc-b">654919</span></td><td class="qty"><span class="qty-mult">1×90</span></td></tr>
+          <tr><td class="sz">50-52 (4XL)</td><td class="bc"><span>2038048</span><span class="bc-b">383753</span></td><td class="qty"><span class="qty-mult">1×70</span><span class="qty-partial">+ 20</span></td></tr>
+        </tbody>
+      </table>
+      <div class="card-foot"><span>10 полных + 4 смешанных/неполных</span><span><b>820 шт</b></span></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><div><span class="art-wb">488712039</span><span class="art-name">Худи оверсайз</span></div><div class="head-right">ЦФО</div></div>
+      <table class="sizes">
+        <tbody>
+          <tr><td class="sz">XS</td><td class="bc"><span>4612345</span><span class="bc-b">001234</span></td><td class="qty"><span class="qty-mult">3×60</span></td></tr>
+          <tr><td class="sz">S</td><td class="bc"><span>4612345</span><span class="bc-b">001241</span></td><td class="qty"><span class="qty-mult">5×60</span></td></tr>
+          <tr><td class="sz">M</td><td class="bc"><span>4612345</span><span class="bc-b">001258</span></td><td class="qty"><span class="qty-mult">4×60</span></td></tr>
+        </tbody>
+      </table>
+      <div class="card-foot"><span>12 коробов</span><span><b>720 шт</b></span></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════ B: разделение внутри карточки ═══════════ -->
+<div class="section">
+  <div class="section-header">
+    <div class="section-title">2️⃣ Полные и смешанные — две секции в карточке <span class="badge-top">B</span></div>
+  </div>
+  <div class="section-desc">
+    Внутри одной карточки: сверху — чистая таблица полных коробов, снизу — роспись смешанных с номерами.
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-head"><div><span class="art-wb">322000486</span><span class="art-name">Слип рубчик</span></div><div class="head-right">ЦФО</div></div>
+      <div class="subhead">Полные коробы (13)</div>
+      <table class="sizes"><tbody>
+        <tr><td class="sz">46-48 (XXXL)</td><td class="bc"><span>2042679</span><span class="bc-b">169150</span></td><td class="qty"><span class="qty-mult">4×80</span></td></tr>
+        <tr><td class="sz">42-44 (XL)</td><td class="bc"><span>2042679</span><span class="bc-b">166388</span></td><td class="qty"><span class="qty-mult">1×90</span></td></tr>
+        <tr><td class="sz">52-54 (5XL)</td><td class="bc"><span>2042679</span><span class="bc-b">205360</span></td><td class="qty"><span class="qty-mult">2×70</span></td></tr>
+        <tr><td class="sz">44-46 (XXL)</td><td class="bc"><span>2042679</span><span class="bc-b">167262</span></td><td class="qty"><span class="qty-mult">2×90</span></td></tr>
+        <tr><td class="sz">48-50 (3XL)</td><td class="bc"><span>2042679</span><span class="bc-b">170798</span></td><td class="qty"><span class="qty-mult">2×80</span></td></tr>
+        <tr><td class="sz">50-52 (4XL)</td><td class="bc"><span>2042679</span><span class="bc-b">177483</span></td><td class="qty"><span class="qty-mult">2×70</span></td></tr>
+      </tbody></table>
+      <div class="subhead">Смешанные коробы (2)</div>
+      <div class="mixed-row">№5: <b>46-48 ×50</b> + <b>42-44 ×30</b></div>
+      <div class="mixed-row">№34: <b>40-42 ×40</b> + 165140159 48-50 ×30</div>
+      <div class="card-foot"><span>15 коробов</span><span><b>1 110 шт</b></span></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><div><span class="art-wb">165140159</span><span class="art-name">Свитер кашемир</span></div><div class="head-right">ЦФО</div></div>
+      <div class="subhead">Полные коробы (10)</div>
+      <table class="sizes"><tbody>
+        <tr><td class="sz">48-50 (3XL)</td><td class="bc"><span>2038048</span><span class="bc-b">383333</span></td><td class="qty"><span class="qty-mult">3×80</span></td></tr>
+        <tr><td class="sz">44-46 (XXL)</td><td class="bc"><span>2043450</span><span class="bc-b">625865</span></td><td class="qty"><span class="qty-mult">2×90</span></td></tr>
+        <tr><td class="sz">52-54 (5XL)</td><td class="bc"><span>2038048</span><span class="bc-b">384422</span></td><td class="qty"><span class="qty-mult">3×70</span></td></tr>
+        <tr><td class="sz">40-42 (L)</td><td class="bc"><span>2043450</span><span class="bc-b">654919</span></td><td class="qty"><span class="qty-mult">1×90</span></td></tr>
+        <tr><td class="sz">50-52 (4XL)</td><td class="bc"><span>2038048</span><span class="bc-b">383753</span></td><td class="qty"><span class="qty-mult">1×70</span></td></tr>
+      </tbody></table>
+      <div class="subhead">Неполные / смешанные (4)</div>
+      <div class="mixed-row">№15: <b>42-44 ×80</b> <span class="pill-amber">89%</span></div>
+      <div class="mixed-row">№18: <b>44-46 ×70</b> <span class="pill-amber">78%</span></div>
+      <div class="mixed-row">№24: <b>50-52 ×20</b> + 322000486 52-54 ×50</div>
+      <div class="mixed-row">№34: <b>48-50 ×30</b> + 322000486 40-42 ×40</div>
+      <div class="card-foot"><span>14 коробов</span><span><b>820 шт</b></span></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><div><span class="art-wb">488712039</span><span class="art-name">Худи оверсайз</span></div><div class="head-right">ЦФО</div></div>
+      <div class="subhead">Полные коробы (12)</div>
+      <table class="sizes"><tbody>
+        <tr><td class="sz">XS</td><td class="bc"><span>4612345</span><span class="bc-b">001234</span></td><td class="qty"><span class="qty-mult">3×60</span></td></tr>
+        <tr><td class="sz">S</td><td class="bc"><span>4612345</span><span class="bc-b">001241</span></td><td class="qty"><span class="qty-mult">5×60</span></td></tr>
+        <tr><td class="sz">M</td><td class="bc"><span>4612345</span><span class="bc-b">001258</span></td><td class="qty"><span class="qty-mult">4×60</span></td></tr>
+      </tbody></table>
+      <div class="card-foot"><span>12 коробов</span><span><b>720 шт</b></span></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════ C: карточка артикула = только ПОЛНЫЕ + общий блок смешанных ═══════════ -->
+<div class="section">
+  <div class="section-header">
+    <div class="section-title">3️⃣ В карточке артикула — только полные. Смешанные — в общем блоке <span class="badge-top">C</span></div>
+  </div>
+  <div class="section-desc">
+    <b>Твоя идея.</b> Карточка артикула чистая — только полные коробы. Неполные и смешанные живут отдельным блоком снизу:
+    каждый короб — отдельная мини-карточка с росписью содержимого и подсказкой <i>«можно доложить ~X шт»</i>. Удобно, когда нужно физически досыпать товар.
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-head"><div><span class="art-wb">322000486</span><span class="art-name">Слип рубчик</span></div><div class="head-right">ЦФО</div></div>
+      <table class="sizes"><tbody>
+        <tr><td class="sz">46-48 (XXXL)</td><td class="bc"><span>2042679</span><span class="bc-b">169150</span></td><td class="qty"><span class="qty-mult">4×80</span></td></tr>
+        <tr><td class="sz">42-44 (XL)</td><td class="bc"><span>2042679</span><span class="bc-b">166388</span></td><td class="qty"><span class="qty-mult">1×90</span></td></tr>
+        <tr><td class="sz">52-54 (5XL)</td><td class="bc"><span>2042679</span><span class="bc-b">205360</span></td><td class="qty"><span class="qty-mult">2×70</span></td></tr>
+        <tr><td class="sz">44-46 (XXL)</td><td class="bc"><span>2042679</span><span class="bc-b">167262</span></td><td class="qty"><span class="qty-mult">2×90</span></td></tr>
+        <tr><td class="sz">48-50 (3XL)</td><td class="bc"><span>2042679</span><span class="bc-b">170798</span></td><td class="qty"><span class="qty-mult">2×80</span></td></tr>
+        <tr><td class="sz">50-52 (4XL)</td><td class="bc"><span>2042679</span><span class="bc-b">177483</span></td><td class="qty"><span class="qty-mult">2×70</span></td></tr>
+      </tbody></table>
+      <div class="card-foot"><span>13 полных коробов</span><span><b>1 020 шт</b></span></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><div><span class="art-wb">165140159</span><span class="art-name">Свитер кашемир</span></div><div class="head-right">ЦФО</div></div>
+      <table class="sizes"><tbody>
+        <tr><td class="sz">48-50 (3XL)</td><td class="bc"><span>2038048</span><span class="bc-b">383333</span></td><td class="qty"><span class="qty-mult">3×80</span></td></tr>
+        <tr><td class="sz">44-46 (XXL)</td><td class="bc"><span>2043450</span><span class="bc-b">625865</span></td><td class="qty"><span class="qty-mult">2×90</span></td></tr>
+        <tr><td class="sz">52-54 (5XL)</td><td class="bc"><span>2038048</span><span class="bc-b">384422</span></td><td class="qty"><span class="qty-mult">3×70</span></td></tr>
+        <tr><td class="sz">40-42 (L)</td><td class="bc"><span>2043450</span><span class="bc-b">654919</span></td><td class="qty"><span class="qty-mult">1×90</span></td></tr>
+        <tr><td class="sz">50-52 (4XL)</td><td class="bc"><span>2038048</span><span class="bc-b">383753</span></td><td class="qty"><span class="qty-mult">1×70</span></td></tr>
+      </tbody></table>
+      <div class="card-foot"><span>10 полных коробов</span><span><b>720 шт</b></span></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><div><span class="art-wb">488712039</span><span class="art-name">Худи оверсайз</span></div><div class="head-right">ЦФО</div></div>
+      <table class="sizes"><tbody>
+        <tr><td class="sz">XS</td><td class="bc"><span>4612345</span><span class="bc-b">001234</span></td><td class="qty"><span class="qty-mult">3×60</span></td></tr>
+        <tr><td class="sz">S</td><td class="bc"><span>4612345</span><span class="bc-b">001241</span></td><td class="qty"><span class="qty-mult">5×60</span></td></tr>
+        <tr><td class="sz">M</td><td class="bc"><span>4612345</span><span class="bc-b">001258</span></td><td class="qty"><span class="qty-mult">4×60</span></td></tr>
+      </tbody></table>
+      <div class="card-foot"><span>12 полных коробов</span><span><b>720 шт</b></span></div>
+    </div>
+  </div>
+
+  <div class="shared-mixed">
+    <div class="shared-mixed-head">⚠️ Смешанные и неполные коробы · ЦФО (4)</div>
+    <div class="mixed-grid">
+      <div class="mixed-card">
+        <div class="mixed-card-head"><span class="mixed-box-num">Короб №5</span><span class="mixed-percent">96%</span></div>
+        <div class="mixed-content">
+          <div>322000486 · <b>46-48 ×50</b></div>
+          <div>322000486 · <b>42-44 ×30</b></div>
+        </div>
+        <div class="mixed-hint">↑ можно доложить ~10 шт</div>
+      </div>
+      <div class="mixed-card">
+        <div class="mixed-card-head"><span class="mixed-box-num">Короб №15</span><span class="mixed-percent">89%</span></div>
+        <div class="mixed-content">
+          <div>165140159 · <b>42-44 ×80</b></div>
+        </div>
+        <div class="mixed-hint">↑ можно доложить ~10 шт</div>
+      </div>
+      <div class="mixed-card">
+        <div class="mixed-card-head"><span class="mixed-box-num">Короб №18</span><span class="mixed-percent">78%</span></div>
+        <div class="mixed-content">
+          <div>165140159 · <b>44-46 ×70</b></div>
+        </div>
+        <div class="mixed-hint">↑ можно доложить ~20 шт</div>
+      </div>
+      <div class="mixed-card">
+        <div class="mixed-card-head"><span class="mixed-box-num">Короб №34</span><span class="mixed-percent">82%</span></div>
+        <div class="mixed-content">
+          <div>322000486 · <b>40-42 ×40</b></div>
+          <div>165140159 · <b>48-50 ×30</b></div>
+        </div>
+        <div class="mixed-hint">↑ можно доложить ~15 шт</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <b>Плюс:</b> карточка артикула — чистая, «инвентарная». Неполные коробы сразу видны в одном месте, удобно физически досыпать.<br>
+    <b>Минус:</b> чтобы увидеть полную картину по артикулу (включая смешанные), надо смотреть в два места.
+  </div>
+</div>
+
+
+<!-- ═══════════ D: визуальные чанки (каждый короб = квадратик) ═══════════ -->
+<div class="section">
+  <div class="section-header">
+    <div class="section-title">4️⃣ Визуальные квадратики коробов <span class="badge-top">D</span></div>
+  </div>
+  <div class="section-desc">
+    Каждый квадрат = 1 короб. Сплошной зелёный = полный, заштрихованный жёлтый = частичный/смешанный. Одним взглядом видно структуру: где много полных, а где «россыпь».
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-head"><div><span class="art-wb">322000486</span><span class="art-name">Слип рубчик</span></div><div class="head-right">ЦФО · 15 коробов · 1 110 шт</div></div>
+      <table class="chunks-table"><tbody>
+        <tr><td class="sz" style="width: 140px;">46-48 (XXXL)</td><td><span class="chunks-row"><span class="chunk full"></span><span class="chunk full"></span><span class="chunk full"></span><span class="chunk full"></span><span class="chunk partial"></span></span><span class="chunks-label">4×80 + 50</span></td></tr>
+        <tr><td class="sz">42-44 (XL)</td><td><span class="chunks-row"><span class="chunk full"></span><span class="chunk partial"></span></span><span class="chunks-label">1×90 + 30</span></td></tr>
+        <tr><td class="sz">52-54 (5XL)</td><td><span class="chunks-row"><span class="chunk full"></span><span class="chunk full"></span></span><span class="chunks-label">2×70</span></td></tr>
+        <tr><td class="sz">44-46 (XXL)</td><td><span class="chunks-row"><span class="chunk full"></span><span class="chunk full"></span></span><span class="chunks-label">2×90</span></td></tr>
+        <tr><td class="sz">48-50 (3XL)</td><td><span class="chunks-row"><span class="chunk full"></span><span class="chunk full"></span></span><span class="chunks-label">2×80</span></td></tr>
+        <tr><td class="sz">50-52 (4XL)</td><td><span class="chunks-row"><span class="chunk full"></span><span class="chunk full"></span></span><span class="chunks-label">2×70</span></td></tr>
+        <tr><td class="sz">40-42 (L)</td><td><span class="chunks-row"><span class="chunk partial"></span></span><span class="chunks-label">40 (смешан)</span></td></tr>
+      </tbody></table>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><div><span class="art-wb">165140159</span><span class="art-name">Свитер кашемир</span></div><div class="head-right">ЦФО · 14 коробов · 820 шт</div></div>
+      <table class="chunks-table"><tbody>
+        <tr><td class="sz" style="width: 140px;">48-50 (3XL)</td><td><span class="chunks-row"><span class="chunk full"></span><span class="chunk full"></span><span class="chunk full"></span><span class="chunk partial"></span></span><span class="chunks-label">3×80 + 30</span></td></tr>
+        <tr><td class="sz">44-46 (XXL)</td><td><span class="chunks-row"><span class="chunk full"></span><span class="chunk full"></span><span class="chunk partial"></span></span><span class="chunks-label">2×90 + 70</span></td></tr>
+        <tr><td class="sz">42-44 (XL)</td><td><span class="chunks-row"><span class="chunk partial"></span></span><span class="chunks-label">80 (89%)</span></td></tr>
+        <tr><td class="sz">52-54 (5XL)</td><td><span class="chunks-row"><span class="chunk full"></span><span class="chunk full"></span><span class="chunk full"></span></span><span class="chunks-label">3×70</span></td></tr>
+        <tr><td class="sz">40-42 (L)</td><td><span class="chunks-row"><span class="chunk full"></span></span><span class="chunks-label">1×90</span></td></tr>
+        <tr><td class="sz">50-52 (4XL)</td><td><span class="chunks-row"><span class="chunk full"></span><span class="chunk partial"></span></span><span class="chunks-label">1×70 + 20</span></td></tr>
+      </tbody></table>
+    </div>
+  </div>
+
+  <div class="legend">
+    <b>Плюс:</b> очень визуально — видно сразу, где основные объёмы, а где остатки. Красивая «карта» отгрузки.<br>
+    <b>Минус:</b> занимает чуть больше места по ширине. Баркоды не поместились — пришлось убрать (или добавлять второй строкой).
+  </div>
+</div>
+
+
+<!-- ═══════════ E: рецепт упаковщика ═══════════ -->
+<div class="section">
+  <div class="section-header">
+    <div class="section-title">5️⃣ Инструкция упаковщика («рецепт») <span class="badge-top">E</span></div>
+  </div>
+  <div class="section-desc">
+    Не таблица, а список действий: «собрать N коробов по M шт». Оптимально для печати / передачи сборщику на складе. Сверху — полные коробы, снизу — смешанные.
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-head"><div><span class="art-wb">322000486</span><span class="art-name">Слип рубчик</span></div><div class="head-right">ЦФО</div></div>
+      <div class="recipe-item"><span class="recipe-mark">✓</span><span class="recipe-count">4×80</span><span class="recipe-desc"><b>46-48</b> (XXXL)<span class="recipe-bc">…169150</span></span></div>
+      <div class="recipe-item"><span class="recipe-mark">✓</span><span class="recipe-count">2×90</span><span class="recipe-desc"><b>44-46</b> (XXL)<span class="recipe-bc">…167262</span></span></div>
+      <div class="recipe-item"><span class="recipe-mark">✓</span><span class="recipe-count">2×80</span><span class="recipe-desc"><b>48-50</b> (3XL)<span class="recipe-bc">…170798</span></span></div>
+      <div class="recipe-item"><span class="recipe-mark">✓</span><span class="recipe-count">2×70</span><span class="recipe-desc"><b>52-54</b> (5XL)<span class="recipe-bc">…205360</span></span></div>
+      <div class="recipe-item"><span class="recipe-mark">✓</span><span class="recipe-count">2×70</span><span class="recipe-desc"><b>50-52</b> (4XL)<span class="recipe-bc">…177483</span></span></div>
+      <div class="recipe-item"><span class="recipe-mark">✓</span><span class="recipe-count">1×90</span><span class="recipe-desc"><b>42-44</b> (XL)<span class="recipe-bc">…166388</span></span></div>
+      <div class="recipe-divider">Смешанные коробы</div>
+      <div class="recipe-item"><span class="recipe-mark mix">◐</span><span class="recipe-count">№5</span><span class="recipe-desc">46-48 ×<b>50</b> + 42-44 ×<b>30</b></span></div>
+      <div class="recipe-item"><span class="recipe-mark mix">◐</span><span class="recipe-count">№34</span><span class="recipe-desc">40-42 ×<b>40</b> + (доп. артикул)</span></div>
+      <div class="card-foot"><span>15 коробов</span><span><b>1 110 шт</b></span></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><div><span class="art-wb">165140159</span><span class="art-name">Свитер кашемир</span></div><div class="head-right">ЦФО</div></div>
+      <div class="recipe-item"><span class="recipe-mark">✓</span><span class="recipe-count">3×80</span><span class="recipe-desc"><b>48-50</b> (3XL)<span class="recipe-bc">…383333</span></span></div>
+      <div class="recipe-item"><span class="recipe-mark">✓</span><span class="recipe-count">3×70</span><span class="recipe-desc"><b>52-54</b> (5XL)<span class="recipe-bc">…384422</span></span></div>
+      <div class="recipe-item"><span class="recipe-mark">✓</span><span class="recipe-count">2×90</span><span class="recipe-desc"><b>44-46</b> (XXL)<span class="recipe-bc">…625865</span></span></div>
+      <div class="recipe-item"><span class="recipe-mark">✓</span><span class="recipe-count">1×90</span><span class="recipe-desc"><b>40-42</b> (L)<span class="recipe-bc">…654919</span></span></div>
+      <div class="recipe-item"><span class="recipe-mark">✓</span><span class="recipe-count">1×70</span><span class="recipe-desc"><b>50-52</b> (4XL)<span class="recipe-bc">…383753</span></span></div>
+      <div class="recipe-divider">Неполные / смешанные</div>
+      <div class="recipe-item"><span class="recipe-mark mix">◐</span><span class="recipe-count">№15</span><span class="recipe-desc">42-44 ×<b>80</b> (89%)</span></div>
+      <div class="recipe-item"><span class="recipe-mark mix">◐</span><span class="recipe-count">№18</span><span class="recipe-desc">44-46 ×<b>70</b> (78%)</span></div>
+      <div class="recipe-item"><span class="recipe-mark mix">◐</span><span class="recipe-count">№24</span><span class="recipe-desc">50-52 ×<b>20</b> + доп</span></div>
+      <div class="recipe-item"><span class="recipe-mark mix">◐</span><span class="recipe-count">№34</span><span class="recipe-desc">48-50 ×<b>30</b> + доп</span></div>
+      <div class="card-foot"><span>14 коробов</span><span><b>820 шт</b></span></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><div><span class="art-wb">488712039</span><span class="art-name">Худи оверсайз</span></div><div class="head-right">ЦФО</div></div>
+      <div class="recipe-item"><span class="recipe-mark">✓</span><span class="recipe-count">5×60</span><span class="recipe-desc"><b>S</b><span class="recipe-bc">…001241</span></span></div>
+      <div class="recipe-item"><span class="recipe-mark">✓</span><span class="recipe-count">4×60</span><span class="recipe-desc"><b>M</b><span class="recipe-bc">…001258</span></span></div>
+      <div class="recipe-item"><span class="recipe-mark">✓</span><span class="recipe-count">3×60</span><span class="recipe-desc"><b>XS</b><span class="recipe-bc">…001234</span></span></div>
+      <div class="card-foot"><span>12 коробов</span><span><b>720 шт</b></span></div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <b>Плюс:</b> читается как чек-лист. Отсортировано по убыванию количества — видно, что отгружать первым.<br>
+    <b>Минус:</b> нет явного счётчика «сколько ещё осталось доложить» (это преимущество варианта C).
+  </div>
+</div>
+
+
+<p style="color: var(--muted); font-size: 12px; text-align: center; margin: 40px 0;">
+  Данные — мок. После выбора можно комбинировать: например, C (общий блок смешанных) + D (квадратики внутри карточек) + подсказки «доложить X шт» как в C.
+</p>
+
+</body>
+</html>

@@ -90,6 +90,19 @@
     "lifecycle": "active"
   },
   {
+    "id": "auth-check",
+    "name": "Auth Check",
+    "nameRu": "Проверка доступа к WB",
+    "description": "Ежедневно в 22:00 МСК проверяет API-ключ и авторизацию ЛК, шлёт Telegram-алерт при разлогине",
+    "project": "MpHub",
+    "type": "node",
+    "cronPattern": "0 19 * * *",
+    "cronUser": "makson",
+    "scriptPath": "/home/makson/website/scripts/auth-check.js",
+    "logPath": "/home/makson/website/data/auth-check.log",
+    "lifecycle": "active"
+  },
+  {
     "id": "data-health-cron",
     "name": "Data Health Check",
     "nameRu": "Проверка здоровья данных",
