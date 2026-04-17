@@ -114,8 +114,8 @@ export async function POST(req: NextRequest) {
     // Save ALL orders to SQLite (accumulate, no trimming)
     // Duplicates handled by INSERT OR IGNORE / ON CONFLICT in shipment-db
     // Stock is always replaced (current state), products are upserted
-    saveProducts(products);
-    saveStock(stock);
+    const productsResult = saveProducts(products);
+    const stockResult = saveStock(stock);
     saveOrders(allOrders);
     setUploadDate(new Date().toISOString());
 
@@ -123,6 +123,10 @@ export async function POST(req: NextRequest) {
       orders: allOrders.length,
       stock: stock.length,
       products: products.length,
+      idempotent: {
+        products: productsResult,
+        stock: stockResult,
+      },
     });
   } catch (err) {
     return apiError(err);

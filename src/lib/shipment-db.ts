@@ -177,8 +177,14 @@ export function saveOrders(orders: OrderRecord[]): void {
   insert(orders);
 }
 
-export function saveStock(stock: StockItem[]): void {
+export function saveStock(stock: StockItem[]): { total: number; written: number; skipped: number } {
   const d = getDb();
+  // Снимок quantity для diff (ключ: barcode|warehouse)
+  const existingRows = d.prepare("SELECT barcode, warehouse, quantity FROM shipment_stock").all() as {
+    barcode: string; warehouse: string; quantity: number;
+  }[];
+  const existing = new Map(existingRows.map(r => [`${r.barcode}|${r.warehouse}`, r.quantity]));
+
   const stmt = d.prepare(`
     REPLACE INTO shipment_stock
       (barcode, article_wb, article_seller, brand, size, warehouse, quantity, updated_at)
@@ -187,13 +193,28 @@ export function saveStock(stock: StockItem[]): void {
   `);
 
   const now = new Date().toISOString();
+  let total = 0;
+  let written = 0;
+  let skipped = 0;
+
+  const writeRow = (args: { barcode: string; articleWB: string; articleSeller: string; brand: string; size: string; warehouse: string; quantity: number }) => {
+    total++;
+    const key = `${args.barcode}|${args.warehouse}`;
+    const prevQty = existing.get(key);
+    if (prevQty !== undefined && prevQty === args.quantity) {
+      skipped++;
+      return;
+    }
+    stmt.run({ ...args, updatedAt: now });
+    written++;
+  };
+
   const insert = d.transaction((rows: StockItem[]) => {
     for (const s of rows) {
-      // If stock has per-warehouse data, insert one row per warehouse
       const warehouses = Object.entries(s.warehouseStock);
       if (warehouses.length > 0) {
         for (const [warehouse, quantity] of warehouses) {
-          stmt.run({
+          writeRow({
             barcode: s.barcode,
             articleWB: s.articleWB,
             articleSeller: s.articleSeller,
@@ -201,11 +222,10 @@ export function saveStock(stock: StockItem[]): void {
             size: s.size,
             warehouse,
             quantity,
-            updatedAt: now,
           });
         }
       } else {
-        stmt.run({
+        writeRow({
           barcode: s.barcode,
           articleWB: s.articleWB,
           articleSeller: s.articleSeller,
@@ -213,35 +233,55 @@ export function saveStock(stock: StockItem[]): void {
           size: s.size,
           warehouse: "",
           quantity: s.totalOnWarehouses,
-          updatedAt: now,
         });
       }
     }
   });
 
   insert(stock);
+  return { total, written, skipped };
 }
 
-export function saveProducts(products: Product[]): void {
+export function saveProducts(products: Product[]): { total: number; written: number; skipped: number } {
   const d = getDb();
+  // Снимок текущих записей для diff
+  const existingRows = d.prepare("SELECT article_wb, name, brand, category, sizes_json FROM shipment_products").all() as {
+    article_wb: string; name: string; brand: string; category: string; sizes_json: string;
+  }[];
+  const existing = new Map(existingRows.map(r => [r.article_wb, r]));
+
   const stmt = d.prepare(`
     REPLACE INTO shipment_products (article_wb, name, brand, category, sizes_json)
     VALUES (@articleWB, @name, @brand, @category, @sizesJson)
   `);
 
+  let written = 0;
+  let skipped = 0;
   const insert = d.transaction((rows: Product[]) => {
     for (const p of rows) {
+      const sizesJson = JSON.stringify(p.sizes);
+      const old = existing.get(p.articleWB);
+      if (old
+        && old.name === p.name
+        && old.brand === p.brand
+        && old.category === p.category
+        && old.sizes_json === sizesJson) {
+        skipped++;
+        continue;
+      }
       stmt.run({
         articleWB: p.articleWB,
         name: p.name,
         brand: p.brand,
         category: p.category,
-        sizesJson: JSON.stringify(p.sizes),
+        sizesJson,
       });
+      written++;
     }
   });
 
   insert(products);
+  return { total: products.length, written, skipped };
 }
 
 export function getOrders(dateFrom: string, dateTo: string): OrderRecord[] {
