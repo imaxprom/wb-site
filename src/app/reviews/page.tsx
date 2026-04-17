@@ -225,19 +225,66 @@ export default function ReviewsPage() {
 
   function handleComplaint(id: number) {
     setComplainingId(id);
+    // Отмечаем review как pending в UI сразу
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, complaint_status: "pending" } : r)));
+
     fetch("/api/reviews/complaints", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ review_id: id }),
     }).then(async (res) => {
       const data = await res.json();
-      if (res.ok) {
+      if (res.status === 202 || data.status === "pending") {
+        // Async flow — запускаем polling статуса
+        pollComplaintStatus(id);
+      } else if (res.ok) {
         setRows((prev) => prev.map((r) => (r.id === id ? { ...r, complaint_status: "submitted" } : r)));
+        setComplainingId(null);
       } else {
+        setRows((prev) => prev.map((r) => (r.id === id ? { ...r, complaint_status: "error" } : r)));
         alert(data.error || "Ошибка при подаче жалобы");
+        setComplainingId(null);
       }
-    }).catch(() => alert("Ошибка сети"))
-      .finally(() => setComplainingId(null));
+    }).catch(() => {
+      setRows((prev) => prev.map((r) => (r.id === id ? { ...r, complaint_status: "error" } : r)));
+      alert("Ошибка сети — попробуй обновить страницу");
+      setComplainingId(null);
+    });
+  }
+
+  function pollComplaintStatus(reviewId: number) {
+    const started = Date.now();
+    const intervalId = setInterval(async () => {
+      if (Date.now() - started > 6 * 60 * 1000) {
+        clearInterval(intervalId);
+        setRows((prev) => prev.map((r) => (r.id === reviewId ? { ...r, complaint_status: "error" } : r)));
+        alert("Генерация застряла >6 мин. Проверь сервер.");
+        setComplainingId(null);
+        return;
+      }
+      try {
+        const res = await fetch(`/api/reviews/complaint-status?review_id=${reviewId}`);
+        const data = await res.json();
+        if (data.status === "submitted" || data.status === "approved") {
+          clearInterval(intervalId);
+          setRows((prev) => prev.map((r) => (r.id === reviewId ? { ...r, complaint_status: "submitted" } : r)));
+          setComplainingId(null);
+        } else if (data.status === "error" || data.status === "rejected") {
+          clearInterval(intervalId);
+          setRows((prev) => prev.map((r) => (r.id === reviewId ? { ...r, complaint_status: "error" } : r)));
+          alert(data.error_message || "Ошибка подачи жалобы");
+          setComplainingId(null);
+        } else if (data.stuck) {
+          clearInterval(intervalId);
+          setRows((prev) => prev.map((r) => (r.id === reviewId ? { ...r, complaint_status: "error" } : r)));
+          alert("Обработка застряла >5 мин (возможно, упал сервер AI).");
+          setComplainingId(null);
+        }
+        // status=pending → продолжаем опрос
+      } catch {
+        // Сетевой glitch — продолжаем опрос
+      }
+    }, 3000);
   }
 
   return (

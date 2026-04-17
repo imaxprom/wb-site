@@ -6,6 +6,7 @@ import {
   getReviewsForAutoComplaint,
   createComplaint,
   updateComplaintStatus,
+  updateComplaintContent,
   updateReviewComplaintStatus,
   getComplaintsByAccount,
   getComplaintByReviewId,
@@ -318,7 +319,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ submitted, errors, total_eligible: reviews.length });
     }
 
-    // Mode 2: Manual single complaint
+    // Mode 2: Manual single complaint — АСИНХРОННЫЙ flow (202 Accepted + polling)
     if (json.review_id) {
       const reviewId = Number(json.review_id);
       const existing = getComplaintByReviewId(reviewId);
@@ -327,7 +328,6 @@ export async function POST(req: NextRequest) {
       }
 
       const review = getReviewById(reviewId);
-
       if (!review || !review.wb_review_id) {
         return NextResponse.json({ error: "Review not found" }, { status: 404 });
       }
@@ -337,39 +337,25 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Cabinet tokens not configured for this account" }, { status: 400 });
       }
 
-      const config = getComplaintsConfig(account);
-      let reasonId = json.reason_id;
-      let explanation = json.explanation;
-
-      let managerName: string | undefined;
-      if (!reasonId || !explanation) {
+      // Dry-run остаётся синхронным — быстрый предпросмотр AI
+      if (json.dry_run) {
+        const config = getComplaintsConfig(account);
         const reasons = json.reason_id ? [json.reason_id] : config.allowed_reasons;
         const managers = config.managers?.length ? config.managers : [{ name: "Default", style: "" }];
         const manager = managers[Math.floor(Math.random() * managers.length)];
         const previousText = getLastComplaintByManager(account.id, manager.name);
-
         const ai = await generateComplaint(review, reasons, {
           system_prompt: config.system_prompt,
           user_prompt: config.user_prompt,
           manager,
           previousText,
         });
-        if (!ai) {
-          return NextResponse.json({ error: "AI generation failed, complaint not sent" }, { status: 502 });
-        }
-        reasonId = reasonId || ai.reason_id;
-        explanation = explanation || ai.explanation;
-        managerName = manager.name;
-      }
-
-      // Dry-run: skip DB and WB API, return AI result only
-      if (json.dry_run) {
+        if (!ai) return NextResponse.json({ error: "AI generation failed" }, { status: 502 });
         return NextResponse.json({
-          ok: true,
-          dry_run: true,
-          reason_id: reasonId,
-          reason_label: COMPLAINT_REASONS[reasonId] || "Неизвестно",
-          explanation,
+          ok: true, dry_run: true,
+          reason_id: ai.reason_id,
+          reason_label: COMPLAINT_REASONS[ai.reason_id] || "Неизвестно",
+          explanation: ai.explanation,
           review: {
             wb_review_id: review.wb_review_id,
             product_name: review.product_name,
@@ -380,25 +366,66 @@ export async function POST(req: NextRequest) {
         });
       }
 
+      // Создаём pending-запись сразу
       const complaintId = createComplaint({
         review_id: review.id,
         account_id: account.id,
         wb_review_id: review.wb_review_id,
-        complaint_reason_id: reasonId,
-        explanation,
-        manager_name: managerName,
+        complaint_reason_id: json.reason_id || 0,
+        explanation: json.explanation || "",
+        manager_name: "",
       });
+      updateReviewComplaintStatus(review.id, "pending");
 
-      const result = await submitComplaintToWB(account, review.wb_review_id, reasonId, explanation);
+      // Запускаем обработку на фоне (не await). Клиент сразу получает 202.
+      // Внутри — вызов Claude (долгий) + отправка на WB + обновление БД.
+      (async () => {
+        try {
+          const config = getComplaintsConfig(account);
+          let reasonId = json.reason_id;
+          let explanation = json.explanation;
+          let managerName = "";
 
-      if (result.ok) {
-        updateComplaintStatus(complaintId, "submitted");
-        updateReviewComplaintStatus(review.id, "submitted");
-        return NextResponse.json({ ok: true, complaint_id: complaintId, status: "submitted" });
-      } else {
-        updateComplaintStatus(complaintId, "error", `HTTP ${result.status}: ${result.body}`);
-        return NextResponse.json({ error: `WB API error: ${result.status}`, details: result.body }, { status: 502 });
-      }
+          if (!reasonId || !explanation) {
+            const reasons = json.reason_id ? [json.reason_id] : config.allowed_reasons;
+            const managers = config.managers?.length ? config.managers : [{ name: "Default", style: "" }];
+            const manager = managers[Math.floor(Math.random() * managers.length)];
+            const previousText = getLastComplaintByManager(account.id, manager.name);
+            const ai = await generateComplaint(review, reasons, {
+              system_prompt: config.system_prompt,
+              user_prompt: config.user_prompt,
+              manager,
+              previousText,
+            });
+            if (!ai) {
+              updateComplaintStatus(complaintId, "error", "AI generation failed");
+              updateReviewComplaintStatus(review.id, "error");
+              return;
+            }
+            reasonId = reasonId || ai.reason_id;
+            explanation = explanation || ai.explanation;
+            managerName = manager.name;
+            updateComplaintContent(complaintId, reasonId, explanation, managerName);
+          }
+
+          const result = await submitComplaintToWB(account, review.wb_review_id!, reasonId, explanation);
+          if (result.ok) {
+            updateComplaintStatus(complaintId, "submitted");
+            updateReviewComplaintStatus(review.id, "submitted");
+          } else {
+            updateComplaintStatus(complaintId, "error", `HTTP ${result.status}: ${result.body}`);
+            updateReviewComplaintStatus(review.id, "error");
+          }
+        } catch (err: unknown) {
+          updateComplaintStatus(complaintId, "error", (err as Error).message);
+          updateReviewComplaintStatus(review.id, "error");
+        }
+      })();
+
+      return NextResponse.json(
+        { ok: true, complaint_id: complaintId, status: "pending" },
+        { status: 202 }
+      );
     }
 
     return NextResponse.json({ error: "Missing review_id or auto+account_id" }, { status: 400 });

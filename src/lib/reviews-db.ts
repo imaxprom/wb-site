@@ -715,6 +715,14 @@ export function getLastComplaintByManager(accountId: number, managerName: string
   return row?.explanation || null;
 }
 
+/** Перезапись AI-содержимого (когда pending-запись создана без AI-данных,
+ *  а потом Claude сгенерил) */
+export function updateComplaintContent(id: number, reasonId: number, explanation: string, managerName: string): void {
+  const d = getDb();
+  d.prepare(`UPDATE review_complaints SET complaint_reason_id = ?, explanation = ?, manager_name = ? WHERE id = ?`)
+    .run(reasonId, explanation, managerName, id);
+}
+
 export function updateComplaintStatus(id: number, status: string, errorMessage?: string): void {
   const d = getDb();
 
