@@ -24,8 +24,8 @@ const TOKENS_PATH = path.join(PROJECT_DIR, "data", "wb-tokens.json");
 const STATUS_PATH = path.join(PROJECT_DIR, "public", "data", "monitor", "auth-status.json");
 const LOG_PATH = path.join(PROJECT_DIR, "data", "auth-check.log");
 
-// Telegram — берём из env или fallback (совместимость с watchdog)
-const TG_TOKEN = process.env.TG_TOKEN || "8798691813:AAGdZtAF6WB59lif5SNYKiqOp09iUETzcpU";
+// Telegram — берём из env или fallback
+const TG_TOKEN = process.env.TG_TOKEN || "8654488203:AAE3vc3L-baecS3IpxE6fwnYnSjrxNM8hEc";
 const TG_CHAT_ID = process.env.TG_CHAT_ID || "317252096";
 
 const ALERT_COOLDOWN_MS = 20 * 60 * 60 * 1000; // 20 часов
@@ -173,7 +173,7 @@ async function main() {
         `<b>API-ключ:</b> ${apiLine}`,
         `<b>ЛК:</b> ${lkLine}`,
         "",
-        "👉 Открой <a href=\"https://hub.imaxprom.site/monitor\">hub.imaxprom.site/monitor</a> → обнови доступ.",
+        "👉 Открой <a href=\"https://hub.imaxprom.site/settings\">hub.imaxprom.site/settings</a> → обнови доступ.",
       ].join("\n");
       const sent = sendTelegram(msg);
       if (sent) {
