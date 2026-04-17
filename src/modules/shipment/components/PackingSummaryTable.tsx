@@ -358,8 +358,8 @@ export function PackingSummaryTable({
                     <tr key={sr.item.barcode}>
                       {sizeIdx === 0 && (
                         <td rowSpan={rowSpan} style={{ ...cellBase, textAlign: "center", padding: "10px 12px", verticalAlign: "middle", width: 180, minWidth: 160, maxWidth: 200, whiteSpace: "normal", wordBreak: "break-word", overflowWrap: "anywhere", background: color.bg, borderLeft: `3px solid ${color.accent}` }}>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: color.text, marginBottom: 6, lineHeight: 1.3 }}>{art.productName}</div>
-                          <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5 }}>Артикул WB:<br/><b style={{ color: "var(--text)", fontFamily: "SF Mono, Menlo, monospace" }}>{art.articleWB}</b></div>
+                          <div style={{ fontSize: 15, fontWeight: 700, color: color.text, marginBottom: 6, lineHeight: 1.3 }}>{art.productName}</div>
+                          <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.5 }}>Артикул WB:<br/><b style={{ color: "var(--text)", fontFamily: "SF Mono, Menlo, monospace", fontSize: 14 }}>{art.articleWB}</b></div>
                         </td>
                       )}
                       <td style={{ ...cellBase, textAlign: "left", paddingLeft: 12, fontFamily: "SF Mono, Menlo, monospace", color: "var(--text)", fontWeight: 500 }}>{sr.item.size}</td>
