@@ -354,6 +354,8 @@ async function retroactiveCheck() {
     let changed = [];
 
     // --- Orders: сравнение по orderSum ---
+    // Пишем в БД сразу полученное значение, без повторного запроса в syncOrders
+    // (WB может вернуть разные цифры при повторных запросах — играть туда-сюда).
     try {
       const res = await fetch("https://seller-analytics-api.wildberries.ru/api/analytics/v3/sales-funnel/grouped/history", {
         method: "POST",
@@ -367,11 +369,12 @@ async function retroactiveCheck() {
         const db = new Database(DB_PATH);
         const dbRow = db.prepare("SELECT order_sum FROM orders_funnel WHERE date = ?").get(date);
         const dbSum = dbRow?.order_sum || 0;
-        db.close();
-        if (wbSum > 0 && Math.abs(wbSum - dbSum) > 0.01) {
-          await syncOrders(date, dbSum);
+        if (day && wbSum > 0 && Math.abs(wbSum - dbSum) > 0.01) {
+          db.prepare("INSERT OR REPLACE INTO orders_funnel (date, order_sum, order_count, buyout_sum, buyout_count) VALUES (?, ?, ?, ?, ?)")
+            .run(date, wbSum, day.orderCount || 0, day.buyoutSum || 0, day.buyoutCount || 0);
           changed.push(`orders (${dbSum} → ${wbSum})`);
         }
+        db.close();
       }
     } catch { /* не критично — пропускаем */ }
 
@@ -583,9 +586,15 @@ async function main() {
   log("  Weekly report check...");
   await syncWeeklyReport();
 
+  // Ретроактивная проверка 5 предыдущих дней — запускается ВСЕГДА,
+  // даже если вчерашний день уже complete.
+  await retroactiveCheck();
+
   // Skip daily if already complete
   if (day.complete) {
     log(`${date}: already complete, skipping`);
+    status.lastRun = new Date().toISOString();
+    saveStatus(status);
     process.exit(0);
   }
 
@@ -611,10 +620,6 @@ async function main() {
 
   day.complete = day.report.ok && day.advertising.ok && day.advertising.stable && day.orders.ok && day.orders.stable;
   log(`  Complete: ${day.complete}`);
-
-  // Ретроактивно проверяем предыдущие 5 дней — не обновились ли данные в WB.
-  // Если суммы в БД и у WB совпадают — ничего не трогаем.
-  await retroactiveCheck();
 
   status.today = day;
   status.lastRun = new Date().toISOString();
