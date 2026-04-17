@@ -103,13 +103,13 @@ function ComplaintCell({ reviewId, complaintStatus, complainingId, onComplaint }
           {/* Невидимый бэкдроп для закрытия по клику вне окна */}
           <div className="fixed inset-0 z-40" onClick={() => setShowConfirm(false)} />
           <div
-            className="absolute right-full top-1/2 -translate-y-1/2 mr-2 rounded-xl p-4 z-50"
-            style={{ backgroundColor: "var(--bg-card)", border: "1px solid var(--accent)", boxShadow: "0 0 30px rgba(99, 102, 241, 0.2)", width: "280px" }}
+            className="absolute right-full top-full mr-1 mt-1 rounded-xl p-3 z-50"
+            style={{ backgroundColor: "var(--bg-card)", border: "1px solid var(--accent)", boxShadow: "0 0 30px rgba(99, 102, 241, 0.2)", width: "260px", overflowWrap: "break-word", wordBreak: "break-word" }}
             onClick={(e) => e.stopPropagation()}
           >
-            <p style={{ fontSize: "13px", fontWeight: 500, marginBottom: "8px" }}>Подать жалобу?</p>
-            <p style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "12px", lineHeight: 1.5 }}>
-              ИИ сгенерирует текст обращения и отправит жалобу в Wildberries.
+            <p style={{ fontSize: "13px", fontWeight: 500, marginBottom: "6px" }}>Подать жалобу?</p>
+            <p style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "10px", lineHeight: 1.4, overflowWrap: "break-word", wordBreak: "break-word" }}>
+              ИИ сгенерирует текст и подаст жалобу в WB.
             </p>
             <div className="flex items-center gap-2 justify-end">
               <button
