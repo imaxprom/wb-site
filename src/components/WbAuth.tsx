@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { AutoCheckLine } from "./AutoCheckLine";
 
 type Step = "loading" | "phone" | "captcha" | "code" | "supplier_select" | "authenticated";
 
@@ -228,6 +229,7 @@ export function WbAuth() {
           <StepIndicator current={step} />
         )}
       </div>
+      <AutoCheckLine channel="lk" />
 
       {/* Error banner */}
       {error && (

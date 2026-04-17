@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { testApiKey, type ScopeResult } from "@/lib/wb-api";
+import { AutoCheckLine } from "./AutoCheckLine";
 
 export function ApiKeySettings() {
   const [key, setKey] = useState("");
@@ -78,9 +79,10 @@ export function ApiKeySettings() {
   return (
     <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
       <h3 className="font-medium mb-1">API-ключ Wildberries</h3>
-      <p className="text-sm text-[var(--text-muted)] mb-4">
+      <p className="text-sm text-[var(--text-muted)] mb-2">
         Единый ключ из кабинета продавца WB. При генерации выберите нужные доступы.
       </p>
+      <AutoCheckLine channel="api" />
 
       {hasKey ? (
         <div className="space-y-4">
