@@ -817,11 +817,8 @@ async function syncWeeklyReport() {
 // --- Main ---
 
 async function main() {
-  const hour = new Date().getHours();
-  if (hour < 6 || hour > 23) {
-    log("Outside working hours (6-23), skipping");
-    process.exit(0);
-  }
+  // Работаем 24/7 — без ограничений по часам.
+  // Cron тикает каждый час, любой запуск либо синхронизирует, либо skip-ит идемпотентно.
 
   ensureDirs();
   // Инициализация schema: meta-таблица для dedup отчётов (Блок 5)
@@ -857,9 +854,14 @@ async function main() {
   // импортированных отчётов (нужно только при первом запуске после деплоя).
   await bootstrapReportMeta();
 
-  // Always check weekly report (even if daily is complete)
-  log("  Weekly report check...");
-  await syncWeeklyReport();
+  // Weekly report — только Пн-Ср (WB публикует в этом окне).
+  // В остальные дни weekly не появится, запрос пустой.
+  const mskNow = new Date(Date.now() + 3 * 60 * 60 * 1000);
+  const dow = mskNow.getUTCDay(); // 0=Sun, 1=Mon, 2=Tue, 3=Wed
+  if (dow >= 1 && dow <= 3) {
+    log("  Weekly report check...");
+    await syncWeeklyReport();
+  }
 
   // Ретроактивная проверка 5 предыдущих дней — запускается ВСЕГДА,
   // даже если вчерашний день уже complete.
