@@ -91,7 +91,7 @@ function ComplaintCell({ reviewId, complaintStatus, complainingId, onComplaint }
   if (!onComplaint) return null;
 
   return (
-    <>
+    <span className="relative inline-block">
       <button
         onClick={() => setShowConfirm(true)}
         className="text-[10px] px-2 py-1 rounded border border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors whitespace-nowrap"
@@ -99,14 +99,16 @@ function ComplaintCell({ reviewId, complaintStatus, complainingId, onComplaint }
         Жалоба
       </button>
       {showConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setShowConfirm(false)}>
+        <>
+          {/* Невидимый бэкдроп для закрытия по клику вне окна */}
+          <div className="fixed inset-0 z-40" onClick={() => setShowConfirm(false)} />
           <div
-            className="rounded-xl p-4"
-            style={{ backgroundColor: "var(--bg-card)", border: "1px solid var(--accent)", boxShadow: "0 0 30px rgba(99, 102, 241, 0.2)", width: "320px", maxWidth: "90vw" }}
+            className="absolute right-full top-1/2 -translate-y-1/2 mr-2 rounded-xl p-4 z-50"
+            style={{ backgroundColor: "var(--bg-card)", border: "1px solid var(--accent)", boxShadow: "0 0 30px rgba(99, 102, 241, 0.2)", width: "280px" }}
             onClick={(e) => e.stopPropagation()}
           >
             <p style={{ fontSize: "13px", fontWeight: 500, marginBottom: "8px" }}>Подать жалобу?</p>
-            <p style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "12px", lineHeight: 1.5, wordWrap: "break-word", whiteSpace: "normal" }}>
+            <p style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "12px", lineHeight: 1.5 }}>
               ИИ сгенерирует текст обращения и отправит жалобу в Wildberries.
             </p>
             <div className="flex items-center gap-2 justify-end">
@@ -124,9 +126,9 @@ function ComplaintCell({ reviewId, complaintStatus, complainingId, onComplaint }
               </button>
             </div>
           </div>
-        </div>
+        </>
       )}
-    </>
+    </span>
   );
 }
 
