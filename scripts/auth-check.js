@@ -16,6 +16,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { execFileSync } = require("child_process");
 
 const PROJECT_DIR = path.join(__dirname, "..");
 const API_KEY_PATH = path.join(PROJECT_DIR, "data", "wb-api-key.txt");
@@ -92,20 +93,34 @@ async function checkLkAuth() {
   }
 }
 
-async function sendTelegram(text) {
+/**
+ * Отправка через scripts/tg-send.sh → SSH на claude-cli VM → tinyproxy → Germany.
+ * VPS (российский IP) заблокирован для api.telegram.org, поэтому идём через туннель.
+ */
+function sendTelegram(text) {
   try {
-    const res = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: TG_CHAT_ID,
-        text,
-        parse_mode: "HTML",
-        disable_web_page_preview: true,
-      }),
-      signal: AbortSignal.timeout(10000),
+    const body = JSON.stringify({
+      chat_id: TG_CHAT_ID,
+      text,
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
     });
-    return res.ok;
+    const bodyB64 = Buffer.from(body).toString("base64");
+    const scriptPath = path.join(__dirname, "tg-send.sh");
+    const out = execFileSync("bash", [scriptPath, TG_TOKEN, bodyB64], {
+      timeout: 20000,
+      encoding: "utf-8",
+    });
+    // Telegram отвечает JSON с полем "ok"
+    try {
+      const parsed = JSON.parse(out);
+      if (parsed.ok) return true;
+      log(`Telegram rejected: ${out.slice(0, 200)}`);
+      return false;
+    } catch {
+      log(`Telegram non-JSON response: ${out.slice(0, 200)}`);
+      return false;
+    }
   } catch (err) {
     log(`Telegram error: ${err.message || err}`);
     return false;
@@ -160,7 +175,7 @@ async function main() {
         "",
         "👉 Открой <a href=\"https://hub.imaxprom.site/monitor\">hub.imaxprom.site/monitor</a> → обнови доступ.",
       ].join("\n");
-      const sent = await sendTelegram(msg);
+      const sent = sendTelegram(msg);
       if (sent) {
         status.lastAlertSentAt = now;
         log("Telegram alert sent");
