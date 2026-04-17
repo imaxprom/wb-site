@@ -191,15 +191,12 @@ async function syncReport(date) {
     }
 
     db.close();
-    const MIN_ROWS = 500;
-    result.ok = totalRows >= MIN_ROWS;
+    // Доверяем WB: если отчёт попал в список /reports — он финальный.
+    // totalRows — это то, что импортировали. Не ставим магический минимум.
+    result.ok = totalRows > 0;
     result.value = totalRows;
-    result.stable = totalRows >= MIN_ROWS;
-    if (totalRows === 0) result.error = "0 строк";
-    else if (totalRows < MIN_ROWS) {
-      result.error = `Отчёт неполный: ${totalRows} строк (ожидается ${MIN_ROWS}+). WB ещё не сформировал.`;
-      log(`  ⚠️ Report incomplete: ${totalRows} rows < ${MIN_ROWS}`);
-    }
+    result.stable = totalRows > 0;
+    if (totalRows === 0) result.error = "Отчёты найдены в списке, но 0 строк импортировано";
   } catch (err) {
     result.error = err.message || String(err);
   }
@@ -226,15 +223,15 @@ async function fetchCampaignNmMap(apiKey) {
     const res = await fetch("https://advert-api.wildberries.ru/api/advert/v2/adverts", {
       headers: { Authorization: apiKey },
     });
-    if (!res.ok) return map;
+    if (!res.ok) return { ok: false, map };
     const data = await res.json();
     for (const c of data.adverts || []) {
       if (c.nm_settings?.length) {
         map.set(c.id, c.nm_settings[0].nm_id);
       }
     }
-  } catch { /* не критично — упадём на кеш */ }
-  return map;
+    return { ok: true, map };
+  } catch { return { ok: false, map }; }
 }
 
 async function syncAdvertising(date) {
@@ -243,7 +240,7 @@ async function syncAdvertising(date) {
   if (!apiKey) { result.error = "Нет WB API ключа"; return result; }
 
   try {
-    const [updRes, freshNmMap] = await Promise.all([
+    const [updRes, adverts] = await Promise.all([
       fetch(`https://advert-api.wildberries.ru/adv/v1/upd?from=${date}&to=${date}`, {
         headers: { Authorization: apiKey },
       }),
@@ -254,7 +251,7 @@ async function syncAdvertising(date) {
     const data = await updRes.json();
     const entries = data.filter(d => (d.updSum || 0) > 0);
     const total = entries.reduce((s, d) => s + (d.updSum || 0), 0);
-    if (total === 0) { result.error = "Нет расходов"; return result; }
+    if (total === 0) { result.error = "Нет расходов"; result.stable = adverts.ok; return result; }
 
     const db = new Database(DB_PATH);
     ensureCampaignNmTable(db);
@@ -266,14 +263,14 @@ async function syncAdvertising(date) {
     `);
     const now = new Date().toISOString();
     db.transaction(() => {
-      for (const [cid, nm] of freshNmMap) upsertMap.run(cid, nm, now);
+      for (const [cid, nm] of adverts.map) upsertMap.run(cid, nm, now);
     })();
 
     // Читаем кеш (в т.ч. архивные кампании из прошлых синков)
     const cachedRows = db.prepare("SELECT campaign_id, nm_id FROM campaign_nm_map").all();
     const cachedNmMap = new Map(cachedRows.map(r => [r.campaign_id, r.nm_id]));
 
-    const resolveNm = (advertId) => freshNmMap.get(advertId) || cachedNmMap.get(advertId) || 0;
+    const resolveNm = (advertId) => adverts.map.get(advertId) || cachedNmMap.get(advertId) || 0;
 
     db.prepare("DELETE FROM advertising WHERE date = ?").run(date);
     const ins = db.prepare("INSERT INTO advertising (date, campaign_name, campaign_id, amount, payment_type, nm_id) VALUES (?, ?, ?, ?, ?, ?)");
@@ -286,13 +283,11 @@ async function syncAdvertising(date) {
 
     result.ok = true;
     result.value = total;
-    // stable=true только если хотя бы половина расходов замаппилась.
-    // Иначе sync повторится на следующем часу и попробует добрать маппинг.
-    const mappedSum = entries.reduce((s, e) => s + (resolveNm(e.advertId || 0) ? (e.updSum || 0) : 0), 0);
-    const mappedRatio = total > 0 ? mappedSum / total : 0;
-    result.stable = mappedRatio >= 0.5;
+    // stable=true если справочник кампаний /adverts ответил (даже если пустой).
+    // Отсутствующие кампании = архивные WB, retry ничего не даст.
+    result.stable = adverts.ok;
     if (!result.stable) {
-      result.error = `Маппинг nm_id: ${(mappedRatio * 100).toFixed(0)}% — повторю на следующем часу`;
+      result.error = "Справочник кампаний /adverts недоступен — повторю на следующем часу";
     }
   } catch (err) {
     result.error = err.message || String(err);
@@ -331,6 +326,119 @@ async function syncOrders(date, prevValue) {
     result.error = err.message || String(err);
   }
   return result;
+}
+
+// --- Retroactive check: перепроверяем последние 5 дней на изменения в WB ---
+
+function dateNDaysAgo(n) {
+  const now = new Date();
+  const msk = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+  msk.setDate(msk.getDate() - n);
+  return msk.toISOString().slice(0, 10);
+}
+
+/**
+ * Для каждого из последних 5 дней (today-2 .. today-6) сравниваем данные
+ * в БД с тем, что сейчас отдаёт WB. Если отличаются — перезаписываем.
+ * Если совпадают — ничего не делаем (принцип "если одинаковые — не трогаем").
+ */
+async function retroactiveCheck() {
+  const apiKey = getApiKey();
+  if (!apiKey) { log("  Retro: нет API ключа, пропуск"); return; }
+
+  const DAYS = 5;
+  log(`  Retro check (${DAYS} дней):`);
+
+  for (let n = 2; n <= 1 + DAYS; n++) {
+    const date = dateNDaysAgo(n);
+    let changed = [];
+
+    // --- Orders: сравнение по orderSum ---
+    try {
+      const res = await fetch("https://seller-analytics-api.wildberries.ru/api/analytics/v3/sales-funnel/grouped/history", {
+        method: "POST",
+        headers: { Authorization: apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ brandNames: [], subjectIds: [], tagIds: [], selectedPeriod: { start: date, end: date }, aggregationLevel: "day" }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const day = data?.data?.[0]?.history?.find(h => h.date === date);
+        const wbSum = day?.orderSum || 0;
+        const db = new Database(DB_PATH);
+        const dbRow = db.prepare("SELECT order_sum FROM orders_funnel WHERE date = ?").get(date);
+        const dbSum = dbRow?.order_sum || 0;
+        db.close();
+        if (wbSum > 0 && Math.abs(wbSum - dbSum) > 0.01) {
+          await syncOrders(date, dbSum);
+          changed.push(`orders (${dbSum} → ${wbSum})`);
+        }
+      }
+    } catch { /* не критично — пропускаем */ }
+
+    // --- Advertising: сравнение по сумме расходов ---
+    try {
+      const res = await fetch(`https://advert-api.wildberries.ru/adv/v1/upd?from=${date}&to=${date}`, {
+        headers: { Authorization: apiKey },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const wbSum = data.filter(d => (d.updSum || 0) > 0).reduce((s, d) => s + d.updSum, 0);
+        const db = new Database(DB_PATH);
+        const dbRow = db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM advertising WHERE date = ?").get(date);
+        const dbSum = dbRow?.total || 0;
+        db.close();
+        if (Math.abs(wbSum - dbSum) > 0.01) {
+          await syncAdvertising(date);
+          changed.push(`advertising (${dbSum.toFixed(0)} → ${wbSum.toFixed(0)})`);
+        }
+      }
+    } catch { /* пропускаем */ }
+
+    // --- Report: проверка списка отчётов /reports для этого дня ---
+    // Если появился новый realizationreport_id для этого дня — скачиваем.
+    // Сам syncReport делает skip для уже загруженных отчётов.
+    try {
+      if (fs.existsSync(TOKENS_PATH)) {
+        const tokens = JSON.parse(fs.readFileSync(TOKENS_PATH, "utf-8"));
+        if (tokens.authorizev3 && tokens.cookies) {
+          const refreshRes = await fetch("https://seller.wildberries.ru/ns/suppliers-auth/suppliers-portal-core/auth/token", {
+            method: "POST",
+            headers: { "content-type": "application/json", authorizev3: tokens.authorizev3, cookie: tokens.cookies, origin: "https://seller.wildberries.ru", referer: "https://seller.wildberries.ru/" },
+            body: JSON.stringify({ params: {}, jsonrpc: "2.0", id: "json-rpc_1" }),
+          });
+          if (refreshRes.ok) {
+            const sellerLk = (await refreshRes.json()).result?.data?.token;
+            if (sellerLk) {
+              const listRes = await fetch("https://seller-services.wildberries.ru/ns/reports/seller-wb-balance/api/v1/reports?limit=10&skip=0&type=6", {
+                headers: { authorizev3: tokens.authorizev3, "wb-seller-lk": sellerLk, cookie: tokens.cookies },
+              });
+              if (listRes.ok) {
+                const reports = (await listRes.json()).data?.reports || [];
+                const dateReports = reports.filter(r => r.dateFrom?.slice(0, 10) === date);
+                if (dateReports.length > 0) {
+                  const db = new Database(DB_PATH);
+                  let newReportFound = false;
+                  for (const rep of dateReports) {
+                    const ex = db.prepare("SELECT COUNT(*) as cnt FROM realization WHERE realizationreport_id = ?").get(rep.id);
+                    if (ex.cnt === 0) { newReportFound = true; break; }
+                  }
+                  db.close();
+                  if (newReportFound) {
+                    await syncReport(date);
+                    changed.push("report");
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch { /* пропускаем */ }
+
+    if (changed.length > 0) {
+      log(`    ${date}: обновлено — ${changed.join(", ")}`);
+    }
+  }
 }
 
 // --- Source 4: Weekly realization report (final, via API key) ---
@@ -483,7 +591,7 @@ async function main() {
 
   log(`Syncing ${date}...`);
 
-  if (!day.report.ok) {
+  if (!day.report.ok || !day.report.stable) {
     log("  Report...");
     day.report = await syncReport(date);
     log(`  Report: ${day.report.ok ? day.report.value + " rows" : "FAIL: " + day.report.error}`);
@@ -503,6 +611,10 @@ async function main() {
 
   day.complete = day.report.ok && day.advertising.ok && day.advertising.stable && day.orders.ok && day.orders.stable;
   log(`  Complete: ${day.complete}`);
+
+  // Ретроактивно проверяем предыдущие 5 дней — не обновились ли данные в WB.
+  // Если суммы в БД и у WB совпадают — ничего не трогаем.
+  await retroactiveCheck();
 
   status.today = day;
   status.lastRun = new Date().toISOString();

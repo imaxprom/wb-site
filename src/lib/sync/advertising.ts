@@ -16,21 +16,21 @@ function ensureCampaignNmTable(db: Database.Database): void {
   `);
 }
 
-async function fetchCampaignNmMap(apiKey: string): Promise<Map<number, number>> {
+async function fetchCampaignNmMap(apiKey: string): Promise<{ ok: boolean; map: Map<number, number> }> {
   const map = new Map<number, number>();
   try {
     const res = await fetch("https://advert-api.wildberries.ru/api/advert/v2/adverts", {
       headers: { Authorization: apiKey },
     });
-    if (!res.ok) return map;
+    if (!res.ok) return { ok: false, map };
     const data = (await res.json()) as { adverts?: { id: number; nm_settings?: { nm_id: number }[] }[] };
     for (const c of data.adverts || []) {
       if (c.nm_settings?.length) {
         map.set(c.id, c.nm_settings[0].nm_id);
       }
     }
-  } catch { /* не критично — упадём на кеш */ }
-  return map;
+    return { ok: true, map };
+  } catch { return { ok: false, map }; }
 }
 
 export async function syncAdvertising(date: string): Promise<SourceStatus> {
@@ -39,7 +39,7 @@ export async function syncAdvertising(date: string): Promise<SourceStatus> {
   if (!apiKey) { s.error = "Нет WB API ключа"; return s; }
 
   try {
-    const [updRes, freshNmMap] = await Promise.all([
+    const [updRes, adverts] = await Promise.all([
       fetch(`https://advert-api.wildberries.ru/adv/v1/upd?from=${date}&to=${date}`, {
         headers: { Authorization: apiKey },
       }),
@@ -54,6 +54,7 @@ export async function syncAdvertising(date: string): Promise<SourceStatus> {
 
     if (total === 0) {
       s.error = "Нет рекламных расходов за эту дату";
+      s.stable = adverts.ok;
       return s;
     }
 
@@ -61,21 +62,19 @@ export async function syncAdvertising(date: string): Promise<SourceStatus> {
     db.pragma("busy_timeout = 5000");
     ensureCampaignNmTable(db);
 
-    // Upsert свежий маппинг в персистентный кеш
     const upsertMap = db.prepare(`
       INSERT INTO campaign_nm_map (campaign_id, nm_id, updated_at) VALUES (?, ?, ?)
       ON CONFLICT(campaign_id) DO UPDATE SET nm_id=excluded.nm_id, updated_at=excluded.updated_at
     `);
     const now = new Date().toISOString();
     db.transaction(() => {
-      for (const [cid, nm] of freshNmMap) upsertMap.run(cid, nm, now);
+      for (const [cid, nm] of adverts.map) upsertMap.run(cid, nm, now);
     })();
 
-    // Читаем кеш (в т.ч. архивные кампании из прошлых синков)
     const cachedRows = db.prepare("SELECT campaign_id, nm_id FROM campaign_nm_map").all() as { campaign_id: number; nm_id: number }[];
     const cachedNmMap = new Map<number, number>(cachedRows.map(r => [r.campaign_id, r.nm_id]));
 
-    const resolveNm = (advertId: number) => freshNmMap.get(advertId) || cachedNmMap.get(advertId) || 0;
+    const resolveNm = (advertId: number) => adverts.map.get(advertId) || cachedNmMap.get(advertId) || 0;
 
     db.prepare("DELETE FROM advertising WHERE date = ?").run(date);
     const ins = db.prepare("INSERT INTO advertising (date, campaign_name, campaign_id, amount, payment_type, nm_id) VALUES (?, ?, ?, ?, ?, ?)");
@@ -88,11 +87,11 @@ export async function syncAdvertising(date: string): Promise<SourceStatus> {
 
     s.ok = true;
     s.value = total;
-    const mappedSum = entries.reduce((sum, e) => sum + (resolveNm(e.advertId || 0) ? (e.updSum || 0) : 0), 0);
-    const mappedRatio = total > 0 ? mappedSum / total : 0;
-    s.stable = mappedRatio >= 0.5;
+    // stable=true если справочник /adverts ответил (даже если пустой).
+    // Отсутствующие кампании = архивные WB, retry не поможет.
+    s.stable = adverts.ok;
     if (!s.stable) {
-      s.error = `Маппинг nm_id: ${(mappedRatio * 100).toFixed(0)}% — повторю на следующем часу`;
+      s.error = "Справочник кампаний /adverts недоступен — повторю на следующем часу";
     }
   } catch (err) {
     s.error = err instanceof Error ? err.message : String(err);
