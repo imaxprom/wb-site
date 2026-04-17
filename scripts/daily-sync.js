@@ -346,7 +346,7 @@ async function retroactiveCheck() {
   const apiKey = getApiKey();
   if (!apiKey) { log("  Retro: нет API ключа, пропуск"); return; }
 
-  const DAYS = 5;
+  const DAYS = 7;
   log(`  Retro check (${DAYS} дней):`);
 
   for (let n = 2; n <= 1 + DAYS; n++) {
