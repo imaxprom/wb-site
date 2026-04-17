@@ -410,8 +410,12 @@ export async function POST(req: NextRequest) {
       updateReviewComplaintStatus(review.id, "pending");
 
       // Запускаем обработку на фоне (не await). Клиент сразу получает 202.
-      // Внутри — вызов Claude (долгий) + отправка на WB + обновление БД.
+      // Внутри — вызов Claude (с retry) + отправка на WB (с retry) + обновление БД.
       (async () => {
+        const MAX_TRIES = 3;
+        const RETRY_DELAY_MS = 15000;
+        const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
         try {
           const config = getComplaintsConfig(account);
           let reasonId = json.reason_id;
@@ -423,14 +427,24 @@ export async function POST(req: NextRequest) {
             const managers = config.managers?.length ? config.managers : [{ name: "Default", style: "" }];
             const manager = managers[Math.floor(Math.random() * managers.length)];
             const previousText = getLastComplaintByManager(account.id, manager.name);
-            const ai = await generateComplaint(review, reasons, {
-              system_prompt: config.system_prompt,
-              user_prompt: config.user_prompt,
-              manager,
-              previousText,
-            });
+
+            // Retry Claude generation: SSH до claude-cli VM бывает flaky
+            let ai = null;
+            let lastError = "";
+            for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
+              ai = await generateComplaint(review, reasons, {
+                system_prompt: config.system_prompt,
+                user_prompt: config.user_prompt,
+                manager,
+                previousText,
+              });
+              if (ai) break;
+              lastError = `attempt ${attempt}/${MAX_TRIES} failed`;
+              console.log(`[complaint ${complaintId}] Claude ${lastError}`);
+              if (attempt < MAX_TRIES) await sleep(RETRY_DELAY_MS);
+            }
             if (!ai) {
-              updateComplaintStatus(complaintId, "error", "AI generation failed");
+              updateComplaintStatus(complaintId, "error", `AI generation failed after ${MAX_TRIES} attempts`);
               updateReviewComplaintStatus(review.id, "error");
               return;
             }
@@ -440,12 +454,22 @@ export async function POST(req: NextRequest) {
             updateComplaintContent(complaintId, reasonId, explanation, managerName);
           }
 
-          const result = await submitComplaintToWB(account, review.wb_review_id!, reasonId, explanation);
-          if (result.ok) {
+          // Retry WB submit: API может вернуть 5xx или timeout
+          let wbResult: { ok: boolean; status: number; body: string } | null = null;
+          for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
+            wbResult = await submitComplaintToWB(account, review.wb_review_id!, reasonId, explanation);
+            if (wbResult.ok) break;
+            // 4xx — клиентская ошибка, retry не поможет; 5xx / timeout — повторяем
+            if (wbResult.status >= 400 && wbResult.status < 500) break;
+            console.log(`[complaint ${complaintId}] WB attempt ${attempt}/${MAX_TRIES}: HTTP ${wbResult.status}`);
+            if (attempt < MAX_TRIES) await sleep(RETRY_DELAY_MS);
+          }
+
+          if (wbResult?.ok) {
             updateComplaintStatus(complaintId, "submitted");
             updateReviewComplaintStatus(review.id, "submitted");
           } else {
-            updateComplaintStatus(complaintId, "error", `HTTP ${result.status}: ${result.body}`);
+            updateComplaintStatus(complaintId, "error", `HTTP ${wbResult?.status}: ${wbResult?.body}`);
             updateReviewComplaintStatus(review.id, "error");
           }
         } catch (err: unknown) {
