@@ -56,15 +56,129 @@ function ensureDirs() {
   }
 }
 
-function loadStatus() {
+// --- State persistence (4 слоя защиты) ---
+
+function validateStatus(s) {
+  if (!s || typeof s !== "object") return false;
+  if (!Array.isArray(s.history)) return false;
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  const todayIso = new Date().toISOString().slice(0, 10);
+  if (s.today) {
+    if (typeof s.today !== "object") return false;
+    const d = s.today.date;
+    if (!d || !dateRe.test(d)) return false;
+    if (d > todayIso) return false; // нет будущих дат
+  }
+  for (const h of s.history) {
+    if (!h || !h.date || !dateRe.test(h.date)) return false;
+  }
+  return true;
+}
+
+function buildEmptySource() {
+  return { ok: false, value: 0, stable: false, prevValue: 0, lastAttempt: "" };
+}
+
+/** Слой 3 fallback: восстановление state из фактических данных БД. */
+function restoreStatusFromDb() {
   try {
-    if (fs.existsSync(STATUS_PATH)) return JSON.parse(fs.readFileSync(STATUS_PATH, "utf-8"));
-  } catch { /* ignore */ }
-  return { today: null, lastRun: null, nextRun: null, running: false, history: [] };
+    if (!fs.existsSync(DB_PATH)) return null;
+    const db = new Database(DB_PATH, { readonly: true });
+    const yd = yesterday();
+
+    const ordRow = db.prepare("SELECT order_sum, order_count, buyout_sum, buyout_count FROM orders_funnel WHERE date = ?").get(yd);
+    const adRow = db.prepare("SELECT COUNT(*) as cnt, COALESCE(SUM(amount), 0) as sum FROM advertising WHERE date = ?").get(yd);
+    const repRow = db.prepare("SELECT COUNT(*) as cnt FROM realization WHERE date_from = ?").get(yd);
+
+    const today = {
+      date: yd,
+      report: { ...buildEmptySource(), ok: (repRow?.cnt || 0) > 0, value: repRow?.cnt || 0, stable: (repRow?.cnt || 0) > 0 },
+      advertising: { ...buildEmptySource(), ok: (adRow?.sum || 0) > 0, value: adRow?.sum || 0, stable: (adRow?.sum || 0) > 0 },
+      orders: { ...buildEmptySource(), ok: (ordRow?.order_sum || 0) > 0, value: ordRow?.order_sum || 0, stable: (ordRow?.order_sum || 0) > 0, prevValue: ordRow?.order_sum || 0 },
+      complete: false,
+    };
+    today.complete = today.report.ok && today.advertising.ok && today.advertising.stable && today.orders.ok && today.orders.stable;
+
+    // История: 30 дней из orders_funnel
+    const histDates = db.prepare(`
+      SELECT date FROM orders_funnel
+      WHERE date >= date('now', '-30 days')
+      ORDER BY date DESC
+      LIMIT 30
+    `).all();
+
+    const history = histDates.map((r) => {
+      const d = r.date;
+      const o = db.prepare("SELECT order_sum FROM orders_funnel WHERE date = ?").get(d);
+      const a = db.prepare("SELECT COALESCE(SUM(amount), 0) as s FROM advertising WHERE date = ?").get(d);
+      const rr = db.prepare("SELECT COUNT(*) as c FROM realization WHERE date_from = ?").get(d);
+      return {
+        date: d,
+        report: { ...buildEmptySource(), ok: (rr?.c || 0) > 0, value: rr?.c || 0, stable: true },
+        advertising: { ...buildEmptySource(), ok: (a?.s || 0) > 0, value: a?.s || 0, stable: true },
+        orders: { ...buildEmptySource(), ok: (o?.order_sum || 0) > 0, value: o?.order_sum || 0, stable: true },
+        complete: true, // прошедшие дни считаем финальными
+      };
+    });
+
+    db.close();
+    return { today, lastRun: null, nextRun: null, running: false, history };
+  } catch (err) {
+    log(`restoreStatusFromDb error: ${err.message || err}`);
+    return null;
+  }
+}
+
+function loadStatus() {
+  const emptyStatus = { today: null, lastRun: null, nextRun: null, running: false, history: [] };
+
+  // Слой 3: пробуем основной файл
+  if (fs.existsSync(STATUS_PATH)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(STATUS_PATH, "utf-8"));
+      if (validateStatus(parsed)) return parsed;
+      log("state.json не прошёл валидацию, пробую .bak");
+    } catch (e) {
+      log(`state.json битый (${e.message || e}), пробую .bak`);
+    }
+  }
+
+  // Слой 1: пробуем бэкап
+  const bakPath = STATUS_PATH + ".bak";
+  if (fs.existsSync(bakPath)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(bakPath, "utf-8"));
+      if (validateStatus(parsed)) {
+        log("state восстановлен из .bak");
+        return parsed;
+      }
+    } catch (e) {
+      log(`.bak тоже битый (${e.message || e})`);
+    }
+  }
+
+  // Слой 3: последний шанс — восстановление из БД
+  log("state файлов нет/битые — восстанавливаю из БД");
+  const restored = restoreStatusFromDb();
+  if (restored && validateStatus(restored)) {
+    log("state построен из БД");
+    return restored;
+  }
+
+  // Полный fail — пустое состояние, sync начнёт с нуля
+  log("DB-restore не удалось, стартую с пустого state");
+  return emptyStatus;
 }
 
 function saveStatus(status) {
-  fs.writeFileSync(STATUS_PATH, JSON.stringify(status, null, 2));
+  // Слой 1: бэкап текущего файла
+  if (fs.existsSync(STATUS_PATH)) {
+    try { fs.copyFileSync(STATUS_PATH, STATUS_PATH + ".bak"); } catch { /* не критично */ }
+  }
+  // Слой 2: атомарная запись — tmp → rename
+  const tmpPath = STATUS_PATH + ".tmp";
+  fs.writeFileSync(tmpPath, JSON.stringify(status, null, 2));
+  fs.renameSync(tmpPath, STATUS_PATH);
 }
 
 // --- Source 1: Realization report ---
