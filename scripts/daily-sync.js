@@ -248,14 +248,47 @@ async function syncReport(date) {
     if (dateReports.length === 0) { result.error = `Отчёт за ${date} ещё не сформирован`; return result; }
 
     const db = new Database(DB_PATH);
+    // Метатаблица для dedup по createDate: если WB пересгенерил отчёт с тем же id,
+    // createDate обновляется → мы перезагружаем; если не менялось — skip.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS realization_report_meta (
+        report_id INTEGER PRIMARY KEY,
+        create_date TEXT,
+        details_count INTEGER,
+        imported_at TEXT NOT NULL
+      )
+    `);
     const XLSX = require("xlsx");
     const AdmZip = require("adm-zip");
     let totalRows = 0;
 
     for (const report of dateReports) {
-      // Skip if already imported
-      const existing = db.prepare("SELECT COUNT(*) as cnt FROM realization WHERE realizationreport_id = ?").get(report.id);
-      if (existing.cnt > 0) { totalRows += existing.cnt; continue; }
+      // Dedup: сравниваем createDate и detailsCount из списка /reports с meta в БД.
+      const existingMeta = db.prepare("SELECT create_date, details_count FROM realization_report_meta WHERE report_id = ?").get(report.id);
+      const existingRows = db.prepare("SELECT COUNT(*) as cnt FROM realization WHERE realizationreport_id = ?").get(report.id);
+
+      // Если есть meta и createDate совпадает — отчёт не менялся, skip.
+      if (existingMeta
+        && existingMeta.create_date === report.createDate
+        && existingRows.cnt > 0) {
+        totalRows += existingRows.cnt;
+        continue;
+      }
+
+      // Если meta нет, но строки есть (legacy — отчёт импортирован до Блока 5),
+      // записываем meta без повторного скачивания (первый sync после деплоя).
+      if (!existingMeta && existingRows.cnt > 0) {
+        db.prepare("INSERT INTO realization_report_meta (report_id, create_date, details_count, imported_at) VALUES (?, ?, ?, ?)")
+          .run(report.id, report.createDate || "", report.detailsCount || existingRows.cnt, new Date().toISOString());
+        totalRows += existingRows.cnt;
+        continue;
+      }
+
+      // Отчёт регенерирован (createDate отличается) — удаляем старые строки перед re-import
+      if (existingRows.cnt > 0) {
+        log(`  Report ${report.id} regenerated (${existingMeta?.create_date} → ${report.createDate}), re-importing`);
+        db.prepare("DELETE FROM realization WHERE realizationreport_id = ?").run(report.id);
+      }
 
       // Download
       const dlRes = await fetch(`https://seller-services.wildberries.ru/ns/reports/seller-wb-balance/api/v1/reports/${report.id}/details/archived-excel?format=binary`, { headers: hdrs });
@@ -298,6 +331,16 @@ async function syncReport(date) {
           stmt.run(...values);
         }
       })();
+
+      // Upsert meta с текущим createDate
+      db.prepare(`
+        INSERT INTO realization_report_meta (report_id, create_date, details_count, imported_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(report_id) DO UPDATE SET
+          create_date = excluded.create_date,
+          details_count = excluded.details_count,
+          imported_at = excluded.imported_at
+      `).run(report.id, report.createDate || "", report.detailsCount || rows.length, new Date().toISOString());
 
       totalRows += rows.length;
       try { fs.unlinkSync(zipPath); } catch {}
@@ -462,6 +505,79 @@ async function syncOrders(date, prevValue) {
   return result;
 }
 
+/**
+ * Bootstrap: при первом запуске после деплоя Блока 5 заполняем meta-таблицу
+ * из существующих отчётов в realization. Сопоставляем report_id с ответом /reports
+ * и записываем createDate без повторного скачивания.
+ */
+async function bootstrapReportMeta() {
+  try {
+    if (!fs.existsSync(TOKENS_PATH)) return;
+    const tokens = JSON.parse(fs.readFileSync(TOKENS_PATH, "utf-8"));
+    if (!tokens.authorizev3 || !tokens.cookies) return;
+
+    const db = new Database(DB_PATH);
+    const metaCount = db.prepare("SELECT COUNT(*) as cnt FROM realization_report_meta").get();
+    const existingReports = db.prepare(
+      "SELECT DISTINCT realizationreport_id FROM realization WHERE realizationreport_id > 0"
+    ).all().map(r => r.realizationreport_id);
+
+    if (existingReports.length === 0 || metaCount.cnt >= existingReports.length) {
+      db.close();
+      return;
+    }
+
+    log(`  Bootstrap meta: ${existingReports.length} отчётов в БД, ${metaCount.cnt} в meta — заполняю`);
+
+    const refreshRes = await fetch(
+      "https://seller.wildberries.ru/ns/suppliers-auth/suppliers-portal-core/auth/token",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", authorizev3: tokens.authorizev3, cookie: tokens.cookies, origin: "https://seller.wildberries.ru", referer: "https://seller.wildberries.ru/" },
+        body: JSON.stringify({ params: {}, jsonrpc: "2.0", id: "json-rpc_1" }),
+      }
+    );
+    if (!refreshRes.ok) { db.close(); return; }
+    const sellerLk = (await refreshRes.json()).result?.data?.token;
+    if (!sellerLk) { db.close(); return; }
+
+    // Получаем метаданные для 50 последних отчётов
+    const listRes = await fetch(
+      "https://seller-services.wildberries.ru/ns/reports/seller-wb-balance/api/v1/reports?limit=50&skip=0&type=6",
+      { headers: { authorizev3: tokens.authorizev3, "wb-seller-lk": sellerLk, cookie: tokens.cookies } }
+    );
+    if (!listRes.ok) { db.close(); return; }
+    const apiReports = (await listRes.json()).data?.reports || [];
+    const apiMap = new Map(apiReports.map(r => [r.id, r]));
+
+    const now = new Date().toISOString();
+    const insertMeta = db.prepare(`
+      INSERT INTO realization_report_meta (report_id, create_date, details_count, imported_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(report_id) DO NOTHING
+    `);
+
+    let seeded = 0;
+    db.transaction(() => {
+      for (const rid of existingReports) {
+        const apiRep = apiMap.get(rid);
+        if (apiRep) {
+          insertMeta.run(rid, apiRep.createDate || "", apiRep.detailsCount || 0, now);
+          seeded++;
+        } else {
+          // Отчёта нет в последних 50 — ставим пустой createDate.
+          // При следующем появлении в API будет сравнение "" != новый → переимпорт (но отчёт старый, в API его нет → скип естественным образом).
+          insertMeta.run(rid, "", 0, now);
+        }
+      }
+    })();
+    db.close();
+    log(`  Bootstrap meta done: ${seeded}/${existingReports.length} с createDate из API`);
+  } catch (err) {
+    log(`  Bootstrap meta error: ${err.message}`);
+  }
+}
+
 // --- Retroactive check: перепроверяем последние 5 дней на изменения в WB ---
 
 function dateNDaysAgo(n) {
@@ -599,17 +715,7 @@ async function syncWeeklyReport() {
   const dateFrom = fmtDate(lastMonday);
   const dateTo = fmtDate(lastSunday);
 
-  // Check if already loaded for this period
   const db = new Database(DB_PATH);
-  const existing = db.prepare(
-    "SELECT COUNT(*) as cnt FROM realization WHERE source = 'weekly_final' AND sale_dt >= ? AND sale_dt <= ?"
-  ).get(dateFrom, dateTo);
-  if (existing.cnt > 0) {
-    log(`  Weekly ${dateFrom}—${dateTo}: already loaded (${existing.cnt} rows), skipping`);
-    db.close();
-    return;
-  }
-
   log(`  Weekly report ${dateFrom} — ${dateTo}...`);
 
   try {
@@ -638,6 +744,23 @@ async function syncWeeklyReport() {
       log(`  Weekly: отчёт за ${dateFrom}—${dateTo} пуст или ещё не готов`);
       db.close();
       return;
+    }
+
+    // Dedup по содержимому: сравниваем суммы quantity и кол-во строк.
+    // Ключ — date_from/date_to (границы отчёта), а не sale_dt, т.к. еженедельный
+    // отчёт может содержать корректировки с sale_dt вне периода.
+    const apiQtySum = allRows.reduce((s, r) => s + (r.quantity || 0), 0);
+    const existing = db.prepare(
+      "SELECT COUNT(*) as cnt, COALESCE(SUM(quantity), 0) as qty_sum FROM realization WHERE source = 'weekly_final' AND date_from = ? AND date_to = ?"
+    ).get(dateFrom, dateTo);
+    if (existing.cnt === allRows.length && existing.qty_sum === apiQtySum) {
+      log(`  Weekly ${dateFrom}—${dateTo}: содержимое совпадает (${existing.cnt} строк, qty=${apiQtySum}), skip`);
+      db.close();
+      return;
+    }
+    if (existing.cnt > 0) {
+      log(`  Weekly ${dateFrom}—${dateTo}: данные изменились (было ${existing.cnt}/${existing.qty_sum}, стало ${allRows.length}/${apiQtySum}), переимпорт`);
+      db.prepare("DELETE FROM realization WHERE source = 'weekly_final' AND date_from = ? AND date_to = ?").run(dateFrom, dateTo);
     }
 
     // НЕ удаляем daily — оставляем для сверки на вкладке «Сверка»
@@ -701,6 +824,20 @@ async function main() {
   }
 
   ensureDirs();
+  // Инициализация schema: meta-таблица для dedup отчётов (Блок 5)
+  try {
+    const db = new Database(DB_PATH);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS realization_report_meta (
+        report_id INTEGER PRIMARY KEY,
+        create_date TEXT,
+        details_count INTEGER,
+        imported_at TEXT NOT NULL
+      )
+    `);
+    db.close();
+  } catch { /* БД ещё не существует — ок, создастся позже */ }
+
   const date = yesterday();
   const status = loadStatus();
 
@@ -715,6 +852,10 @@ async function main() {
       complete: false,
     };
   }
+
+  // One-off bootstrap: заполняем realization_report_meta из API для уже
+  // импортированных отчётов (нужно только при первом запуске после деплоя).
+  await bootstrapReportMeta();
 
   // Always check weekly report (even if daily is complete)
   log("  Weekly report check...");

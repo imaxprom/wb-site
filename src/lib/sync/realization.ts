@@ -64,6 +64,14 @@ export async function syncReport(date: string): Promise<SourceStatus> {
 
     const db = new Database(DB_PATH);
     db.pragma("busy_timeout = 5000");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS realization_report_meta (
+        report_id INTEGER PRIMARY KEY,
+        create_date TEXT,
+        details_count INTEGER,
+        imported_at TEXT NOT NULL
+      )
+    `);
     let totalRows = 0;
     const XLSX = await import("xlsx");
 
@@ -71,9 +79,28 @@ export async function syncReport(date: string): Promise<SourceStatus> {
     const extractDir = path.join(reportsDir, "extracted");
     fs.mkdirSync(extractDir, { recursive: true });
 
-    for (const report of dateReports) {
-      const existing = db.prepare("SELECT COUNT(*) as cnt FROM realization WHERE realizationreport_id = ?").get(report.id) as { cnt: number };
-      if (existing.cnt > 0) { totalRows += existing.cnt; continue; }
+    for (const report of dateReports as { id: number; dateFrom: string; dateTo: string; type: number; createDate?: string; detailsCount?: number }[]) {
+      const existingMeta = db.prepare("SELECT create_date, details_count FROM realization_report_meta WHERE report_id = ?").get(report.id) as { create_date: string; details_count: number } | undefined;
+      const existingRows = db.prepare("SELECT COUNT(*) as cnt FROM realization WHERE realizationreport_id = ?").get(report.id) as { cnt: number };
+
+      if (existingMeta
+        && existingMeta.create_date === (report.createDate || "")
+        && existingRows.cnt > 0) {
+        totalRows += existingRows.cnt;
+        continue;
+      }
+
+      if (!existingMeta && existingRows.cnt > 0) {
+        db.prepare("INSERT INTO realization_report_meta (report_id, create_date, details_count, imported_at) VALUES (?, ?, ?, ?)")
+          .run(report.id, report.createDate || "", report.detailsCount || existingRows.cnt, new Date().toISOString());
+        totalRows += existingRows.cnt;
+        continue;
+      }
+
+      if (existingRows.cnt > 0) {
+        console.log(`[sync/realization] Report ${report.id} regenerated, re-importing`);
+        db.prepare("DELETE FROM realization WHERE realizationreport_id = ?").run(report.id);
+      }
 
       const dlRes = await fetch(
         `https://seller-services.wildberries.ru/ns/reports/seller-wb-balance/api/v1/reports/${report.id}/details/archived-excel?format=binary`,
@@ -153,6 +180,15 @@ export async function syncReport(date: string): Promise<SourceStatus> {
           stmt.run(...values);
         }
       })();
+
+      db.prepare(`
+        INSERT INTO realization_report_meta (report_id, create_date, details_count, imported_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(report_id) DO UPDATE SET
+          create_date = excluded.create_date,
+          details_count = excluded.details_count,
+          imported_at = excluded.imported_at
+      `).run(report.id, report.createDate || "", report.detailsCount || rows.length, new Date().toISOString());
 
       totalRows += rows.length;
       try { fs.unlinkSync(zipPath); } catch { /* */ }
