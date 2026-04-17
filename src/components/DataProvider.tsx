@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useReducer, useEffect, useCallback } from "react";
-import type { StockItem, OrderRecord, Product, ProductOverrides } from "@/types";
+import type { StockItem, OrderRecord, OrderAggregates, Product, ProductOverrides } from "@/types";
 import type { AppSettings } from "@/types";
 import { getDefaultRegions, getDefaultRegionGroups } from "@/modules/shipment/lib/engine";
 
@@ -10,6 +10,7 @@ import { getDefaultRegions, getDefaultRegionGroups } from "@/modules/shipment/li
 interface DataState {
   stock: StockItem[];
   orders: OrderRecord[];
+  orderAggregates: OrderAggregates | null;
   products: Product[];
   uploadDate: string | null;
   settings: AppSettings;
@@ -20,6 +21,7 @@ interface DataState {
 const INITIAL_STATE: DataState = {
   stock: [],
   orders: [],
+  orderAggregates: null,
   products: [],
   uploadDate: null,
   settings: { buyoutRate: 0.75, regions: getDefaultRegions(), regionGroups: getDefaultRegionGroups(), buyoutMode: "auto", regionMode: "auto" },
@@ -31,7 +33,7 @@ const INITIAL_STATE: DataState = {
 
 type DataAction =
   | { type: "INIT"; data: Omit<DataState, "isLoaded"> }
-  | { type: "SET_DATA"; stock: StockItem[]; orders: OrderRecord[]; products: Product[]; uploadDate: string }
+  | { type: "SET_DATA"; stock: StockItem[]; orders: OrderRecord[]; orderAggregates: OrderAggregates | null; products: Product[]; uploadDate: string }
   | { type: "UPDATE_OVERRIDE"; articleWB: string; customName?: string; barcode?: string; perBox?: number; disabled?: boolean }
   | { type: "UPDATE_SETTINGS"; settings: Partial<AppSettings> }
   | { type: "CLEAR" };
@@ -46,6 +48,7 @@ function dataReducer(state: DataState, action: DataAction): DataState {
         ...state,
         stock: action.stock,
         orders: action.orders,
+        orderAggregates: action.orderAggregates,
         products: action.products,
         uploadDate: action.uploadDate,
       };
@@ -79,6 +82,7 @@ function dataReducer(state: DataState, action: DataAction): DataState {
         ...state,
         stock: [],
         orders: [],
+        orderAggregates: null,
         products: [],
         uploadDate: null,
         // ВАЖНО: overrides НЕ сбрасываются!
@@ -94,6 +98,7 @@ function dataReducer(state: DataState, action: DataAction): DataState {
 interface DataContextType {
   stock: StockItem[];
   orders: OrderRecord[];
+  orderAggregates: OrderAggregates | null;
   products: Product[];
   uploadDate: string | null;
   settings: AppSettings;
@@ -132,15 +137,17 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    const [ordersRes, stockRes, productsRes, metaRes] = await Promise.all([
+    const [ordersRes, aggRes, stockRes, productsRes, metaRes] = await Promise.all([
       fetch(`/api/data/orders?days=${days}`),
+      fetch(`/api/data/orders-aggregated?days=${days}`),
       fetch("/api/data/stock"),
       fetch("/api/data/products"),
       fetch("/api/data/meta"),
     ]);
 
-    const [orders, stock, products, meta] = await Promise.all([
+    const [orders, orderAggregates, stock, products, meta] = await Promise.all([
       ordersRes.ok ? (ordersRes.json() as Promise<OrderRecord[]>) : Promise.resolve([]),
+      aggRes.ok ? (aggRes.json() as Promise<OrderAggregates>) : Promise.resolve(null),
       stockRes.ok ? (stockRes.json() as Promise<StockItem[]>) : Promise.resolve([]),
       productsRes.ok ? (productsRes.json() as Promise<Product[]>) : Promise.resolve([]),
       metaRes.ok ? (metaRes.json() as Promise<{ uploadDate: string | null }>) : Promise.resolve({ uploadDate: null }),
@@ -150,6 +157,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       type: "SET_DATA",
       stock,
       orders,
+      orderAggregates,
       products,
       uploadDate: meta.uploadDate || new Date().toISOString(),
     });
@@ -251,8 +259,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       try {
         const days = [28, 35, 42, 49, 56].includes(uploadDays) ? uploadDays : 28;
 
-        const [ordersRes2, stockRes, productsRes, metaRes] = await Promise.all([
+        const [ordersRes2, aggRes, stockRes, productsRes, metaRes] = await Promise.all([
           fetch(`/api/data/orders?days=${days}`),
+          fetch(`/api/data/orders-aggregated?days=${days}`),
           fetch("/api/data/stock"),
           fetch("/api/data/products"),
           fetch("/api/data/meta"),
@@ -260,8 +269,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
         if (cancelled) return;
 
-        const [orders, stock, products, meta] = await Promise.all([
+        const [orders, orderAggregates, stock, products, meta] = await Promise.all([
           ordersRes2.ok ? (ordersRes2.json() as Promise<OrderRecord[]>) : Promise.resolve([]),
+          aggRes.ok ? (aggRes.json() as Promise<OrderAggregates>) : Promise.resolve(null),
           stockRes.ok ? (stockRes.json() as Promise<StockItem[]>) : Promise.resolve([]),
           productsRes.ok ? (productsRes.json() as Promise<Product[]>) : Promise.resolve([]),
           metaRes.ok ? (metaRes.json() as Promise<{ uploadDate: string | null }>) : Promise.resolve({ uploadDate: null }),
@@ -275,6 +285,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           data: {
             stock,
             orders,
+            orderAggregates,
             products,
             uploadDate: meta.uploadDate || "",
             settings,
@@ -288,6 +299,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           data: {
             stock: [],
             orders: [],
+            orderAggregates: null,
             products: [],
             uploadDate: null,
             settings,
@@ -363,6 +375,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       value={{
         stock: state.stock,
         orders: state.orders,
+        orderAggregates: state.orderAggregates,
         products: state.products,
         uploadDate: state.uploadDate,
         settings: state.settings,

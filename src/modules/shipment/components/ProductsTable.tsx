@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { useData } from "@/components/DataProvider";
 import { ProductRow } from "./ProductRow";
 import type { Product } from "@/types";
@@ -17,7 +18,19 @@ export function ProductsTable({
   onToggleExpand,
   className = "",
 }: ProductsTableProps) {
-  const { stock, orders } = useData();
+  const { stock, orderAggregates } = useData();
+
+  // articleWB → non-cancelled order count (из агрегатов, один проход)
+  const orderCountsByArticleWB = React.useMemo(() => {
+    const m = new Map<string, number>();
+    if (orderAggregates) {
+      for (const b of Object.values(orderAggregates.perBarcode)) {
+        const key = String(b.articleWB);
+        m.set(key, (m.get(key) || 0) + (b.totalOrders - b.cancelledOrders));
+      }
+    }
+    return m;
+  }, [orderAggregates]);
 
   return (
     <div className={`bg-[var(--bg-card)] rounded-xl border border-[var(--border)] overflow-x-auto ${className}`}>
@@ -52,10 +65,7 @@ export function ProductsTable({
               (s, i) => s + i.totalOnWarehouses,
               0
             );
-            const productOrders = orders.filter(
-              (o) => String(o.articleWB) === product.articleWB
-            );
-            const orderCount = productOrders.filter((o) => !o.isCancel).length;
+            const orderCount = orderCountsByArticleWB.get(product.articleWB) || 0;
 
             return (
               <ProductRow

@@ -8,7 +8,7 @@ import { useBuyoutRates } from "@/modules/shipment/lib/use-effective-buyout";
 import type { RegionGroup } from "@/types";
 
 export default function ShipmentSettings() {
-  const { settings, orders, updateSettings } = useData();
+  const { settings, orderAggregates, updateSettings } = useData();
   // WB warehouse → federal district map (from /api/v1/tariffs/box)
   const [whToDistrict, setWhToDistrict] = useState<Record<string, string>>({});
 
@@ -79,72 +79,77 @@ export default function ShipmentSettings() {
 
   // Auto percentages preview
   const autoConfigs = useMemo(() => {
-    return toRegionConfigs(groups, "auto", orders);
-  }, [groups, orders]);
+    return toRegionConfigs(groups, "auto", orderAggregates);
+  }, [groups, orderAggregates]);
 
   // Все заказы (включая отмены) — отменённый заказ = потребность со склада
-  const allOrders = orders;
-  const nonCancelledOrders = allOrders; // legacy name for compatibility
-  const totalAutoOrders = allOrders.length;
+  const totalAutoOrders = orderAggregates?.totalOrders ?? 0;
 
   // Per-district order counts (for info display)
   const districtCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const d of ALL_DISTRICTS) counts[d] = 0;
-    for (const o of nonCancelledOrders) {
-      if (counts[o.federalDistrict] !== undefined) {
-        counts[o.federalDistrict]++;
+    if (orderAggregates) {
+      for (const d of ALL_DISTRICTS) {
+        counts[d] = orderAggregates.perDistrict[d] || 0;
       }
     }
     return counts;
-  }, [nonCancelledOrders]);
+  }, [orderAggregates]);
 
   // Per-article buyout rates from realization (sales − returns)
   const buyoutRates = useBuyoutRates();
 
   // CIS orders (no federal district) — distributed by warehouse
   const cisOrderCount = useMemo(() => {
-    return nonCancelledOrders.filter((o) => !o.federalDistrict || o.federalDistrict === "").length;
-  }, [nonCancelledOrders]);
+    if (!orderAggregates) return 0;
+    return orderAggregates.perWarehouseRegion
+      .filter((w) => !w.federalDistrict)
+      .reduce((s, w) => s + w.count, 0);
+  }, [orderAggregates]);
 
   // Per-group Russian region counts: groupId → Map<regionName, count> (orders with federalDistrict)
   const ruRegionsByGroup = useMemo(() => {
     const result: Record<string, Map<string, number>> = {};
-    for (const o of nonCancelledOrders) {
-      if (!o.federalDistrict) continue;
-      // Find group via district
-      const group = groups.find((g) => g.districts.includes(o.federalDistrict));
+    if (!orderAggregates) return result;
+    for (const entry of orderAggregates.perWarehouseRegion) {
+      if (!entry.federalDistrict) continue;
+      const group = groups.find((g) => g.districts.includes(entry.federalDistrict));
       if (!group) continue;
-      const region = (o.region || "").trim();
+      const region = (entry.region || "").trim();
       if (!region) continue;
       if (!result[group.id]) result[group.id] = new Map();
-      result[group.id].set(region, (result[group.id].get(region) || 0) + 1);
+      result[group.id].set(region, (result[group.id].get(region) || 0) + entry.count);
     }
     return result;
-  }, [nonCancelledOrders, groups]);
+  }, [orderAggregates, groups]);
 
   const totalRuOrders = useMemo(() => {
-    return nonCancelledOrders.filter((o) => o.federalDistrict && o.federalDistrict !== "").length;
-  }, [nonCancelledOrders]);
+    if (!orderAggregates) return 0;
+    return orderAggregates.perWarehouseRegion
+      .filter((w) => w.federalDistrict)
+      .reduce((s, w) => s + w.count, 0);
+  }, [orderAggregates]);
 
   // Per-group CIS region counts: groupId → Map<regionName, count>
   const cisRegionsByGroup = useMemo(() => {
     const result: Record<string, Map<string, number>> = {};
+    if (!orderAggregates) return result;
     const whToGroup = new Map<string, string>();
     for (const g of groups) {
       for (const wh of g.warehouses) whToGroup.set(wh, g.id);
     }
-    for (const o of nonCancelledOrders) {
-      if (o.federalDistrict && o.federalDistrict !== "") continue;
-      const gid = whToGroup.get(o.warehouse);
+    for (const entry of orderAggregates.perWarehouseRegion) {
+      if (entry.federalDistrict) continue;
+      const gid = whToGroup.get(entry.warehouse);
       if (!gid) continue;
-      const region = (o.region || "").trim();
+      const region = (entry.region || "").trim();
       if (!region) continue;
       if (!result[gid]) result[gid] = new Map();
-      result[gid].set(region, (result[gid].get(region) || 0) + 1);
+      result[gid].set(region, (result[gid].get(region) || 0) + entry.count);
     }
     return result;
-  }, [nonCancelledOrders, groups]);
+  }, [orderAggregates, groups]);
 
   // Unassigned districts
   // district → group name (used by DistrictPicker to disable already-assigned districts)
@@ -171,7 +176,7 @@ export default function ShipmentSettings() {
     });
     updateSettings({
       buyoutRate: buyoutRate / 100,
-      regions: toRegionConfigs(normalized, regionMode, orders),
+      regions: toRegionConfigs(normalized, regionMode, orderAggregates),
       regionGroups: normalized,
       regionMode,
       buyoutMode,
@@ -463,11 +468,12 @@ export default function ShipmentSettings() {
           {groups.map((group) => {
             const autoConfig = autoConfigs.find((c) => c.id === group.id);
             const autoPercent = autoConfig ? (autoConfig.percentage * 100).toFixed(1) : "0.0";
-            const autoOrders = autoConfig
-              ? nonCancelledOrders.filter((o) => {
-                  if (o.federalDistrict) return group.districts.includes(o.federalDistrict);
-                  return group.warehouses.includes(o.warehouse);
-                }).length
+            const autoOrders = autoConfig && orderAggregates
+              ? orderAggregates.perWarehouseRegion.reduce((s, e) => {
+                  if (e.federalDistrict && group.districts.includes(e.federalDistrict)) return s + e.count;
+                  if (!e.federalDistrict && group.warehouses.includes(e.warehouse)) return s + e.count;
+                  return s;
+                }, 0)
               : 0;
 
             const ruRegions = ruRegionsByGroup[group.id];

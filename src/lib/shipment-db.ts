@@ -12,7 +12,7 @@ const DB_PATH = path.join(process.cwd(), "data", "finance.db");
 
 let db: Database.Database | null = null;
 
-function getDb(): Database.Database {
+export function getDb(): Database.Database {
   if (!db) {
     db = new Database(DB_PATH, { readonly: false });
     db.pragma("busy_timeout = 5000");

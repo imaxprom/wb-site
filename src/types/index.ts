@@ -74,6 +74,42 @@ export interface OrderRecord {
   cancelDate: string;
 }
 
+/** Pre-aggregated orders for client consumption (replaces sending 30k+ OrderRecord). */
+export interface OrderAggregates {
+  loadedDays: number;
+  dateFrom: string;              // YYYY-MM-DD (inclusive)
+  dateTo: string;                // YYYY-MM-DD (exclusive — "today", не учитываем)
+  totalOrders: number;           // включая отмены
+  totalNonCancelled: number;
+
+  // Per-barcode: total count + cancels + weekly bucket
+  perBarcode: Record<string, {
+    barcode: string;
+    articleWB: string;
+    size: string;
+    articleSeller: string;
+    totalOrders: number;          // включая отмены
+    cancelledOrders: number;
+    weekly: {
+      week: number;               // 1-based
+      label: string;              // "Нед. 1"
+      orders: number;              // количество заказов (включая отмены — так же считает getWeeklyOrders)
+      dateRange: string;          // "DD.MM – DD.MM"
+    }[];
+  }>;
+
+  // Per-district: для auto-процентов регионов (только не отменённые)
+  perDistrict: Record<string, number>;
+
+  // warehouse × district × region: детализация для РФ/СНГ разбивки (не отменённые)
+  perWarehouseRegion: {
+    warehouse: string;
+    federalDistrict: string;      // "" если СНГ/вне РФ
+    region: string;
+    count: number;
+  }[];
+}
+
 export interface ShipmentRow {
   size: string;
   barcode: string;

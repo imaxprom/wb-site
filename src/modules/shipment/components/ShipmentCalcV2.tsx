@@ -5,12 +5,12 @@ import { useData } from "@/components/DataProvider";
 import { calculateShipmentV2, calculateDeficit, type ShipmentCalculationV2 } from "@/modules/shipment/lib/engine";
 import { formatNumber } from "@/lib/utils";
 import { useEffectiveRegions } from "@/modules/shipment/lib/use-effective-regions";
-import { calculateTrend } from "@/lib/trend-engine";
+import { calculateTrend } from "@/modules/shipment/lib/trend-engine";
 import { useEffectiveBuyout } from "@/modules/shipment/lib/use-effective-buyout";
 import { exportShipmentExcelSummary } from "@/lib/export-excel-summary";
 import type { Product } from "@/types";
 import { WarehouseBreakdown } from "./WarehouseBreakdown";
-import type { TrendResult } from "@/lib/trend-engine";
+import type { TrendResult } from "@/modules/shipment/lib/trend-engine";
 import { InfoTip } from "@/components/Tooltip";
 import { packItems, unitVolumeLiters, type PackingItem, type BoxConfig } from "@/lib/packing-engine";
 import { PackingSummaryTable, aggregatePackingByRegion, type SummaryArticle } from "./PackingSummaryTable";
@@ -128,7 +128,7 @@ function WeeklyChart({ trend }: { trend: TrendResult }) {
 // ─── Main Component ─────────────────────────────────────────
 
 export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "v1" | "v2" }) {
-  const { stock, orders, products, settings, overrides, updateSettings, isLoaded } = useData();
+  const { stock, orderAggregates, products, settings, overrides, updateSettings, isLoaded } = useData();
   const effectiveRegions = useEffectiveRegions();
   const getBuyout = useEffectiveBuyout();
   const [selectedArticles, setSelectedArticles] = useState<Set<string>>(new Set());
@@ -153,10 +153,11 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
       stockTotals.set(s.articleWB, (stockTotals.get(s.articleWB) || 0) + s.totalOnWarehouses);
     }
     const orderTotalsMap = new Map<string, number>();
-    for (const o of orders) {
-      if (!o.isCancel) {
-        const key = String(o.articleWB);
-        orderTotalsMap.set(key, (orderTotalsMap.get(key) || 0) + 1);
+    if (orderAggregates) {
+      for (const b of Object.values(orderAggregates.perBarcode)) {
+        const key = String(b.articleWB);
+        const nonCancelled = b.totalOrders - b.cancelledOrders;
+        orderTotalsMap.set(key, (orderTotalsMap.get(key) || 0) + nonCancelled);
       }
     }
     let sorted = [...products].sort((a, b) => (stockTotals.get(b.articleWB) || 0) - (stockTotals.get(a.articleWB) || 0));
@@ -164,7 +165,7 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
       sorted = sorted.filter((p) => (stockTotals.get(p.articleWB) || 0) > 0 || (orderTotalsMap.get(p.articleWB) || 0) > 0);
     }
     return { sortedProducts: sorted, orderTotals: orderTotalsMap };
-  }, [products, stock, orders, hideInactive]);
+  }, [products, stock, orderAggregates, hideInactive]);
 
   // Auto-select all products on first load
   React.useEffect(() => {
@@ -191,14 +192,14 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
   const allCalculations = useMemo(() => {
     if (!activeProducts.length || !stock.length) return [];
     return activeProducts.map((p) =>
-      calculateShipmentV2(p, stock, orders, getBuyout(p.articleWB), effectiveRegions, overrides[p.articleWB], uploadDays)
+      calculateShipmentV2(p, stock, orderAggregates, getBuyout(p.articleWB), effectiveRegions, overrides[p.articleWB], uploadDays)
     );
-  }, [activeProducts, stock, orders, effectiveRegions, overrides, getBuyout, uploadDays]);
+  }, [activeProducts, stock, orderAggregates, effectiveRegions, overrides, getBuyout, uploadDays]);
 
   const singleCalc: ShipmentCalculationV2 | null = useMemo(() => {
     if (isAllMode || !product || stock.length === 0) return null;
-    return calculateShipmentV2(product, stock, orders, getBuyout(product.articleWB), effectiveRegions, overrides[product.articleWB], uploadDays);
-  }, [product, isAllMode, stock, orders, effectiveRegions, overrides, getBuyout, uploadDays]);
+    return calculateShipmentV2(product, stock, orderAggregates, getBuyout(product.articleWB), effectiveRegions, overrides[product.articleWB], uploadDays);
+  }, [product, isAllMode, stock, orderAggregates, effectiveRegions, overrides, getBuyout, uploadDays]);
 
   // Merged rows and trend for "all" mode
   const { effectiveRows, effectiveRowsV1, effectiveTrend, effectiveRegionConfigs } = useMemo(() => {

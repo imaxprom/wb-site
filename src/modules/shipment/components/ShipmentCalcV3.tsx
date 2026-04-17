@@ -9,7 +9,7 @@ import { formatNumber } from "@/lib/utils";
 import { useEffectiveRegions } from "@/modules/shipment/lib/use-effective-regions";
 import { useEffectiveBuyout } from "@/modules/shipment/lib/use-effective-buyout";
 import { InfoTip } from "@/components/Tooltip";
-import { calculateTrend, type TrendResult } from "@/lib/trend-engine";
+import { calculateTrend, type TrendResult } from "@/modules/shipment/lib/trend-engine";
 import type { ShipmentRowExtended } from "@/types";
 import { ArticleMultiSelect } from "./ArticleMultiSelect";
 
@@ -452,7 +452,7 @@ function TrendBadge({ trend, v2Need, v3Total }: { trend: TrendResult; v2Need?: n
 // ─── Main Component ─────────────────────────────────────────
 
 export default function ShipmentCalcV3() {
-  const { stock, orders, products, settings, overrides, updateSettings, isLoaded } = useData();
+  const { stock, orderAggregates, products, settings, overrides, updateSettings, isLoaded } = useData();
   const effectiveRegions = useEffectiveRegions();
   const getBuyout = useEffectiveBuyout();
   const [selectedArticles, setSelectedArticles] = useState<Set<string>>(new Set());
@@ -488,15 +488,16 @@ export default function ShipmentCalcV3() {
       st.set(s.articleWB, (st.get(s.articleWB) || 0) + s.totalOnWarehouses);
     }
     const ot = new Map<string, number>();
-    for (const o of orders) {
-      if (!o.isCancel) {
-        const key = String(o.articleWB);
-        ot.set(key, (ot.get(key) || 0) + 1);
+    if (orderAggregates) {
+      for (const b of Object.values(orderAggregates.perBarcode)) {
+        const key = String(b.articleWB);
+        const nonCancelled = b.totalOrders - b.cancelledOrders;
+        ot.set(key, (ot.get(key) || 0) + nonCancelled);
       }
     }
     const sorted = [...products].sort((a, b) => (ot.get(b.articleWB) || 0) - (ot.get(a.articleWB) || 0));
     return { sortedProducts: sorted, stockTotals: st, orderTotals: ot };
-  }, [products, stock, orders]);
+  }, [products, stock, orderAggregates]);
 
   const filteredProducts = useMemo(() => {
     if (!hideInactive) return sortedProducts;
@@ -526,17 +527,17 @@ export default function ShipmentCalcV3() {
   const allCalcs = useMemo(() => {
     if (stock.length === 0 || activeProducts.length === 0) return [];
     return activeProducts.map((p) =>
-      calculateShipmentV2(p, stock, orders, getBuyout(p.articleWB), effectiveRegions, overrides[p.articleWB], uploadDays)
+      calculateShipmentV2(p, stock, orderAggregates, getBuyout(p.articleWB), effectiveRegions, overrides[p.articleWB], uploadDays)
     );
-  }, [activeProducts, stock, orders, effectiveRegions, overrides, getBuyout, uploadDays]);
+  }, [activeProducts, stock, orderAggregates, effectiveRegions, overrides, getBuyout, uploadDays]);
 
   // Single product calc (when exactly 1 selected)
   const singleCalc: ShipmentCalculationV2 | null = useMemo(() => {
     if (isAllMode || activeProducts.length !== 1) return null;
     const prod = activeProducts[0];
     if (!prod || stock.length === 0) return null;
-    return calculateShipmentV2(prod, stock, orders, getBuyout(prod.articleWB), effectiveRegions, overrides[prod.articleWB], uploadDays);
-  }, [activeProducts, isAllMode, stock, orders, effectiveRegions, overrides, getBuyout, uploadDays]);
+    return calculateShipmentV2(prod, stock, orderAggregates, getBuyout(prod.articleWB), effectiveRegions, overrides[prod.articleWB], uploadDays);
+  }, [activeProducts, isAllMode, stock, orderAggregates, effectiveRegions, overrides, getBuyout, uploadDays]);
 
   // Effective rows and trend
   const { rows, trend, regionConfigs } = useMemo<{ rows: ShipmentRowExtended[]; trend: TrendResult | null; regionConfigs: typeof effectiveRegions }>(() => {

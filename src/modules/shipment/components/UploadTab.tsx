@@ -8,8 +8,8 @@ import { formatNumber } from "@/lib/utils";
 type SyncState = "idle" | "loading" | "success" | "error";
 
 export default function UploadTab() {
-  const { stock, orders, products, uploadDate, clearAllData, syncFromWB, refreshData, settings, updateSettings } = useData();
-  const hasData = stock.length > 0 || orders.length > 0;
+  const { stock, orderAggregates, products, uploadDate, clearAllData, syncFromWB, refreshData, settings, updateSettings } = useData();
+  const hasData = stock.length > 0 || (orderAggregates?.totalOrders ?? 0) > 0;
   const [hasKey, setHasKey] = useState(true); // Server reads key from /tmp/wb_token.txt
 
   // uploadDays from settings (API), fallback 28
@@ -183,7 +183,7 @@ export default function UploadTab() {
             <div>
               <p className="text-[var(--text-muted)]">Заказы</p>
               <p className="text-xl font-bold" style={{ fontVariantNumeric: "tabular-nums" }}>
-                {formatNumber(orders.length)}
+                {formatNumber(orderAggregates?.totalOrders ?? 0)}
               </p>
               <p className="text-sm text-[var(--text-muted)]">штук</p>
             </div>

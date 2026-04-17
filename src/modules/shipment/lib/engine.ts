@@ -4,13 +4,14 @@ import type {
   RegionGroup,
   StockItem,
   OrderRecord,
+  OrderAggregates,
   ShipmentCalculation,
   ShipmentRow,
   RegionShipment,
   ProductOverride,
 } from "@/types";
 import { sortBySize } from "@/modules/shipment/lib/size-utils";
-import { getWeeklyOrders, calculateTrend, type TrendResult } from "@/modules/shipment/lib/trend-engine";
+import { calculateTrend, type TrendResult } from "@/modules/shipment/lib/trend-engine";
 
 const DEFAULT_REGIONS: RegionConfig[] = [
   {
@@ -129,13 +130,14 @@ export function getDefaultRegionGroups(): RegionGroup[] {
   }));
 }
 
-/** Конвертирует RegionGroup[] в RegionConfig[] для совместимости с V1/V2/V3 */
+/** Конвертирует RegionGroup[] в RegionConfig[] для совместимости с V1/V2/V3.
+ *  В auto-режиме читает проценты из предвычисленных агрегатов. */
 export function toRegionConfigs(
   groups: RegionGroup[],
   mode: 'manual' | 'auto',
-  orders: OrderRecord[]
+  aggregates: OrderAggregates | null
 ): RegionConfig[] {
-  if (mode === 'manual' || orders.length === 0) {
+  if (mode === 'manual' || !aggregates || aggregates.totalOrders === 0) {
     return groups.map((g) => ({
       id: g.id,
       name: g.name,
@@ -144,40 +146,27 @@ export function toRegionConfigs(
       warehouses: g.warehouses,
     }));
   }
-  // Auto: считаем реальные проценты по ФО
-  // Считаем ВСЕ заказы (включая отменённые) — отмена = заказ со склада, потребность была
-  // Заказы без ФО (СНГ) привязываем к группе по складу отправления
-  const total = orders.length;
+  // Auto: Все заказы (включая отмены) — отменённый заказ тоже = потребность со склада.
+  // Заказы без ФО (СНГ) привязываем к группе по складу отправления.
+  const total = aggregates.totalOrders;
 
-  // Build warehouse→group lookup
   const warehouseToGroup = new Map<string, string>();
   for (const g of groups) {
-    for (const wh of g.warehouses) {
-      warehouseToGroup.set(wh, g.id);
-    }
-  }
-
-  // Подсчёт заказов по каждому ФО
-  const districtCounts = new Map<string, number>();
-  for (const o of orders) {
-    if (o.federalDistrict) {
-      districtCounts.set(o.federalDistrict, (districtCounts.get(o.federalDistrict) || 0) + 1);
-    }
+    for (const wh of g.warehouses) warehouseToGroup.set(wh, g.id);
   }
 
   return groups.map((g) => {
-    const groupOrders = orders.filter((o) => {
-      // Match by federal district
-      if (o.federalDistrict && g.districts.includes(o.federalDistrict)) return true;
-      // No FD (CIS orders) → match by warehouse
-      if (!o.federalDistrict || o.federalDistrict === '') {
-        return warehouseToGroup.get(o.warehouse) === g.id;
+    const districtsSet = new Set(g.districts);
+    let groupOrders = 0;
+    for (const entry of aggregates.perWarehouseRegion) {
+      if (entry.federalDistrict && districtsSet.has(entry.federalDistrict)) {
+        groupOrders += entry.count;
+      } else if (!entry.federalDistrict && warehouseToGroup.get(entry.warehouse) === g.id) {
+        groupOrders += entry.count;
       }
-      return false;
-    }).length;
+    }
 
-    // Динамический shortName: разбивка "ФО X% + СНГ Y% = Z%"
-    const rfInGroup = g.districts.reduce((s, d) => s + (districtCounts.get(d) || 0), 0);
+    const rfInGroup = g.districts.reduce((s, d) => s + (aggregates.perDistrict[d] || 0), 0);
     const cisInGroup = groupOrders - rfInGroup;
     const rfPct = total > 0 ? (rfInGroup / total * 100).toFixed(1) : '0.0';
     const cisPct = total > 0 ? (cisInGroup / total * 100).toFixed(1) : '0.0';
@@ -200,13 +189,13 @@ export function toRegionConfigs(
   });
 }
 
+/** Total orders for barcode (including cancels — отмена = потребность со склада). */
 export function countOrdersByBarcode(
-  orders: OrderRecord[],
+  aggregates: OrderAggregates | null,
   barcode: string
 ): number {
-  // Count ALL orders (including cancelled) — cancellation = demand from warehouse
-  // buyoutRate already accounts for non-delivery
-  return orders.filter((o) => o.barcode === barcode).length;
+  if (!aggregates) return 0;
+  return aggregates.perBarcode[barcode]?.totalOrders || 0;
 }
 
 export function getStockForBarcode(
@@ -256,7 +245,7 @@ function calculateBoxes(
 function buildShipmentRows(
   product: Product,
   stock: StockItem[],
-  orders: OrderRecord[],
+  aggregates: OrderAggregates | null,
   buyoutRate: number,
   regionConfigs: RegionConfig[],
   override?: ProductOverride,
@@ -268,7 +257,7 @@ function buildShipmentRows(
     .map((sizeConfig) => {
       const perBox = override?.perBox[sizeConfig.barcode] ?? sizeConfig.perBox;
       const sc = { ...sizeConfig, perBox };
-      const orderCount = countOrdersByBarcode(orders, sc.barcode);
+      const orderCount = countOrdersByBarcode(aggregates, sc.barcode);
       const totalOrders30d = orderCount * buyoutRate * orderMultiplier;
 
       const regionShipments: RegionShipment[] = regionConfigs.map((region) => {
@@ -297,13 +286,13 @@ function buildShipmentRows(
 export function calculateShipment(
   product: Product,
   stock: StockItem[],
-  orders: OrderRecord[],
+  aggregates: OrderAggregates | null,
   buyoutRate: number = 0.75,
   regions?: RegionConfig[],
   override?: ProductOverride
 ): ShipmentCalculation {
   const regionConfigs = regions || getDefaultRegions();
-  const rows = buildShipmentRows(product, stock, orders, buyoutRate, regionConfigs, override);
+  const rows = buildShipmentRows(product, stock, aggregates, buyoutRate, regionConfigs, override);
   const sortedRows = sortShipmentRows(rows);
 
   return {
@@ -486,7 +475,7 @@ export interface ShipmentCalculationV2 extends ShipmentCalculation {
 export function calculateShipmentV2(
   product: Product,
   stock: StockItem[],
-  orders: OrderRecord[],
+  aggregates: OrderAggregates | null,
   buyoutRate: number = 0.75,
   regions?: RegionConfig[],
   override?: ProductOverride,
@@ -496,32 +485,37 @@ export function calculateShipmentV2(
   const disabledSizes = override?.disabledSizes || {};
   const activeSizes = product.sizes.filter((sc) => !disabledSizes[sc.barcode]);
 
-  // Get product-level trend
+  // Product-level trend: суммируем weekly по всем активным размерам.
+  // Данные берём из перевычисленных на сервере aggregates.perBarcode[barcode].weekly.
   const barcodes = activeSizes.map((s) => s.barcode);
-  const firstBw = barcodes.length > 0 ? getWeeklyOrders(orders, barcodes[0], loadedDays) : [];
-  const numWeeks = firstBw.length || 1;
+  const firstBw = barcodes.length > 0 && aggregates
+    ? aggregates.perBarcode[barcodes[0]]?.weekly || []
+    : [];
+  const numWeeks = firstBw.length || Math.max(1, Math.floor(loadedDays / 7));
   const allWeekly = Array.from({ length: numWeeks }, (_, i) => ({
     week: i + 1,
     label: `Нед. ${i + 1}`,
     orders: 0,
     dateRange: "",
   }));
-  for (const barcode of barcodes) {
-    const bw = getWeeklyOrders(orders, barcode, loadedDays);
-    for (let i = 0; i < Math.min(bw.length, numWeeks); i++) {
-      allWeekly[i].orders += bw[i].orders;
-      if (!allWeekly[i].dateRange && bw[i].dateRange) {
-        allWeekly[i].dateRange = bw[i].dateRange;
+  if (aggregates) {
+    for (const barcode of barcodes) {
+      const bw = aggregates.perBarcode[barcode]?.weekly || [];
+      for (let i = 0; i < Math.min(bw.length, numWeeks); i++) {
+        allWeekly[i].orders += bw[i].orders;
+        if (!allWeekly[i].dateRange && bw[i].dateRange) {
+          allWeekly[i].dateRange = bw[i].dateRange;
+        }
       }
     }
   }
   const trend = calculateTrend(allWeekly, buyoutRate);
 
   // V1 rows (for comparison) — multiplier = 1
-  const v1Rows = buildShipmentRows(product, stock, orders, buyoutRate, regionConfigs, override);
+  const v1Rows = buildShipmentRows(product, stock, aggregates, buyoutRate, regionConfigs, override);
 
   // V2 rows (adjusted by trend multiplier)
-  const rows = buildShipmentRows(product, stock, orders, buyoutRate, regionConfigs, override, trend.multiplier);
+  const rows = buildShipmentRows(product, stock, aggregates, buyoutRate, regionConfigs, override, trend.multiplier);
 
   const sortedRows = sortShipmentRows(rows);
   const sortedV1 = sortShipmentRows(v1Rows);

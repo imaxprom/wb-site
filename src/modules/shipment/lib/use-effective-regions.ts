@@ -9,8 +9,8 @@ import type { RegionConfig } from "@/types";
  * Use this in V1/V2/V3 instead of raw settings.regions.
  */
 export function useEffectiveRegions(): RegionConfig[] {
-  const { settings, orders } = useData();
+  const { settings, orderAggregates } = useData();
   const mode = settings.regionMode || "manual";
   const groups = settings.regionGroups || getDefaultRegionGroups();
-  return useMemo(() => toRegionConfigs(groups, mode, orders), [groups, mode, orders]);
+  return useMemo(() => toRegionConfigs(groups, mode, orderAggregates), [groups, mode, orderAggregates]);
 }

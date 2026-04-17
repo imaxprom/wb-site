@@ -1,6 +1,6 @@
 import XLSX from "xlsx-js-style";
 import type { ShipmentCalculation } from "@/types";
-import { sortShipmentRows } from "./calculation-engine";
+import { sortShipmentRows } from "@/modules/shipment/lib/engine";
 import { sizeHasLetters } from "./size-utils";
 
 // --- Border helpers ---
