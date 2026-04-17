@@ -30,3 +30,4 @@ public/data/monitor/repair-state.json
 public/data/monitor/repair-log.json
 public/data/monitor/data-health-cron.json
 public/data/monitor/changes.json
+public/data/monitor/auth-status.json

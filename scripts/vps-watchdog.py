@@ -21,9 +21,7 @@ DATA_DIR = PROJECT_DIR / "data"
 STATE_PATH = DATA_DIR / "vps-watchdog-state.json"
 LOCK_PATH = Path("/tmp/vps-watchdog.lock")
 LOG_PATH = DATA_DIR / "watchdog.log"
-
-TG_TOKEN = "8798691813:AAGdZtAF6WB59lif5SNYKiqOp09iUETzcpU"
-TG_CHAT_ID = "317252096"
+NOTIFY_SH = PROJECT_DIR / "scripts" / "notify.sh"
 
 # Cron tasks and their expected intervals (minutes)
 CRON_TASKS = {
@@ -78,22 +76,21 @@ def save_state(state):
 LEVEL_EMOJI = {"INFO": "\u2705", "WARNING": "\u26a0\ufe0f", "CRITICAL": "\U0001f6a8"}
 
 def send_telegram(level, message):
+    """Отправка через notify.sh (SSH-туннель через claude-cli → Germany)."""
     emoji = LEVEL_EMOJI.get(level, "\u2139\ufe0f")
-    text = f"{emoji} *VPS Watchdog — {level}*\n\n{message}"
+    # Конвертируем простой Markdown *bold* → HTML <b>bold</b> (notify.sh использует HTML)
+    import re as _re
+    html_message = _re.sub(r"\*([^*]+)\*", r"<b>\1</b>", message)
+    text = f"{emoji} <b>VPS Watchdog — {level}</b>\n\n{html_message}"
     try:
-        import urllib.request
-        data = json.dumps({
-            "chat_id": TG_CHAT_ID,
-            "text": text,
-            "parse_mode": "Markdown",
-        }).encode()
-        req = urllib.request.Request(
-            f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
-            data=data,
-            headers={"Content-Type": "application/json"},
+        result = subprocess.run(
+            ["bash", str(NOTIFY_SH), text],
+            capture_output=True, text=True, timeout=30,
         )
-        urllib.request.urlopen(req, timeout=10)
-        log(f"  Telegram [{level}] sent")
+        if result.returncode == 0:
+            log(f"  Telegram [{level}] sent")
+        else:
+            log(f"  Telegram error: rc={result.returncode}, {result.stderr[:200]}")
     except Exception as e:
         log(f"  Telegram error: {e}")
 

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { StatCard } from "@/components/StatCard";
 import { DataHealthCard } from "@/components/DataHealthCard";
+import { SummaryStatusCard } from "@/components/SummaryStatusCard";
 
 // ─── InfoTip ──────────────────────────────────────────────────
 
@@ -610,6 +611,9 @@ export default function MonitorPage() {
           {runResult.ok ? "✅" : "❌"} {runResult.message}
         </div>
       )}
+
+      {/* Summary status — aggregated health */}
+      <SummaryStatusCard />
 
       {/* Watchdog status */}
       <WatchdogBanner />

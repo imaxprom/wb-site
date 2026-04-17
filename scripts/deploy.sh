@@ -17,6 +17,7 @@ rsync -az --delete \
   --exclude='public/data/monitor/repair-log.json' \
   --exclude='public/data/monitor/data-health-cron.json' \
   --exclude='public/data/monitor/changes.json' \
+  --exclude='public/data/monitor/auth-status.json' \
   -e "ssh" \
   /Users/octopus/Projects/website/ wb-site:~/website/
 
