@@ -52,11 +52,11 @@ export async function syncAll(date?: string): Promise<DaySyncStatus> {
     }
   }
 
-  if (!day.advertising.ok) {
+  if (!day.advertising.ok || !day.advertising.stable) {
     try {
       console.log("[daily-sync] Syncing advertising...");
       day.advertising = await syncAdvertising(targetDate);
-      console.log(`[daily-sync] Advertising: ${day.advertising.ok ? "OK (" + day.advertising.value + " руб)" : "FAIL: " + day.advertising.error}`);
+      console.log(`[daily-sync] Advertising: ${day.advertising.ok ? "OK (" + day.advertising.value + " руб" + (day.advertising.stable ? ", stable" : ", unmapped") + ")" : "FAIL: " + day.advertising.error}`);
     } catch (err) {
       day.advertising.error = `CRASH: ${err instanceof Error ? err.message : String(err)}`;
       console.error("[daily-sync] Advertising CRASHED:", err);
@@ -85,7 +85,7 @@ export async function syncAll(date?: string): Promise<DaySyncStatus> {
     }
   }
 
-  day.complete = day.report.ok && day.advertising.ok && day.orders.ok && day.orders.stable;
+  day.complete = day.report.ok && day.advertising.ok && day.advertising.stable && day.orders.ok && day.orders.stable;
 
   status.today = day;
   status.running = false;

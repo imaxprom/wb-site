@@ -208,32 +208,92 @@ async function syncReport(date) {
 
 // --- Source 2: Advertising ---
 
+/** Персистентный кеш campaign_id → nm_id в БД. Нужен, чтобы для архивных
+ * кампаний, которые уже не возвращаются из /adverts, всё равно был маппинг. */
+function ensureCampaignNmTable(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS campaign_nm_map (
+      campaign_id INTEGER PRIMARY KEY,
+      nm_id INTEGER NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+}
+
+async function fetchCampaignNmMap(apiKey) {
+  const map = new Map();
+  try {
+    const res = await fetch("https://advert-api.wildberries.ru/api/advert/v2/adverts", {
+      headers: { Authorization: apiKey },
+    });
+    if (!res.ok) return map;
+    const data = await res.json();
+    for (const c of data.adverts || []) {
+      if (c.nm_settings?.length) {
+        map.set(c.id, c.nm_settings[0].nm_id);
+      }
+    }
+  } catch { /* не критично — упадём на кеш */ }
+  return map;
+}
+
 async function syncAdvertising(date) {
-  const result = { ok: false, value: 0, stable: true, prevValue: 0, lastAttempt: new Date().toISOString(), error: undefined };
+  const result = { ok: false, value: 0, stable: false, prevValue: 0, lastAttempt: new Date().toISOString(), error: undefined };
   const apiKey = getApiKey();
   if (!apiKey) { result.error = "Нет WB API ключа"; return result; }
 
   try {
-    const res = await fetch(`https://advert-api.wildberries.ru/adv/v1/upd?from=${date}&to=${date}`, {
-      headers: { Authorization: apiKey },
-    });
-    if (!res.ok) { result.error = `API: ${res.status}`; return result; }
+    const [updRes, freshNmMap] = await Promise.all([
+      fetch(`https://advert-api.wildberries.ru/adv/v1/upd?from=${date}&to=${date}`, {
+        headers: { Authorization: apiKey },
+      }),
+      fetchCampaignNmMap(apiKey),
+    ]);
+    if (!updRes.ok) { result.error = `API: ${updRes.status}`; return result; }
 
-    const data = await res.json();
+    const data = await updRes.json();
     const entries = data.filter(d => (d.updSum || 0) > 0);
     const total = entries.reduce((s, d) => s + (d.updSum || 0), 0);
     if (total === 0) { result.error = "Нет расходов"; return result; }
 
     const db = new Database(DB_PATH);
-    db.prepare("DELETE FROM advertising WHERE date = ?").run(date);
-    const ins = db.prepare("INSERT INTO advertising (date, campaign_name, campaign_id, amount, payment_type) VALUES (?, ?, ?, ?, ?)");
+    ensureCampaignNmTable(db);
+
+    // Обновляем персистентный кеш свежими маппингами (upsert)
+    const upsertMap = db.prepare(`
+      INSERT INTO campaign_nm_map (campaign_id, nm_id, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT(campaign_id) DO UPDATE SET nm_id=excluded.nm_id, updated_at=excluded.updated_at
+    `);
+    const now = new Date().toISOString();
     db.transaction(() => {
-      for (const e of entries) ins.run(date, e.campName || "", e.advertId || 0, e.updSum || 0, e.paymentType || "Баланс");
+      for (const [cid, nm] of freshNmMap) upsertMap.run(cid, nm, now);
+    })();
+
+    // Читаем кеш (в т.ч. архивные кампании из прошлых синков)
+    const cachedRows = db.prepare("SELECT campaign_id, nm_id FROM campaign_nm_map").all();
+    const cachedNmMap = new Map(cachedRows.map(r => [r.campaign_id, r.nm_id]));
+
+    const resolveNm = (advertId) => freshNmMap.get(advertId) || cachedNmMap.get(advertId) || 0;
+
+    db.prepare("DELETE FROM advertising WHERE date = ?").run(date);
+    const ins = db.prepare("INSERT INTO advertising (date, campaign_name, campaign_id, amount, payment_type, nm_id) VALUES (?, ?, ?, ?, ?, ?)");
+    db.transaction(() => {
+      for (const e of entries) {
+        ins.run(date, e.campName || "", e.advertId || 0, e.updSum || 0, e.paymentType || "Баланс", resolveNm(e.advertId || 0));
+      }
     })();
     db.close();
 
     result.ok = true;
     result.value = total;
+    // stable=true только если хотя бы половина расходов замаппилась.
+    // Иначе sync повторится на следующем часу и попробует добрать маппинг.
+    const mappedSum = entries.reduce((s, e) => s + (resolveNm(e.advertId || 0) ? (e.updSum || 0) : 0), 0);
+    const mappedRatio = total > 0 ? mappedSum / total : 0;
+    result.stable = mappedRatio >= 0.5;
+    if (!result.stable) {
+      result.error = `Маппинг nm_id: ${(mappedRatio * 100).toFixed(0)}% — повторю на следующем часу`;
+    }
   } catch (err) {
     result.error = err.message || String(err);
   }
@@ -429,10 +489,10 @@ async function main() {
     log(`  Report: ${day.report.ok ? day.report.value + " rows" : "FAIL: " + day.report.error}`);
   }
 
-  if (!day.advertising.ok) {
+  if (!day.advertising.ok || !day.advertising.stable) {
     log("  Advertising...");
     day.advertising = await syncAdvertising(date);
-    log(`  Advertising: ${day.advertising.ok ? day.advertising.value + " руб" : "FAIL: " + day.advertising.error}`);
+    log(`  Advertising: ${day.advertising.ok ? day.advertising.value + " руб" + (day.advertising.stable ? " (stable)" : " (unmapped)") : "FAIL: " + day.advertising.error}`);
   }
 
   if (!day.orders.ok || !day.orders.stable) {
@@ -441,7 +501,7 @@ async function main() {
     log(`  Orders: ${day.orders.ok ? day.orders.value + " руб" + (day.orders.stable ? " (stable)" : "") : "FAIL: " + day.orders.error}`);
   }
 
-  day.complete = day.report.ok && day.advertising.ok && day.orders.ok && day.orders.stable;
+  day.complete = day.report.ok && day.advertising.ok && day.advertising.stable && day.orders.ok && day.orders.stable;
   log(`  Complete: ${day.complete}`);
 
   status.today = day;
