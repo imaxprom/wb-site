@@ -148,9 +148,19 @@ async function generateComplaint(
 
   const { spawn } = await import("child_process");
   return new Promise((resolve) => {
-    const proc = spawn("/opt/homebrew/bin/claude", ["-p", "--model", "opus", "--effort", "max", "--append-system-prompt", sysPrompt], {
+    // Claude CLI на wb-site недоступен (RU IP блокируется Anthropic).
+    // Идём через SSH на claude-cli VM (.106): там настроен tinyproxy через Germany.
+    // claude-proxy.sh принимает prompt из stdin, sysPrompt как $1.
+    const proc = spawn("ssh", [
+      "-o", "BatchMode=yes",
+      "-o", "ConnectTimeout=10",
+      "-o", "UserKnownHostsFile=/home/makson/.ssh/known_hosts",
+      "-o", "StrictHostKeyChecking=accept-new",
+      "-i", "/home/makson/.ssh/id_ed25519",
+      "makson@192.168.55.106",
+      "bash", "/home/makson/claude-proxy.sh", sysPrompt,
+    ], {
       timeout: 120000,
-      env: { ...process.env, HOME: "/Users/octopus" },
     });
 
     let stdout = "";

@@ -197,6 +197,9 @@ function generateComplaint(review, allowedReasons, config, manager, previousText
     const proc = spawn("ssh", [
       "-o", "BatchMode=yes",
       "-o", "ConnectTimeout=10",
+      "-o", "UserKnownHostsFile=/home/makson/.ssh/known_hosts",
+      "-o", "StrictHostKeyChecking=accept-new",
+      "-i", "/home/makson/.ssh/id_ed25519",
       "makson@192.168.55.106",
       "bash", "/home/makson/claude-proxy.sh", sysPrompt,
     ], {
