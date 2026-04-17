@@ -457,33 +457,36 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
             <div className="lg:w-52 lg:border-l lg:border-[var(--border)] lg:pl-4 space-y-3">
               <h3 className="text-sm font-bold text-white">⚙️ Настройки</h3>
               <div className="space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-[var(--text-muted)]">Округл. до короба</span>
-                  <select value={v2BoxRounding} onChange={(e) => { const v = Number(e.target.value); setV2BoxRounding(v); updateSettings({ v2RoundTo: v }); }} className="w-14 bg-[var(--bg)] border border-[var(--border)] rounded px-1 py-1 text-center text-xs focus:outline-none focus:border-[var(--accent)]">
-                    <option value={0.5}>0.5</option>
-                    <option value={1}>1</option>
-                  </select>
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-[var(--text-muted)]">Округл. штук до</span>
-                  <input
-                    type="number"
-                    list="v2-unit-rounding-list"
-                    min={1}
-                    value={v2UnitRounding}
-                    onChange={(e) => {
-                      const v = Math.max(1, Number(e.target.value) || 1);
-                      setV2UnitRounding(v);
-                      updateSettings({ v2UnitRounding: v });
-                    }}
-                    className="w-14 bg-[var(--bg)] border border-[var(--border)] rounded px-1 py-1 text-center text-xs focus:outline-none focus:border-[var(--accent)]"
-                  />
-                  <datalist id="v2-unit-rounding-list">
-                    <option value="1" />
-                    <option value="5" />
-                    <option value="10" />
-                  </datalist>
-                </div>
+                {v2ViewMode === "boxes" ? (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-[var(--text-muted)]">Округл. до короба</span>
+                    <select value={v2BoxRounding} onChange={(e) => { const v = Number(e.target.value); setV2BoxRounding(v); updateSettings({ v2RoundTo: v }); }} className="w-14 bg-[var(--bg)] border border-[var(--border)] rounded px-1 py-1 text-center text-xs focus:outline-none focus:border-[var(--accent)]">
+                      <option value={0.5}>0.5</option>
+                      <option value={1}>1</option>
+                    </select>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-[var(--text-muted)]">Округл. штук до</span>
+                    <input
+                      type="number"
+                      list="v2-unit-rounding-list"
+                      min={1}
+                      value={v2UnitRounding}
+                      onChange={(e) => {
+                        const v = Math.max(1, Number(e.target.value) || 1);
+                        setV2UnitRounding(v);
+                        updateSettings({ v2UnitRounding: v });
+                      }}
+                      className="w-14 bg-[var(--bg)] border border-[var(--border)] rounded px-1 py-1 text-center text-xs focus:outline-none focus:border-[var(--accent)]"
+                    />
+                    <datalist id="v2-unit-rounding-list">
+                      <option value="1" />
+                      <option value="5" />
+                      <option value="10" />
+                    </datalist>
+                  </div>
+                )}
                 <div className="pt-1 border-t border-[var(--border)]">
                   <div className="text-[10px] text-[var(--text-muted)] mb-1">Вид</div>
                   <div className="flex rounded-lg border border-[var(--border)] overflow-hidden">
