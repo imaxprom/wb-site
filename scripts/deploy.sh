@@ -11,7 +11,7 @@ rsync -az --delete \
   --exclude='node_modules' \
   --exclude='.next' \
   --exclude='.git' \
-  --exclude='data/' \
+  --exclude='/data/' \
   -e "ssh" \
   /Users/octopus/Projects/website/ wb-site:~/website/
 
