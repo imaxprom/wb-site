@@ -59,6 +59,7 @@ export async function GET(request: NextRequest) {
       SELECT r.nm_id, r.sa_name,
         SUM(CASE WHEN r.supplier_oper_name='Продажа' THEN r.retail_price_withdisc_rub ELSE 0 END) as sales_rpwd,
         SUM(CASE WHEN r.supplier_oper_name='Продажа' THEN r.ppvz_for_pay ELSE 0 END) as sales_ppvz,
+        SUM(CASE WHEN r.supplier_oper_name='Продажа' THEN r.retail_amount ELSE 0 END) as sales_retail,
         SUM(CASE WHEN r.supplier_oper_name='Продажа' THEN r.quantity ELSE 0 END) as sales_qty,
         SUM(CASE WHEN r.supplier_oper_name='Возврат' THEN r.quantity ELSE 0 END) as ret_qty
       FROM realization r
@@ -66,7 +67,7 @@ export async function GET(request: NextRequest) {
         AND r.sale_dt >= ? AND r.sale_dt <= ? AND r.nm_id > 0
         ${dedupSale.sql}
       GROUP BY r.nm_id
-    `).all(econFrom, econTo, ...dedupSale.params) as { nm_id: number; sa_name: string; sales_rpwd: number; sales_ppvz: number; sales_qty: number; ret_qty: number }[];
+    `).all(econFrom, econTo, ...dedupSale.params) as { nm_id: number; sa_name: string; sales_rpwd: number; sales_ppvz: number; sales_retail: number; sales_qty: number; ret_qty: number }[];
 
     const logisticsRaw = d.prepare(`
       SELECT r.nm_id,
@@ -118,8 +119,11 @@ export async function GET(request: NextRequest) {
       const cogsUnit = totalQty > 0 ? totalCogs / totalQty : DEFAULT_COGS_PER_UNIT;
       const logUnit = a.logistics / netQty;
       const commissionUnit = avgPrice - avgPpvz;
-      const ndsUnit = avgPpvz * 5 / 105;
-      const usnUnit = (avgPpvz - ndsUnit) * 0.01;
+      // Налоги от retail_amount (Вайлдберриз реализовал Товар Пр) —
+      // так же как в PnL (finance/page.tsx). База = retail после СПП.
+      const avgRetail = a.sales_retail / a.sales_qty;
+      const ndsUnit = avgRetail * 5 / 105;
+      const usnUnit = (avgRetail - ndsUnit) * 0.01;
       const taxUnit = ndsUnit + usnUnit;
       const profitPerUnit = avgPrice - cogsUnit - logUnit - commissionUnit - taxUnit;
       unitEcon.set(a.nm_id, { avgPrice, cogsUnit, logUnit, commissionUnit, taxUnit, profitPerUnit, article: String(a.sa_name || ""), customName: "" });
