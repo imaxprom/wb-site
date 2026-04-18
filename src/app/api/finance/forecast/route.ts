@@ -186,44 +186,53 @@ export async function GET(request: NextRequest) {
       adsUnmappedMap.set(a.date, a.ad_spend);
     }
 
-    // ── 5. Хранение по артикулам (среднедневное из paid_storage) ──
-    const storageRaw = d.prepare(`
-      SELECT nm_id, SUM(warehouse_price) as total, COUNT(DISTINCT date) as days
-      FROM paid_storage
-      WHERE date >= ? AND date <= ?
-      GROUP BY nm_id
-    `).all(dateFrom, dateTo) as { nm_id: number; total: number; days: number }[];
-    const storageDailyMap = new Map<number, number>();
-    for (const r of storageRaw) {
-      storageDailyMap.set(r.nm_id, r.days > 0 ? r.total / r.days : 0);
-    }
     const econDays = Math.max(1, Math.round((new Date(econTo).getTime() - new Date(econFrom).getTime()) / 86400000) + 1);
 
-    // Fallback: если paid_storage пуст за период, берём из realization.storage_fee
-    // (факт хранения за период, делим на длину периода и кол-во артикулов).
-    if (storageRaw.length === 0) {
-      const storageFallback = d.prepare(`
-        SELECT SUM(r.storage_fee) as total FROM realization r
-        WHERE r.rr_dt >= ? AND r.rr_dt <= ? ${dedupRr.sql}
-      `).get(econFrom, econTo, ...dedupRr.params) as Record<string, number>;
-      const numArticles = unitEcon.size || 1;
-      const perArticleDaily = (storageFallback.total || 0) / econDays / numArticles;
-      for (const nm of unitEcon.keys()) {
-        storageDailyMap.set(nm, perArticleDaily);
-      }
+    // ── 5. Хранение per-day per-nm: приоритет paid_storage, fallback на realization ──
+    // paid_storage: ежедневная детализация (основной источник)
+    const storagePsRaw = d.prepare(`
+      SELECT date, nm_id, SUM(warehouse_price) as total
+      FROM paid_storage WHERE date >= ? AND date <= ?
+      GROUP BY date, nm_id
+    `).all(dateFrom, dateTo) as { date: string; nm_id: number; total: number }[];
+    const storageByDayNm = new Map<string, number>();
+    const psDaysWithData = new Set<string>();
+    for (const r of storagePsRaw) {
+      storageByDayNm.set(`${r.date}:${r.nm_id}`, r.total);
+      psDaysWithData.add(r.date);
     }
 
-    // ── 6. Штрафы по артикулам (среднедневные за период) ──
+    // Fallback per-day: для дней без paid_storage берём realization.storage_fee
+    // за этот rr_dt и раскладываем равномерно по артикулам с юнит-экономикой.
+    const storageRealRaw = d.prepare(`
+      SELECT r.rr_dt as date, SUM(r.storage_fee) as total
+      FROM realization r
+      WHERE r.rr_dt >= ? AND r.rr_dt <= ? AND r.storage_fee != 0
+        ${dedupRr.sql}
+      GROUP BY r.rr_dt
+    `).all(dateFrom, dateTo, ...dedupRr.params) as { date: string; total: number }[];
+    const storageFallbackByDay = new Map<string, number>();
+    for (const r of storageRealRaw) {
+      if (!psDaysWithData.has(r.date)) storageFallbackByDay.set(r.date, r.total);
+    }
+    const storageDay = (day: string, nmId: number, numArticles: number): number => {
+      const fromPs = storageByDayNm.get(`${day}:${nmId}`);
+      if (fromPs !== undefined) return fromPs;
+      const fallback = storageFallbackByDay.get(day) || 0;
+      return numArticles > 0 ? fallback / numArticles : 0;
+    };
+
+    // ── 6. Штрафы per-day per-nm (факт по rr_dt) ──
     const penaltyRaw = d.prepare(`
-      SELECT r.nm_id, SUM(r.penalty) as total
+      SELECT r.rr_dt as date, r.nm_id, SUM(r.penalty) as total
       FROM realization r
       WHERE r.penalty != 0 AND r.rr_dt >= ? AND r.rr_dt <= ? AND r.nm_id > 0
         ${dedupRr.sql}
-      GROUP BY r.nm_id
-    `).all(econFrom, econTo, ...dedupRr.params) as { nm_id: number; total: number }[];
-    const penaltyDailyMap = new Map<number, number>();
+      GROUP BY r.rr_dt, r.nm_id
+    `).all(dateFrom, dateTo, ...dedupRr.params) as { date: string; nm_id: number; total: number }[];
+    const penaltyByDayNm = new Map<string, number>();
     for (const r of penaltyRaw) {
-      penaltyDailyMap.set(r.nm_id, r.total / econDays);
+      penaltyByDayNm.set(`${r.date}:${r.nm_id}`, r.total);
     }
 
     // ── 7. Общие расходы: приёмка + джем. Окно — не меньше 14 дней,
@@ -289,8 +298,8 @@ export async function GET(request: NextRequest) {
 
       const buyout = buyoutMap.get(o.nm_id) || 0.80;
       const adSpend = adsMap.get(`${o.day}:${o.nm_id}`) || 0;
-      const storageDaily = storageDailyMap.get(o.nm_id) || 0;
-      const penaltyDaily = penaltyDailyMap.get(o.nm_id) || 0;
+      const storageDaily = storageDay(o.day, o.nm_id, unitEcon.size);
+      const penaltyDaily = penaltyByDayNm.get(`${o.day}:${o.nm_id}`) || 0;
       const estSales = scaledOrders * buyout;
       const estRevenue = estSales * econ.avgPrice;
       const estProfitBeforeAds = estSales * econ.profitPerUnit - storageDaily - penaltyDaily;
