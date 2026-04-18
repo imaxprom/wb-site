@@ -47,6 +47,7 @@ export async function GET(request: NextRequest) {
     // Для понедельного прогноза (вперёд) берутся предыдущие 14 дней автоматически
     const econFrom = dateFrom;
     const econTo = dateTo;
+    const econDays = Math.max(1, Math.round((new Date(econTo).getTime() - new Date(econFrom).getTime()) / 86400000) + 1);
 
     // Дедуп-фильтры: для дней, покрытых weekly_final-отчётом, исключаем weekly/daily
     // дубликаты. Без этого SUM(storage_fee/penalty/quantity/rpwd) удваивается/
@@ -197,13 +198,22 @@ export async function GET(request: NextRequest) {
     // которых нет в эконом-периоде (например, свежая поставка).
     const allNmIds = new Set<number>([...ordersPeriodMap.keys(), ...ordersHistMap.keys()]);
     const buyoutMap = new Map<number, number>();
+    // На коротком периоде (<7 дней) ступень 1 шумит: realization.sale_dt содержит
+    // продажи из заказов прошлых дней (лаг выкупа 2-7д), а shipment_orders за
+    // период — только свежие заказы. Соотношение sales/orders становится >1,
+    // клипается до 100%. На 7+ дневном периоде это усредняется.
+    const MIN_PERIOD_DAYS = 7;
+    const usePeriodBuyout = econDays >= MIN_PERIOD_DAYS;
+
     for (const nm of allNmIds) {
-      // Ступень 1: период прогноза
-      const periodOrders = ordersPeriodMap.get(nm) || 0;
-      const periodSales = salesPeriodMap.get(nm) || 0;
-      if (periodOrders >= 30 && periodSales > 0) {
-        buyoutMap.set(nm, Math.min(1, periodSales / periodOrders));
-        continue;
+      // Ступень 1: период прогноза (только для длинных периодов)
+      if (usePeriodBuyout) {
+        const periodOrders = ordersPeriodMap.get(nm) || 0;
+        const periodSales = salesPeriodMap.get(nm) || 0;
+        if (periodOrders >= 30 && periodSales > 0) {
+          buyoutMap.set(nm, Math.min(1, periodSales / periodOrders));
+          continue;
+        }
       }
       // Ступень 2: исторические 90 дней
       const histOrders = ordersHistMap.get(nm) || 0;
@@ -256,8 +266,6 @@ export async function GET(request: NextRequest) {
     for (const a of adsUnmapped) {
       adsUnmappedMap.set(a.date, a.ad_spend);
     }
-
-    const econDays = Math.max(1, Math.round((new Date(econTo).getTime() - new Date(econFrom).getTime()) / 86400000) + 1);
 
     // ── 5. Хранение per-day per-nm: приоритет paid_storage, fallback на realization ──
     // paid_storage: ежедневная детализация (основной источник)
