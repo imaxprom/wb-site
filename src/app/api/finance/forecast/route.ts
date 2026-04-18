@@ -135,15 +135,38 @@ export async function GET(request: NextRequest) {
       if (e) e.customName = cn.custom_name;
     }
 
-    // ── 2. Исторический % выкупа по артикулам (вся история) ──
-    const buyoutRaw = d.prepare(`
-      SELECT article_wb as nm_id,
-        COUNT(*) as total,
-        SUM(CASE WHEN is_cancel = 1 THEN 1 ELSE 0 END) as cancels
+    // ── 2. % выкупа по артикулам: фактический за период эконом ──
+    // Было: (total - cancels) / total из shipment_orders по всей истории.
+    // Стало: sales_qty / orders_count за period из realization/shipment_orders.
+    // is_cancel в shipment_orders ловит только отмены до получения,
+    // настоящие возвраты после получения приходят в realization.
+    // Формула: выкуп = (продано - возвращено) / заказано.
+    const salesForBuyout = d.prepare(`
+      SELECT r.nm_id,
+        SUM(CASE WHEN r.supplier_oper_name = 'Продажа' THEN r.quantity ELSE 0 END) as sales_qty,
+        SUM(CASE WHEN r.supplier_oper_name = 'Возврат' THEN r.quantity ELSE 0 END) as ret_qty
+      FROM realization r
+      WHERE r.supplier_oper_name IN ('Продажа','Возврат')
+        AND r.sale_dt >= ? AND r.sale_dt <= ? AND r.nm_id > 0
+        ${dedupSale.sql}
+      GROUP BY r.nm_id
+    `).all(econFrom, econTo, ...dedupSale.params) as { nm_id: number; sales_qty: number; ret_qty: number }[];
+    const salesMap = new Map(salesForBuyout.map(r => [r.nm_id, r.sales_qty - r.ret_qty]));
+
+    const ordersForBuyout = d.prepare(`
+      SELECT article_wb as nm_id, COUNT(*) as total
       FROM shipment_orders
+      WHERE date >= ? AND date <= ? || 'T23:59:59'
       GROUP BY article_wb
-    `).all() as { nm_id: number; total: number; cancels: number }[];
-    const buyoutMap = new Map(buyoutRaw.map(r => [r.nm_id, r.total > 30 ? (r.total - r.cancels) / r.total : 0.80]));
+    `).all(econFrom, econTo) as { nm_id: number; total: number }[];
+
+    const buyoutMap = new Map<number, number>();
+    for (const o of ordersForBuyout) {
+      const netSold = salesMap.get(o.nm_id) || 0;
+      // Если заказов мало или продаж мало — fallback 80% (иначе шумит)
+      if (o.total < 30 || netSold <= 0) buyoutMap.set(o.nm_id, 0.80);
+      else buyoutMap.set(o.nm_id, Math.min(1, netSold / o.total));
+    }
 
     // ── 3. Заказы за прогнозируемый период ──
     const ordersDaily = d.prepare(`
