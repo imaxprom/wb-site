@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiError } from "@/lib/api-utils";
 import { getDb } from "@/modules/finance/lib/queries";
+import { getExcludeDailyFilter } from "@/modules/analytics/lib/db";
 import { DEFAULT_COGS_PER_UNIT } from "@/lib/constants";
 
 /** Предзагрузка себестоимости в Map (кэш, как в db.ts) */
@@ -47,30 +48,51 @@ export async function GET(request: NextRequest) {
     const econFrom = dateFrom;
     const econTo = dateTo;
 
-    // ── 1. Юнит-экономика: один запрос (articles + logistics + names) ──
-    const articlesRaw = d.prepare(`
-      SELECT nm_id, sa_name,
-        SUM(CASE WHEN supplier_oper_name='Продажа' THEN retail_price_withdisc_rub ELSE 0 END) as sales_rpwd,
-        SUM(CASE WHEN supplier_oper_name='Продажа' THEN ppvz_for_pay ELSE 0 END) as sales_ppvz,
-        SUM(CASE WHEN supplier_oper_name='Продажа' THEN quantity ELSE 0 END) as sales_qty,
-        SUM(CASE WHEN supplier_oper_name='Возврат' THEN quantity ELSE 0 END) as ret_qty,
-        SUM(CASE WHEN supplier_oper_name IN ('Логистика', 'Коррекция логистики') THEN delivery_rub ELSE 0 END) as logistics
-      FROM realization
-      WHERE supplier_oper_name IN ('Продажа','Возврат','Логистика','Коррекция логистики')
-        AND ((supplier_oper_name IN ('Продажа','Возврат') AND sale_dt >= ? AND sale_dt <= ?)
-          OR (supplier_oper_name IN ('Логистика', 'Коррекция логистики') AND rr_dt >= ? AND rr_dt <= ?))
-        AND nm_id > 0
-      GROUP BY nm_id
-    `).all(econFrom, econTo, econFrom, econTo) as Record<string, number & string>[];
+    // Дедуп-фильтры: для дней, покрытых weekly_final-отчётом, исключаем weekly/daily
+    // дубликаты. Без этого SUM(storage_fee/penalty/quantity/rpwd) удваивается/
+    // учетверяется по мере подтягивания финальных WB-отчётов.
+    const dedupSale = getExcludeDailyFilter(d, "sale_dt", "r");
+    const dedupRr = getExcludeDailyFilter(d, "rr_dt", "r");
+
+    // ── 1. Юнит-экономика: продажи/возвраты (по sale_dt) + логистика (по rr_dt) ──
+    const salesRaw = d.prepare(`
+      SELECT r.nm_id, r.sa_name,
+        SUM(CASE WHEN r.supplier_oper_name='Продажа' THEN r.retail_price_withdisc_rub ELSE 0 END) as sales_rpwd,
+        SUM(CASE WHEN r.supplier_oper_name='Продажа' THEN r.ppvz_for_pay ELSE 0 END) as sales_ppvz,
+        SUM(CASE WHEN r.supplier_oper_name='Продажа' THEN r.quantity ELSE 0 END) as sales_qty,
+        SUM(CASE WHEN r.supplier_oper_name='Возврат' THEN r.quantity ELSE 0 END) as ret_qty
+      FROM realization r
+      WHERE r.supplier_oper_name IN ('Продажа','Возврат')
+        AND r.sale_dt >= ? AND r.sale_dt <= ? AND r.nm_id > 0
+        ${dedupSale.sql}
+      GROUP BY r.nm_id
+    `).all(econFrom, econTo, ...dedupSale.params) as { nm_id: number; sa_name: string; sales_rpwd: number; sales_ppvz: number; sales_qty: number; ret_qty: number }[];
+
+    const logisticsRaw = d.prepare(`
+      SELECT r.nm_id,
+        SUM(r.delivery_rub) as logistics
+      FROM realization r
+      WHERE r.supplier_oper_name IN ('Логистика', 'Коррекция логистики')
+        AND r.rr_dt >= ? AND r.rr_dt <= ? AND r.nm_id > 0
+        ${dedupRr.sql}
+      GROUP BY r.nm_id
+    `).all(econFrom, econTo, ...dedupRr.params) as { nm_id: number; logistics: number }[];
+    const logisticsMap = new Map(logisticsRaw.map(r => [r.nm_id, r.logistics]));
+
+    const articlesRaw = salesRaw.map(s => ({
+      ...s,
+      logistics: logisticsMap.get(s.nm_id) || 0,
+    }));
 
     // COGS через Map (без коррелированного подзапроса)
     const costs = getCogsMap();
     const cogsRows = d.prepare(`
-      SELECT nm_id, barcode, SUM(quantity) as qty
-      FROM realization
-      WHERE supplier_oper_name = 'Продажа' AND sale_dt >= ? AND sale_dt <= ? AND nm_id > 0
-      GROUP BY nm_id, barcode
-    `).all(econFrom, econTo) as { nm_id: number; barcode: string; qty: number }[];
+      SELECT r.nm_id, r.barcode, SUM(r.quantity) as qty
+      FROM realization r
+      WHERE r.supplier_oper_name = 'Продажа' AND r.sale_dt >= ? AND r.sale_dt <= ? AND r.nm_id > 0
+        ${dedupSale.sql}
+      GROUP BY r.nm_id, r.barcode
+    `).all(econFrom, econTo, ...dedupSale.params) as { nm_id: number; barcode: string; qty: number }[];
     const cogsMap = new Map<number, number>();
     const cogsQtyMap = new Map<number, number>();
     for (const r of cogsRows) {
@@ -175,39 +197,46 @@ export async function GET(request: NextRequest) {
     for (const r of storageRaw) {
       storageDailyMap.set(r.nm_id, r.days > 0 ? r.total / r.days : 0);
     }
-    // Fallback: если paid_storage пуст, берём из realization (общее хранение / дни / кол-во артикулов)
+    const econDays = Math.max(1, Math.round((new Date(econTo).getTime() - new Date(econFrom).getTime()) / 86400000) + 1);
+
+    // Fallback: если paid_storage пуст за период, берём из realization.storage_fee
+    // (факт хранения за период, делим на длину периода и кол-во артикулов).
     if (storageRaw.length === 0) {
       const storageFallback = d.prepare(`
-        SELECT SUM(storage_fee) as total FROM realization WHERE rr_dt >= ? AND rr_dt <= ?
-      `).get(econFrom, econTo) as Record<string, number>;
+        SELECT SUM(r.storage_fee) as total FROM realization r
+        WHERE r.rr_dt >= ? AND r.rr_dt <= ? ${dedupRr.sql}
+      `).get(econFrom, econTo, ...dedupRr.params) as Record<string, number>;
       const numArticles = unitEcon.size || 1;
-      const fallbackDays = 14;
-      const perArticleDaily = (storageFallback.total || 0) / fallbackDays / numArticles;
+      const perArticleDaily = (storageFallback.total || 0) / econDays / numArticles;
       for (const nm of unitEcon.keys()) {
         storageDailyMap.set(nm, perArticleDaily);
       }
     }
 
-    // ── 6. Штрафы по артикулам (среднедневные из предыдущего периода) ──
+    // ── 6. Штрафы по артикулам (среднедневные за период) ──
     const penaltyRaw = d.prepare(`
-      SELECT nm_id, SUM(penalty) as total
-      FROM realization
-      WHERE penalty != 0 AND rr_dt >= ? AND rr_dt <= ? AND nm_id > 0
-      GROUP BY nm_id
-    `).all(econFrom, econTo) as { nm_id: number; total: number }[];
-    const econDays = Math.max(1, Math.round((new Date(econTo).getTime() - new Date(econFrom).getTime()) / 86400000) + 1);
+      SELECT r.nm_id, SUM(r.penalty) as total
+      FROM realization r
+      WHERE r.penalty != 0 AND r.rr_dt >= ? AND r.rr_dt <= ? AND r.nm_id > 0
+        ${dedupRr.sql}
+      GROUP BY r.nm_id
+    `).all(econFrom, econTo, ...dedupRr.params) as { nm_id: number; total: number }[];
     const penaltyDailyMap = new Map<number, number>();
     for (const r of penaltyRaw) {
       penaltyDailyMap.set(r.nm_id, r.total / econDays);
     }
 
-    // ── 7. Общие расходы: приёмка + джем (один запрос) ──
+    // ── 7. Общие расходы: приёмка + джем. Окно — не меньше 14 дней,
+    // т.к. acceptance и jam приходят нерегулярно (раз в неделю/месяц).
+    // Иначе для короткого прогноза overhead=0, хотя по факту ≠ 0.
+    const overheadFrom = shiftDays(econFrom, -Math.max(0, 14 - econDays));
+    const overheadDays = Math.max(14, econDays);
     const overheadRow = d.prepare(`
-      SELECT COALESCE(SUM(acceptance), 0) as acceptance,
-        COALESCE(SUM(CASE WHEN bonus_type_name LIKE '%Джем%' THEN deduction ELSE 0 END), 0) as jam
-      FROM realization WHERE rr_dt >= ? AND rr_dt <= ?
-    `).get(econFrom, econTo) as Record<string, number>;
-    const overheadDaily = (overheadRow.acceptance + overheadRow.jam) / econDays;
+      SELECT COALESCE(SUM(r.acceptance), 0) as acceptance,
+        COALESCE(SUM(CASE WHEN r.bonus_type_name LIKE '%Джем%' THEN r.deduction ELSE 0 END), 0) as jam
+      FROM realization r WHERE r.rr_dt >= ? AND r.rr_dt <= ? ${dedupRr.sql}
+    `).get(overheadFrom, econTo, ...dedupRr.params) as Record<string, number>;
+    const overheadDaily = (overheadRow.acceptance + overheadRow.jam) / overheadDays;
 
     // ── 8. Сборка: прогноз по дням ──
     interface DayForecast {
