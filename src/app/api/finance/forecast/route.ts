@@ -385,7 +385,7 @@ export async function GET(request: NextRequest) {
           estimated_profit: Math.round(day.estimated_profit - overheadDaily - unmapped),
           articles: day.articles
             .map(a => ({ ...a, orders: Math.round(a.orders) }))
-            .sort((a, b) => b.estimated_profit - a.estimated_profit),
+            .sort((a, b) => b.orders - a.orders),
         };
       });
 
