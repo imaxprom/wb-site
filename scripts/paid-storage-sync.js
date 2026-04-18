@@ -25,7 +25,9 @@ const LOCK_PATH = "/tmp/paid-storage-sync.lock";
 const HOST = "https://seller-analytics-api.wildberries.ru";
 const POLL_DELAY_MS = 2000;
 const POLL_MAX_ATTEMPTS = 30;
-const BETWEEN_DAYS_DELAY_MS = 12000;
+const BETWEEN_DAYS_DELAY_MS = 60000;
+const RATE_LIMIT_WAIT_MS = 60000;
+const MAX_RETRIES_429 = 2;
 
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`;
@@ -82,11 +84,23 @@ function hasDayData(db, date) {
   return row.cnt > 0;
 }
 
+async function fetchWithRetry(url, opts, label) {
+  for (let attempt = 0; attempt <= MAX_RETRIES_429; attempt++) {
+    const res = await fetch(url, opts);
+    if (res.status !== 429) return res;
+    if (attempt < MAX_RETRIES_429) {
+      log(`  429 on ${label}, wait ${RATE_LIMIT_WAIT_MS / 1000}s (retry ${attempt + 1}/${MAX_RETRIES_429})`);
+      await sleep(RATE_LIMIT_WAIT_MS);
+    }
+  }
+  return fetch(url, opts);
+}
+
 async function syncDay(apiKey, date) {
   try {
-    const createRes = await fetch(`${HOST}/api/v1/paid_storage?dateFrom=${date}&dateTo=${date}`, {
+    const createRes = await fetchWithRetry(`${HOST}/api/v1/paid_storage?dateFrom=${date}&dateTo=${date}`, {
       headers: { Authorization: apiKey },
-    });
+    }, "create");
     if (!createRes.ok) return { ok: false, err: `create ${createRes.status}` };
     const createData = await createRes.json();
     const taskId = createData?.data?.taskId;
@@ -95,9 +109,9 @@ async function syncDay(apiKey, date) {
     let status = "";
     for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
       await sleep(POLL_DELAY_MS);
-      const sr = await fetch(`${HOST}/api/v1/paid_storage/tasks/${taskId}/status`, {
+      const sr = await fetchWithRetry(`${HOST}/api/v1/paid_storage/tasks/${taskId}/status`, {
         headers: { Authorization: apiKey },
-      });
+      }, "status");
       const sd = await sr.json();
       status = sd?.data?.status || "";
       if (status === "done") break;
@@ -105,9 +119,9 @@ async function syncDay(apiKey, date) {
     }
     if (status !== "done") return { ok: false, err: `poll timeout, last=${status}` };
 
-    const dlRes = await fetch(`${HOST}/api/v1/paid_storage/tasks/${taskId}/download`, {
+    const dlRes = await fetchWithRetry(`${HOST}/api/v1/paid_storage/tasks/${taskId}/download`, {
       headers: { Authorization: apiKey },
-    });
+    }, "download");
     if (!dlRes.ok) return { ok: false, err: `download ${dlRes.status}` };
     const raw = await dlRes.json();
     const rows = Array.isArray(raw) ? raw : (Array.isArray(raw?.data) ? raw.data : []);
