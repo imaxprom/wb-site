@@ -28,8 +28,9 @@ CRON_TASKS = {
     "daily-sync": {"log": DATA_DIR / "daily-sync.log", "max_age_min": 120, "name": "Daily Sync"},
     "reviews-sync": {"log": DATA_DIR / "reviews-sync.log", "max_age_min": 15, "name": "Reviews Sync"},
     "reviews-complaints": {"log": DATA_DIR / "reviews-complaints.log", "max_age_min": 45, "name": "Reviews Complaints"},
-    "shipment-sync": {"log": DATA_DIR / "shipment-sync.log", "max_age_min": 360, "name": "Shipment Sync"},
-    "weekly-sync": {"log": DATA_DIR / "weekly-sync.log", "max_age_min": 1500, "name": "Weekly Sync"},
+    "shipment-sync": {"log": DATA_DIR / "shipment-sync.log", "max_age_min": 90, "name": "Shipment Sync"},
+    # Weekly-sync запускается Пн-Ср 10-23 МСК. В остальные дни и часы проверка пропускается.
+    "weekly-sync": {"log": DATA_DIR / "weekly-sync.log", "max_age_min": 90, "name": "Weekly Sync", "only_dow_msk": [1, 2, 3], "only_hours_msk": list(range(10, 24))},
 }
 
 # ─── Logging ─────────────────────────────────────────────────
@@ -136,7 +137,9 @@ def check_http():
 
 
 def check_cron_task(task_id, config):
-    """Check if cron task ran recently by log file modification time."""
+    """Check if cron task ran recently by log file modification time.
+    Если у задачи ограничено расписание (only_dow_msk / only_hours_msk),
+    вне этого окна проверка пропускается."""
     log_path = config["log"]
     max_age = config["max_age_min"]
 
@@ -146,10 +149,19 @@ def check_cron_task(task_id, config):
     mtime = datetime.fromtimestamp(log_path.stat().st_mtime)
     age_min = (datetime.now() - mtime).total_seconds() / 60
 
-    # During non-working hours (23:00-06:00 UTC = 02:00-09:00 MSK), skip time checks for hourly tasks
-    hour_utc = datetime.utcnow().hour
-    if hour_utc >= 21 or hour_utc < 3:
-        return {"ok": True, "age_min": round(age_min), "note": "night"}
+    # Расписание-aware check: если задача запускается только в определённые
+    # дни/часы (МСК), вне окна — skip.
+    now_utc = datetime.utcnow()
+    msk_hour = (now_utc.hour + 3) % 24
+    # ISO weekday: Пн=1..Вс=7
+    msk_dow = (now_utc.weekday() + 1) if (now_utc.hour + 3) < 24 else ((now_utc.weekday() + 1) % 7) + 1
+
+    only_dow = config.get("only_dow_msk")
+    only_hours = config.get("only_hours_msk")
+    if only_dow and msk_dow not in only_dow:
+        return {"ok": True, "age_min": round(age_min), "note": f"out-of-schedule (dow={msk_dow})"}
+    if only_hours and msk_hour not in only_hours:
+        return {"ok": True, "age_min": round(age_min), "note": f"out-of-schedule (hour={msk_hour})"}
 
     return {"ok": age_min <= max_age, "age_min": round(age_min)}
 
