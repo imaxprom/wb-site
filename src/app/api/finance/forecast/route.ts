@@ -203,7 +203,9 @@ export async function GET(request: NextRequest) {
     }
 
     // Fallback per-day: для дней без paid_storage берём realization.storage_fee
-    // за этот rr_dt и раскладываем равномерно по артикулам с юнит-экономикой.
+    // (общая сумма за rr_dt) и распределяем по артикулам через пропорции
+    // последнего доступного дня paid_storage — WB не раскладывает storage_fee
+    // по nm_id, поэтому используем структуру хранения предыдущего дня как прокси.
     const storageRealRaw = d.prepare(`
       SELECT r.rr_dt as date, SUM(r.storage_fee) as total
       FROM realization r
@@ -215,10 +217,37 @@ export async function GET(request: NextRequest) {
     for (const r of storageRealRaw) {
       if (!psDaysWithData.has(r.date)) storageFallbackByDay.set(r.date, r.total);
     }
+
+    // Пропорции для fallback: последний день с paid_storage (может быть до dateFrom).
+    // share[nm_id] = fraction этого nm_id в общем хранении того дня, Σ = 1.
+    const storageShareMap = new Map<number, number>();
+    if (storageFallbackByDay.size > 0) {
+      const lastPs = d.prepare(`
+        SELECT date FROM paid_storage WHERE date <= ?
+        GROUP BY date ORDER BY date DESC LIMIT 1
+      `).get(dateTo) as { date: string } | undefined;
+      if (lastPs) {
+        const shareRows = d.prepare(`
+          SELECT nm_id, SUM(warehouse_price) as total
+          FROM paid_storage WHERE date = ?
+          GROUP BY nm_id
+        `).all(lastPs.date) as { nm_id: number; total: number }[];
+        const shareSum = shareRows.reduce((s, r) => s + r.total, 0);
+        if (shareSum > 0) {
+          for (const r of shareRows) storageShareMap.set(r.nm_id, r.total / shareSum);
+        }
+      }
+    }
+
     const storageDay = (day: string, nmId: number, numArticles: number): number => {
       const fromPs = storageByDayNm.get(`${day}:${nmId}`);
       if (fromPs !== undefined) return fromPs;
       const fallback = storageFallbackByDay.get(day) || 0;
+      if (fallback === 0) return 0;
+      // Приоритет — разложить по пропорциям реального хранения (последний известный день)
+      const share = storageShareMap.get(nmId);
+      if (share !== undefined) return fallback * share;
+      // Крайний случай (нет paid_storage вообще в БД): равномерно
       return numArticles > 0 ? fallback / numArticles : 0;
     };
 
