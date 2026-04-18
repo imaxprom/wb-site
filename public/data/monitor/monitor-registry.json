@@ -103,6 +103,19 @@
     "lifecycle": "active"
   },
   {
+    "id": "paid-storage-sync",
+    "name": "Paid Storage Sync",
+    "nameRu": "Синхронизация хранения",
+    "description": "Ежедневно в 02:00 МСК догоняет paid_storage за последние 14 дней (WB API асинхронный, по одному дню с задержкой)",
+    "project": "MpHub",
+    "type": "node",
+    "cronPattern": "0 2 * * *",
+    "cronUser": "makson",
+    "scriptPath": "/home/makson/website/scripts/paid-storage-sync.js",
+    "logPath": "/home/makson/website/data/paid-storage-sync.log",
+    "lifecycle": "active"
+  },
+  {
     "id": "data-health-cron",
     "name": "Data Health Check",
     "nameRu": "Проверка здоровья данных",
