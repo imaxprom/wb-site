@@ -233,15 +233,36 @@ export async function GET(request: NextRequest) {
 
     const dayMap = new Map<string, DayForecast>();
 
+    // Pre-compute: сумма shipment_orders по дням (только по артикулам с юнит-экономикой,
+    // т.к. ниже в цикле `if (!econ) continue` отсекает остальные).
+    // Scale = funnel.order_count / shipmentTotalDay → приводит итог дня к ЛК WB,
+    // а заказы по артикулам распределяются пропорционально структуре shipment_orders.
+    // Нужно потому, что WB Statistics API /orders отстаёт от Analytics API /sales-funnel
+    // на свежих днях (до 25-30% в первые сутки).
+    const shipTotalByDay = new Map<string, number>();
+    for (const o of ordersDaily) {
+      if (!unitEcon.has(o.nm_id)) continue;
+      shipTotalByDay.set(o.day, (shipTotalByDay.get(o.day) || 0) + o.orders);
+    }
+    const scaleForDay = (day: string): number => {
+      const ship = shipTotalByDay.get(day) || 0;
+      const funnel = funnelMap.get(day)?.order_count || 0;
+      if (ship === 0 || funnel === 0) return 1;
+      return funnel / ship;
+    };
+
     for (const o of ordersDaily) {
       const econ = unitEcon.get(o.nm_id);
       if (!econ) continue;
+
+      const scale = scaleForDay(o.day);
+      const scaledOrders = o.orders * scale;
 
       const buyout = buyoutMap.get(o.nm_id) || 0.80;
       const adSpend = adsMap.get(`${o.day}:${o.nm_id}`) || 0;
       const storageDaily = storageDailyMap.get(o.nm_id) || 0;
       const penaltyDaily = penaltyDailyMap.get(o.nm_id) || 0;
-      const estSales = o.orders * buyout;
+      const estSales = scaledOrders * buyout;
       const estRevenue = estSales * econ.avgPrice;
       const estProfitBeforeAds = estSales * econ.profitPerUnit - storageDaily - penaltyDaily;
       const estProfit = estProfitBeforeAds - adSpend;
@@ -257,7 +278,7 @@ export async function GET(request: NextRequest) {
         });
       }
       const day = dayMap.get(o.day)!;
-      day.orders += o.orders;
+      day.orders += scaledOrders;
       day.estimated_revenue += estRevenue;
       day.estimated_profit_before_ads += estProfitBeforeAds;
       day.ad_spend += adSpend;
@@ -266,7 +287,7 @@ export async function GET(request: NextRequest) {
       day.estimated_profit += estProfit;
       day.articles.push({
         nm_id: o.nm_id, article: econ.article, custom_name: econ.customName,
-        orders: o.orders, buyout: Math.round(buyout * 1000) / 10,
+        orders: scaledOrders, buyout: Math.round(buyout * 1000) / 10,
         avg_price: Math.round(econ.avgPrice),
         cogs_unit: Math.round(econ.cogsUnit),
         logistics_unit: Math.round(econ.logUnit),
@@ -288,13 +309,16 @@ export async function GET(request: NextRequest) {
         const unmapped = adsUnmappedMap.get(day.date) || 0;
         return {
           ...day,
+          orders: Math.round(day.orders),
           estimated_revenue: Math.round(day.estimated_revenue),
           estimated_profit_before_ads: Math.round(day.estimated_profit_before_ads),
           ad_spend: Math.round(day.ad_spend + unmapped),
           storage: Math.round(day.storage),
           penalties: Math.round(day.penalties),
           estimated_profit: Math.round(day.estimated_profit - overheadDaily - unmapped),
-          articles: day.articles.sort((a, b) => b.estimated_profit - a.estimated_profit),
+          articles: day.articles
+            .map(a => ({ ...a, orders: Math.round(a.orders) }))
+            .sort((a, b) => b.estimated_profit - a.estimated_profit),
         };
       });
 
