@@ -139,13 +139,18 @@ export async function GET(request: NextRequest) {
       if (e) e.customName = cn.custom_name;
     }
 
-    // ── 2. % выкупа по артикулам: фактический за период эконом ──
-    // Было: (total - cancels) / total из shipment_orders по всей истории.
-    // Стало: sales_qty / orders_count за period из realization/shipment_orders.
-    // is_cancel в shipment_orders ловит только отмены до получения,
-    // настоящие возвраты после получения приходят в realization.
-    // Формула: выкуп = (продано - возвращено) / заказано.
-    const salesForBuyout = d.prepare(`
+    // ── 2. % выкупа по артикулам: трёхступенчатый fallback ──
+    // 1) За период прогноза (максимально точно для закрытых периодов).
+    // 2) Если за период мало данных (<30 заказов или sales=0) — за последние
+    //    90 дней до dateTo (исторический buyout по этому nm_id, для свежих
+    //    дней/будущего где realization ещё не пришла).
+    // 3) Если и за 90 дней <30 заказов — fallback 0.80 (реально новый товар).
+    // Формула: выкуп = (Продажа.qty - Возврат.qty) / заказано.
+    const HIST_BUYOUT_DAYS = 90;
+    const histFrom = shiftDays(dateTo, -HIST_BUYOUT_DAYS);
+
+    // Период прогноза: продажи и заказы
+    const salesPeriod = d.prepare(`
       SELECT r.nm_id,
         SUM(CASE WHEN r.supplier_oper_name = 'Продажа' THEN r.quantity ELSE 0 END) as sales_qty,
         SUM(CASE WHEN r.supplier_oper_name = 'Возврат' THEN r.quantity ELSE 0 END) as ret_qty
@@ -155,21 +160,60 @@ export async function GET(request: NextRequest) {
         ${dedupSale.sql}
       GROUP BY r.nm_id
     `).all(econFrom, econTo, ...dedupSale.params) as { nm_id: number; sales_qty: number; ret_qty: number }[];
-    const salesMap = new Map(salesForBuyout.map(r => [r.nm_id, r.sales_qty - r.ret_qty]));
+    const salesPeriodMap = new Map(salesPeriod.map(r => [r.nm_id, r.sales_qty - r.ret_qty]));
 
-    const ordersForBuyout = d.prepare(`
+    const ordersPeriod = d.prepare(`
       SELECT article_wb as nm_id, COUNT(*) as total
       FROM shipment_orders
       WHERE date >= ? AND date <= ? || 'T23:59:59'
       GROUP BY article_wb
     `).all(econFrom, econTo) as { nm_id: number; total: number }[];
+    const ordersPeriodMap = new Map(ordersPeriod.map(r => [r.nm_id, r.total]));
 
+    // Историческое окно 90 дней: продажи и заказы (для свежих/будущих дней)
+    const histDedupSale = getExcludeDailyFilter(d, "sale_dt", "r");
+    const salesHist = d.prepare(`
+      SELECT r.nm_id,
+        SUM(CASE WHEN r.supplier_oper_name = 'Продажа' THEN r.quantity ELSE 0 END) as sales_qty,
+        SUM(CASE WHEN r.supplier_oper_name = 'Возврат' THEN r.quantity ELSE 0 END) as ret_qty
+      FROM realization r
+      WHERE r.supplier_oper_name IN ('Продажа','Возврат')
+        AND r.sale_dt >= ? AND r.sale_dt <= ? AND r.nm_id > 0
+        ${histDedupSale.sql}
+      GROUP BY r.nm_id
+    `).all(histFrom, dateTo, ...histDedupSale.params) as { nm_id: number; sales_qty: number; ret_qty: number }[];
+    const salesHistMap = new Map(salesHist.map(r => [r.nm_id, r.sales_qty - r.ret_qty]));
+
+    const ordersHist = d.prepare(`
+      SELECT article_wb as nm_id, COUNT(*) as total
+      FROM shipment_orders
+      WHERE date >= ? AND date <= ? || 'T23:59:59'
+      GROUP BY article_wb
+    `).all(histFrom, dateTo) as { nm_id: number; total: number }[];
+    const ordersHistMap = new Map(ordersHist.map(r => [r.nm_id, r.total]));
+
+    // Собираем Map для всех артикулов, которые встречаются в заказах за период
+    // или исторически. Это позволит резолвить buyout даже для артикулов,
+    // которых нет в эконом-периоде (например, свежая поставка).
+    const allNmIds = new Set<number>([...ordersPeriodMap.keys(), ...ordersHistMap.keys()]);
     const buyoutMap = new Map<number, number>();
-    for (const o of ordersForBuyout) {
-      const netSold = salesMap.get(o.nm_id) || 0;
-      // Если заказов мало или продаж мало — fallback 80% (иначе шумит)
-      if (o.total < 30 || netSold <= 0) buyoutMap.set(o.nm_id, 0.80);
-      else buyoutMap.set(o.nm_id, Math.min(1, netSold / o.total));
+    for (const nm of allNmIds) {
+      // Ступень 1: период прогноза
+      const periodOrders = ordersPeriodMap.get(nm) || 0;
+      const periodSales = salesPeriodMap.get(nm) || 0;
+      if (periodOrders >= 30 && periodSales > 0) {
+        buyoutMap.set(nm, Math.min(1, periodSales / periodOrders));
+        continue;
+      }
+      // Ступень 2: исторические 90 дней
+      const histOrders = ordersHistMap.get(nm) || 0;
+      const histSales = salesHistMap.get(nm) || 0;
+      if (histOrders >= 30 && histSales > 0) {
+        buyoutMap.set(nm, Math.min(1, histSales / histOrders));
+        continue;
+      }
+      // Ступень 3: дефолт
+      buyoutMap.set(nm, 0.80);
     }
 
     // ── 3. Заказы за прогнозируемый период ──
