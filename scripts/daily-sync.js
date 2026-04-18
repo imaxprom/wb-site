@@ -391,8 +391,8 @@ async function fetchCampaignNmMap(apiKey) {
   } catch { return { ok: false, map }; }
 }
 
-async function syncAdvertising(date) {
-  const result = { ok: false, value: 0, stable: false, prevValue: 0, lastAttempt: new Date().toISOString(), error: undefined };
+async function syncAdvertising(date, prevValue) {
+  const result = { ok: false, value: 0, stable: false, prevValue: prevValue || 0, lastAttempt: new Date().toISOString(), error: undefined };
   const apiKey = getApiKey();
   if (!apiKey) { result.error = "Нет WB API ключа"; return result; }
 
@@ -451,12 +451,11 @@ async function syncAdvertising(date) {
 
     result.ok = true;
     result.value = total;
-    // stable=true если справочник кампаний /adverts ответил (даже если пустой).
-    // Отсутствующие кампании = архивные WB, retry ничего не даст.
-    result.stable = adverts.ok;
-    if (!result.stable) {
-      result.error = "Справочник кампаний /adverts недоступен — повторю на следующем часу";
-    }
+    // stable=true только когда сумма совпала с предыдущим запуском.
+    // Причина: WB публикует "финальный добор" за сутки с updTime=23:59:59
+    // уже ПОСЛЕ полуночи — одного stable-фетча в течение дня недостаточно.
+    // /adverts-справочник нужен только для маппинга nm_id и на stable не влияет.
+    result.stable = prevValue > 0 && Math.abs(total - prevValue) < 0.01;
   } catch (err) {
     result.error = err.message || String(err);
   }
@@ -588,9 +587,14 @@ function dateNDaysAgo(n) {
 }
 
 /**
- * Для каждого из последних 5 дней (today-2 .. today-6) сравниваем данные
+ * Для каждого из последних N дней (today-1 .. today-N) сравниваем данные
  * в БД с тем, что сейчас отдаёт WB. Если отличаются — перезаписываем.
  * Если совпадают — ничего не делаем (принцип "если одинаковые — не трогаем").
+ *
+ * n=1 (yesterday) важно для рекламы: WB публикует "финальный добор" за сутки
+ * с updTime=23:59:59 задним числом, после полуночи — обычный stable-флаг
+ * в main() этот добор не увидит. Retro-проверка через час после появления
+ * поймает разницу и перезапишет день.
  */
 async function retroactiveCheck() {
   const apiKey = getApiKey();
@@ -599,7 +603,7 @@ async function retroactiveCheck() {
   const DAYS = 7;
   log(`  Retro check (${DAYS} дней):`);
 
-  for (let n = 2; n <= 1 + DAYS; n++) {
+  for (let n = 1; n <= DAYS; n++) {
     const date = dateNDaysAgo(n);
     let changed = [];
 
@@ -908,8 +912,8 @@ async function main() {
 
   if (!day.advertising.ok || !day.advertising.stable) {
     log("  Advertising...");
-    day.advertising = await syncAdvertising(date);
-    log(`  Advertising: ${day.advertising.ok ? day.advertising.value + " руб" + (day.advertising.stable ? " (stable)" : " (unmapped)") : "FAIL: " + day.advertising.error}`);
+    day.advertising = await syncAdvertising(date, day.advertising.value);
+    log(`  Advertising: ${day.advertising.ok ? day.advertising.value + " руб" + (day.advertising.stable ? " (stable)" : " (pending stable)") : "FAIL: " + day.advertising.error}`);
   }
 
   if (!day.orders.ok || !day.orders.stable) {

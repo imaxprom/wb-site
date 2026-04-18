@@ -55,8 +55,8 @@ export async function syncAll(date?: string): Promise<DaySyncStatus> {
   if (!day.advertising.ok || !day.advertising.stable) {
     try {
       console.log("[daily-sync] Syncing advertising...");
-      day.advertising = await syncAdvertising(targetDate);
-      console.log(`[daily-sync] Advertising: ${day.advertising.ok ? "OK (" + day.advertising.value + " руб" + (day.advertising.stable ? ", stable" : ", unmapped") + ")" : "FAIL: " + day.advertising.error}`);
+      day.advertising = await syncAdvertising(targetDate, day.advertising.value);
+      console.log(`[daily-sync] Advertising: ${day.advertising.ok ? "OK (" + day.advertising.value + " руб" + (day.advertising.stable ? ", stable" : ", pending stable") + ")" : "FAIL: " + day.advertising.error}`);
     } catch (err) {
       day.advertising.error = `CRASH: ${err instanceof Error ? err.message : String(err)}`;
       console.error("[daily-sync] Advertising CRASHED:", err);

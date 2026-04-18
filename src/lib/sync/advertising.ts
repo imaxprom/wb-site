@@ -33,8 +33,8 @@ async function fetchCampaignNmMap(apiKey: string): Promise<{ ok: boolean; map: M
   } catch { return { ok: false, map }; }
 }
 
-export async function syncAdvertising(date: string): Promise<SourceStatus> {
-  const s: SourceStatus = { ...emptySource(), lastAttempt: new Date().toISOString() };
+export async function syncAdvertising(date: string, prevValue = 0): Promise<SourceStatus> {
+  const s: SourceStatus = { ...emptySource(), prevValue, lastAttempt: new Date().toISOString() };
   const apiKey = getApiKey();
   if (!apiKey) { s.error = "Нет WB API ключа"; return s; }
 
@@ -98,12 +98,10 @@ export async function syncAdvertising(date: string): Promise<SourceStatus> {
 
     s.ok = true;
     s.value = total;
-    // stable=true если справочник /adverts ответил (даже если пустой).
-    // Отсутствующие кампании = архивные WB, retry не поможет.
-    s.stable = adverts.ok;
-    if (!s.stable) {
-      s.error = "Справочник кампаний /adverts недоступен — повторю на следующем часу";
-    }
+    // stable=true только когда сумма совпала с предыдущим запуском.
+    // WB публикует "финальный добор" за сутки (updTime=23:59:59) уже после
+    // полуночи — одного успешного фетча недостаточно, нужна пара совпавших.
+    s.stable = prevValue > 0 && Math.abs(total - prevValue) < 0.01;
   } catch (err) {
     s.error = err instanceof Error ? err.message : String(err);
   }
