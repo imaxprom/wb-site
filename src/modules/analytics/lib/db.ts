@@ -21,15 +21,11 @@ export function getDb(): Database.Database {
 
 // ─── Dedup Filter ────────────────────────────────────────────
 
-let wfPeriodsCache: { date_from: string; date_to: string }[] | null = null;
-
 function getWeeklyFinalPeriods(d: Database.Database): { date_from: string; date_to: string }[] {
-  if (wfPeriodsCache) return wfPeriodsCache;
-  wfPeriodsCache = d.prepare(`
+  return d.prepare(`
     SELECT DISTINCT date_from, date_to FROM realization
     WHERE source = 'weekly_final' AND date_from != '' AND date_to != ''
   `).all() as { date_from: string; date_to: string }[];
-  return wfPeriodsCache;
 }
 
 export function getExcludeDailyFilter(d: Database.Database, dateCol: string = "sale_dt", alias: string = "r"): { sql: string; params: string[] } {

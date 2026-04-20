@@ -262,16 +262,11 @@ function nextDay(dateStr: string): string {
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 }
 
-/** Кэш weekly_final периодов (не меняются в рамках запроса) */
-let wfPeriodsCache: { date_from: string; date_to: string }[] | null = null;
-
 function getWeeklyFinalPeriods(d: Database.Database): { date_from: string; date_to: string }[] {
-  if (wfPeriodsCache) return wfPeriodsCache;
-  wfPeriodsCache = d.prepare(`
+  return d.prepare(`
     SELECT DISTINCT date_from, date_to FROM realization
     WHERE source = 'weekly_final' AND date_from != '' AND date_to != ''
   `).all() as { date_from: string; date_to: string }[];
-  return wfPeriodsCache;
 }
 
 /**
