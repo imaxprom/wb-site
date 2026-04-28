@@ -303,7 +303,44 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
         packing: packItems(items, v2BoxConfig, 999, 1, 1),
       };
     }).filter((p) => p.packing.totalBoxes > 0);
-    return aggregatePackingByRegion(packingByRegion);
+
+    const articles = aggregatePackingByRegion(packingByRegion);
+
+    // Дозаполняем размеры с нулевой потребностью — чтобы режим «Кораба»
+    // показывал тот же набор размеров, что и «Штуки» (с прочерками).
+    // Артикулы, отброшенные aggregatePackingByRegion (без deficit вообще), не воскрешаем.
+    const articleMap = new Map(articles.map(a => [a.articleWB, a]));
+    for (const row of effectiveRows) {
+      const aid = row.articleWB || "";
+      const art = articleMap.get(aid);
+      if (!art) continue;
+      if (art.sizes.find(s => s.item.barcode === row.barcode)) continue;
+      art.sizes.push({
+        item: {
+          id: row.barcode,
+          label: aid ? `${aid} / ${row.size}` : row.size,
+          articleWB: aid,
+          articleName: row.articleName || "",
+          productName: overrides[aid]?.customName || row.articleName || "",
+          size: row.size,
+          barcode: row.barcode,
+          needed: 0,
+          perBox: row.perBox,
+          unitVolume: unitVolumeLiters(v2BoxConfig, row.perBox),
+        },
+        qtyByRegion: {},
+      });
+    }
+    const LETTER_ORDER: Record<string, number> = { XS: 1, S: 2, M: 3, L: 4, XL: 5, XXL: 6, XXXL: 7 };
+    const sizeSortKey = (s: string): number => {
+      const num = s.match(/\d+/);
+      if (num) return parseInt(num[0], 10);
+      return LETTER_ORDER[s.trim().toUpperCase()] ?? 999;
+    };
+    for (const art of articles) {
+      art.sizes.sort((a, b) => sizeSortKey(a.item.size) - sizeSortKey(b.item.size));
+    }
+    return articles;
   }, [mode, effectiveRows, effectiveRegionConfigs, v2BoxRounding, v2BoxConfig, overrides]);
 
   // Articles aggregated for UNITS mode (direct from effectiveRows, no packing)
