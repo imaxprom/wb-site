@@ -104,7 +104,7 @@ def check_pm2():
     """Check PM2 mphub process."""
     try:
         result = subprocess.run(
-            ["sudo", "pm2", "jlist"],
+            ["pm2", "jlist"],
             capture_output=True, text=True, timeout=10,
         )
         procs = json.loads(result.stdout)
@@ -129,7 +129,7 @@ def check_http():
     """Check if website responds."""
     try:
         result = subprocess.run(
-            ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "10", "http://localhost:80"],
+            ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "10", "http://127.0.0.1:3000/login"],
             capture_output=True, text=True, timeout=15,
         )
         code = result.stdout.strip()
@@ -186,7 +186,7 @@ def restart_pm2():
     try:
         log("  Restarting PM2 mphub...")
         result = subprocess.run(
-            ["sudo", "pm2", "restart", "mphub"],
+            ["pm2", "restart", "mphub"],
             capture_output=True, text=True, timeout=30,
         )
         time.sleep(5)

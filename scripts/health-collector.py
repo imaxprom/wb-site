@@ -56,7 +56,7 @@ def get_pm2_list() -> list:
     global _PM2_CACHE
     if _PM2_CACHE is not None:
         return _PM2_CACHE
-    raw = run_cmd("sudo pm2 jlist 2>/dev/null") or run_cmd("pm2 jlist 2>/dev/null")
+    raw = run_cmd("pm2 jlist 2>/dev/null") or run_cmd("sudo pm2 jlist 2>/dev/null")
     try:
         _PM2_CACHE = json.loads(raw) if raw else []
     except Exception:

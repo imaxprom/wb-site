@@ -36,7 +36,7 @@ curl -I https://hub.imaxprom.site/api/auth/me
 Проверка приложения с самого VPS:
 
 ```bash
-curl -I http://127.0.0.1/login
+curl -I http://127.0.0.1:3000/login
 curl -I http://192.168.55.104/login
 ```
 
@@ -75,6 +75,8 @@ External user
   -> hub.imaxprom.site / 46.19.118.18
   -> external nginx / HTTPS termination
   -> 192.168.55.104:80
+  -> local proxy
+  -> 127.0.0.1:3000
   -> Next.js under PM2 (mphub)
 ```
 
@@ -113,7 +115,7 @@ cd ~/website && bash scripts/prod-safe-build.sh
 2. останавливает PM2 process `mphub`;
 3. запускает `npm run build`;
 4. перезапускает PM2;
-5. проверяет `http://127.0.0.1/login`;
+5. проверяет `http://127.0.0.1:3000/login`;
 6. при ошибке сборки, старта или health-check восстанавливает предыдущую `.next`.
 
 ## Production Cron

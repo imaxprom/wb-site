@@ -6,7 +6,7 @@ set -u
 
 APP_NAME="${APP_NAME:-mphub}"
 APP_DIR="${APP_DIR:-$HOME/website}"
-HEALTH_URL="${HEALTH_URL:-http://127.0.0.1/login}"
+HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:3000/login}"
 BACKUP_ROOT="${BACKUP_ROOT:-$APP_DIR/.deploy-backups}"
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
 NEXT_BACKUP="$BACKUP_ROOT/.next-$STAMP"
@@ -40,7 +40,7 @@ restore_previous_build() {
   fi
 
   echo "[deploy] starting previous PM2 app"
-  sudo pm2 restart "$APP_NAME" --update-env || true
+  pm2 restart "$APP_NAME" || true
   exit 1
 }
 
@@ -59,7 +59,7 @@ wait_for_health() {
 }
 
 echo "[deploy] stopping PM2 app"
-sudo pm2 stop "$APP_NAME" || exit 1
+pm2 stop "$APP_NAME" || exit 1
 
 echo "[deploy] building"
 if ! npm run build; then
@@ -67,7 +67,7 @@ if ! npm run build; then
 fi
 
 echo "[deploy] starting PM2 app"
-if ! sudo pm2 restart "$APP_NAME" --update-env; then
+if ! pm2 restart "$APP_NAME"; then
   restore_previous_build "PM2 restart failed"
 fi
 
@@ -76,6 +76,6 @@ if ! wait_for_health; then
 fi
 
 echo "[deploy] PM2 status"
-sudo pm2 status "$APP_NAME" --no-color
+pm2 status "$APP_NAME" --no-color
 
 echo "[deploy] OK"

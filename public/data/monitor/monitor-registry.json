@@ -8,7 +8,7 @@
     "type": "node",
     "pm2Name": "mphub",
     "scriptPath": "/home/makson/website/node_modules/.bin/next",
-    "logPath": "/root/.pm2/logs/mphub-out.log",
+    "logPath": "/home/makson/.pm2/logs/mphub-out.log",
     "lifecycle": "active"
   },
   {
