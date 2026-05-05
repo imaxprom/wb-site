@@ -24,6 +24,28 @@ TOKENS_PATH = DATA_DIR / "wb-tokens.json"
 # Collected request/response log
 request_log = []
 
+def write_secret_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.chmod(0o700)
+    except OSError:
+        pass
+
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.{int(time.time() * 1000)}.tmp")
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, path)
+        os.chmod(path, 0o600)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
 def log_request(method, url, req_headers=None, req_body=None, resp_status=None, resp_headers=None, resp_body=None):
     """Log every request/response for analysis."""
     entry = {
@@ -238,7 +260,7 @@ def extract_tokens(resp, resp_body):
 
     if tokens["authorizev3"]:
         print(f"\n  authorizev3 token captured! Length: {len(tokens['authorizev3'])}")
-        TOKENS_PATH.write_text(json.dumps(tokens, indent=2, ensure_ascii=False))
+        write_secret_json(TOKENS_PATH, tokens)
         print(f"  Saved to {TOKENS_PATH}")
     else:
         print("\n  No auth token found yet.")

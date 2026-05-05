@@ -4,6 +4,7 @@
  */
 import fs from "fs";
 import path from "path";
+import { writeSecretFileSync } from "./secure-file";
 
 const KEY_PATH = path.join(process.cwd(), "data", "wb-api-key.txt");
 
@@ -20,9 +21,7 @@ export function getWbApiKey(): string | null {
 
 /** Save WB API key. */
 export function setWbApiKey(key: string): void {
-  const dir = path.dirname(KEY_PATH);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(KEY_PATH, key.trim(), "utf-8");
+  writeSecretFileSync(KEY_PATH, key.trim());
 }
 
 /** Delete WB API key. */

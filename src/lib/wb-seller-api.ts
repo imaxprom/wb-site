@@ -4,6 +4,7 @@
  */
 import fs from "fs";
 import path from "path";
+import { ensurePrivateDir, writeSecretFileSync } from "./secure-file";
 
 const TOKEN_PATH = path.join(process.cwd(), "data", "wb-tokens.json");
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -23,13 +24,13 @@ export interface WbTokens {
 }
 
 function ensureDirs() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  ensurePrivateDir(DATA_DIR);
   if (!fs.existsSync(REPORTS_DIR)) fs.mkdirSync(REPORTS_DIR, { recursive: true });
 }
 
 export function saveTokens(tokens: WbTokens): void {
   ensureDirs();
-  fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
+  writeSecretFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
 }
 
 /**

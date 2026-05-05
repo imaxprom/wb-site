@@ -2,6 +2,7 @@ import puppeteer, { type Browser, type Page } from "puppeteer";
 import path from "path";
 import fs from "fs";
 import { saveTokens, refreshSellerToken, checkApiSession as checkApi, type WbTokens } from "./wb-seller-api";
+import { ensurePrivateDir, writeSecretFileSync } from "./secure-file";
 
 // --- Constants ---
 const SELLER_AUTH_URL = "https://seller-auth.wildberries.ru";
@@ -19,7 +20,7 @@ function setPageInstance(p: Page | null) { g.__wbPage = p; }
 
 function ensureDirs() {
   const dataDir = path.join(process.cwd(), "data");
-  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+  ensurePrivateDir(dataDir);
   if (!fs.existsSync(DOWNLOADS_DIR)) fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
 }
 
@@ -85,8 +86,8 @@ async function saveAllCookies(page: Page): Promise<void> {
   ensureDirs();
   const client = await page.createCDPSession();
   const { cookies } = await client.send("Network.getAllCookies") as { cookies: CdpCookie[] };
-  fs.writeFileSync(COOKIES_PATH, JSON.stringify(cookies, null, 2));
-  fs.writeFileSync(COOKIES_META_PATH, JSON.stringify({ savedAt: new Date().toISOString() }));
+  writeSecretFileSync(COOKIES_PATH, JSON.stringify(cookies, null, 2));
+  writeSecretFileSync(COOKIES_META_PATH, JSON.stringify({ savedAt: new Date().toISOString() }));
   await client.detach();
 }
 

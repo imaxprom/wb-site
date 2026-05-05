@@ -15,6 +15,32 @@ LOG_PATH = "/tmp/wb_auth_log.txt"
 SMS_CODE_PATH = "/tmp/wb_sms_code"
 SUPPLIER_CHOICE_PATH = "/tmp/wb_supplier_choice"
 
+def write_secret_json(path, data):
+    data_dir = os.path.dirname(path)
+    os.makedirs(data_dir, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(data_dir, 0o700)
+    except OSError:
+        pass
+
+    tmp_path = os.path.join(
+        data_dir,
+        f".{os.path.basename(path)}.{os.getpid()}.{int(time.time() * 1000)}.tmp",
+    )
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, path)
+        os.chmod(path, 0o600)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
 class TeeWriter:
     def __init__(self, *streams):
         self.streams = streams
@@ -379,8 +405,7 @@ with sync_playwright() as p:
             "cookies": cookie_string,
             "savedAt": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
         }
-        with open(TOKENS_PATH, "w") as f:
-            json.dump(tokens, f, indent=2)
+        write_secret_json(TOKENS_PATH, tokens)
         print("Tokens saved to", TOKENS_PATH)
         status("success", message="Авторизация успешна!", supplier=current_supplier)
     else:

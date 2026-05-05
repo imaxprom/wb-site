@@ -7,6 +7,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { checkApiSession } from "./wb-seller-api";
+import { writeSecretFileSync } from "./secure-file";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const TOKENS_PATH = path.join(DATA_DIR, "wb-tokens.json");
@@ -372,7 +373,7 @@ async function refreshSellerTokenFromAuth(): Promise<void> {
       tokens.wbSellerLkExpires = payload.exp || 0;
       tokens.supplierId = sd["Z-Sfid"] || sd["Z-Soid"] || "";
       tokens.supplierUuid = sd["Z-Sid"] || "";
-      fs.writeFileSync(TOKENS_PATH, JSON.stringify(tokens, null, 2));
+      writeSecretFileSync(TOKENS_PATH, JSON.stringify(tokens, null, 2));
       console.log("[wb-auth-pw] Seller token refreshed, supplierId:", tokens.supplierId);
     }
   } catch (err) {
