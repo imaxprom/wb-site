@@ -790,7 +790,7 @@
       "blocks": [
         {
           "type": "text",
-          "content": "Мониторинг production смотрит на сервисы VPS: PM2-процесс mphub и cron-скрипты в /home/makson/website. Все /api/monitor/* закрыты admin-cookie через requireMonitorAdmin. Ручной запуск /api/monitor/run оставлен как спорная функция; кнопки ручного запуска пока не развиваем."
+          "content": "Мониторинг production смотрит на сервисы VPS: PM2-процесс mphub и cron-скрипты в /home/makson/website. Все /api/monitor/* закрыты admin-cookie через requireMonitorAdmin. Ручной запуск /api/monitor/run считаем deprecated: функцию не развиваем и при следующей чистке можно вырезать вместе с UI-кнопками."
         },
         {
           "type": "schema",
@@ -854,7 +854,7 @@
             "src/app/api/monitor/logs/route.ts — чтение логов",
             "src/app/api/monitor/data-health/route.ts — здоровье данных",
             "src/app/api/monitor/auth-status/route.ts — WB auth/API проверка",
-            "src/app/api/monitor/run/route.ts — ручной запуск; оставлен, но не развиваем до отдельного решения"
+            "src/app/api/monitor/run/route.ts — deprecated ручной запуск; не развиваем, кандидат на удаление вместе с UI-кнопками"
           ]
         },
         {
@@ -873,7 +873,7 @@
           "items": [
             "На production нет launchd; старые инструкции launchctl относятся к MacBook-схеме и не применяются к VPS",
             "PM2 error-log не чистим без отдельного решения: старые записи нужны для диагностики",
-            "Предупреждение Turbopack по /api/monitor/run связано с child_process/fs и не является падением сборки",
+            "Предупреждение Turbopack по /api/monitor/run связано с deprecated ручным запуском и принято как известный шум до удаления endpoint",
             "Rate-limit WB при отправке SMS-кода — внешнее ограничение WB, не ошибка мониторинга"
           ]
         }

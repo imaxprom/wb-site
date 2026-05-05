@@ -104,7 +104,7 @@ if (!JWT_SECRET) throw new Error("JWT_SECRET environment variable is required in
 
 **Как закрыто:** `src/lib/api-auth.ts` проверяет `mphub-token`, JWT и роль `admin`; `src/lib/monitor-auth.ts` использует тот же admin-check.
 
-**Осторожность:** `/api/monitor/run` всё ещё содержит `child_process` и даёт Turbopack warning. Функцию ручного запуска решили не развивать, пока непонятно, нужны ли кнопки запуска.
+**Решение:** `/api/monitor/run` и ручные кнопки запуска мониторинга считаем deprecated. Функцию не развиваем и не держим в списке активных production-проблем; при следующей чистке её можно вырезать вместе с UI-кнопками. Текущее Turbopack warning по этому endpoint принято как известный шум до удаления.
 
 ---
 
