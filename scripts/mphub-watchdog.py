@@ -49,8 +49,8 @@ def load_env_file(path):
 
 # Telegram
 load_env_file(TELEGRAM_ENV_PATH)
-TG_TOKEN = os.environ.get("MPHUB_WATCHDOG_TG_TOKEN", "")
-TG_CHAT_ID = os.environ.get("MPHUB_WATCHDOG_CHAT_ID", "")
+TG_TOKEN = os.environ.get("MPHUB_WATCHDOG_TG_TOKEN") or os.environ.get("TG_TOKEN", "")
+TG_CHAT_ID = os.environ.get("MPHUB_WATCHDOG_CHAT_ID") or os.environ.get("TG_CHAT_ID", "")
 
 # Thresholds
 ERROR_THRESHOLD = 10          # errorsLast24h > this triggers analysis
@@ -246,7 +246,7 @@ LEVEL_EMOJI = {"INFO": "✅", "WARNING": "⚠️", "CRITICAL": "🚨"}
 
 def send_telegram(level, message):
     if not TG_TOKEN or not TG_CHAT_ID:
-        log("  Telegram skipped: MPHUB_WATCHDOG_TG_TOKEN/MPHUB_WATCHDOG_CHAT_ID are not configured")
+        log("  Telegram skipped: TG_TOKEN/TG_CHAT_ID are not configured")
         return
     emoji = LEVEL_EMOJI.get(level, "ℹ️")
     text = f"{emoji} *MpHub Watchdog — {level}*\n\n{message}"

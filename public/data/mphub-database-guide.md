@@ -856,6 +856,7 @@ function verifyPassword(password: string, stored: string): boolean {
 | `data/weekly_reports.db` | 600 | Финансовые отчёты |
 | `data/wb-api-key.txt` | 600 | API-ключ WB |
 | `data/wb-tokens.json` | 600 рекомендуется | Токены WB |
+| `data/telegram.env` | 600 | Telegram bot token и chat id для cron-алертов |
 
 ---
 

@@ -16,6 +16,7 @@ data/wb-api-key.txt
 data/wb-tokens.json
 data/wb-cookies.json
 data/cron-secret.txt
+data/telegram.env
 data/api-snapshots/
 data/reports/
 data/adv-nm-cache.json
