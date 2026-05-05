@@ -2242,7 +2242,7 @@
           "title": "Тестирование и утилиты",
           "items": [
             "test-api.sh — smoke/API проверки",
-            "e2e-test.js — E2E через Puppeteer",
+            "e2e-test.js — архивный E2E через Puppeteer; не входит в актуальный production-хвост",
             "screenshot.js — скриншот страницы",
             "wb-seller-login.py — вспомогательная авторизация WB Seller",
             "wb-auth-sniffer.py / wb-sniff.mjs — диагностика WB auth/API через браузер/CDP",
