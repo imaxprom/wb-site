@@ -3,6 +3,16 @@ import { NextRequest, NextResponse } from "next/server";
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  if (pathname === "/robots.txt") {
+    return new NextResponse("User-agent: *\nDisallow: /\n", {
+      status: 200,
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "X-Robots-Tag": "noindex, nofollow, noarchive",
+      },
+    });
+  }
+
   // Skip auth-related and static paths
   if (
     pathname.startsWith("/login") ||
@@ -17,6 +27,7 @@ export function middleware(request: NextRequest) {
     pathname.startsWith("/reviews") ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/data") ||
+    pathname === "/robots.txt" ||
     pathname === "/favicon.ico" ||
     pathname.startsWith("/logo-")
   ) {
@@ -32,5 +43,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon\\.ico).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon\\.ico|robots\\.txt).*)"],
 };

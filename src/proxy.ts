@@ -7,6 +7,16 @@ import { NextRequest, NextResponse } from "next/server";
 export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
+  if (pathname === "/robots.txt") {
+    return new NextResponse("User-agent: *\nDisallow: /\n", {
+      status: 200,
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "X-Robots-Tag": "noindex, nofollow, noarchive",
+      },
+    });
+  }
+
   // Always allow login page and auth API
   if (pathname === "/login" || pathname.startsWith("/api/auth/")) {
     return NextResponse.next();
@@ -16,6 +26,7 @@ export function proxy(req: NextRequest) {
   if (
     pathname.startsWith("/_next/") ||
     pathname.startsWith("/data/") ||
+    pathname === "/robots.txt" ||
     pathname === "/favicon.ico" ||
     pathname.startsWith("/logo-")
   ) {
@@ -34,6 +45,6 @@ export function proxy(req: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico).*)",
+    "/((?!_next/static|_next/image|favicon.ico|robots.txt).*)",
   ],
 };

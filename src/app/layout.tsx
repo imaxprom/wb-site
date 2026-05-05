@@ -6,6 +6,16 @@ import { ClientShell } from "@/components/ClientShell";
 export const metadata: Metadata = {
   title: "MpHub — от Seller для Seller",
   description: "Аналитика и управление продажами на маркетплейсах",
+  robots: {
+    index: false,
+    follow: false,
+    nocache: true,
+    googleBot: {
+      index: false,
+      follow: false,
+      noimageindex: true,
+    },
+  },
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
