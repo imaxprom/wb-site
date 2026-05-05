@@ -15,6 +15,7 @@ data/*.log
 data/wb-api-key.txt
 data/wb-tokens.json
 data/wb-cookies.json
+data/cron-secret.txt
 data/api-snapshots/
 data/reports/
 data/adv-nm-cache.json

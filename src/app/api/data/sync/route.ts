@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
+import { isCronRequest } from "@/lib/cron-auth";
 import {
   initShipmentTables,
   saveOrders,
@@ -88,8 +89,10 @@ async function fetchAllOrders(apiKey: string, days: number): Promise<WBOrder[]> 
 }
 
 export async function POST(req: NextRequest) {
-  const authError = requireAdmin(req);
-  if (authError) return authError;
+  if (!isCronRequest(req)) {
+    const authError = requireAdmin(req);
+    if (authError) return authError;
+  }
 
   try {
     const body = await req.json().catch(() => ({})) as { days?: number };

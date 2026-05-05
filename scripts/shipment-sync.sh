@@ -9,6 +9,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DATA_DIR="$PROJECT_DIR/data"
 LOG="$DATA_DIR/shipment-sync.log"
 LOCK_DIR="$DATA_DIR/shipment-sync.lock"
+CRON_SECRET_FILE="$DATA_DIR/cron-secret.txt"
 
 mkdir -p "$DATA_DIR"
 
@@ -78,8 +79,15 @@ trap cleanup EXIT INT TERM
 URL="$BASE_URL/api/data/sync"
 log "Shipment sync started (days=$DAYS, url=$URL)"
 
+CRON_SECRET="$(cat "$CRON_SECRET_FILE" 2>/dev/null || true)"
+if [ -z "$CRON_SECRET" ]; then
+  log "ERROR: cron secret is missing: $CRON_SECRET_FILE"
+  exit 1
+fi
+
 RESP=$(curl --max-time 600 -sS -X POST "$URL" \
   -H "Content-Type: application/json" \
+  -H "x-mphub-cron-secret: $CRON_SECRET" \
   -d "{\"days\": $DAYS}" \
   -w "\n%{http_code}" 2>&1)
 
