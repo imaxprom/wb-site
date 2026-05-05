@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/api-auth";
 import { getDb, getLastWeekCorrection, initShipmentTables } from "@/lib/shipment-db";
 import { apiError } from "@/lib/api-utils";
 import type { OrderAggregates } from "@/types";
@@ -35,6 +36,9 @@ function fmtDDMM(d: Date): string {
 }
 
 export async function GET(req: NextRequest) {
+  const authError = requireAdmin(req);
+  if (authError) return authError;
+
   try {
     initShipmentTables();
     const days = Number(req.nextUrl.searchParams.get("days") || "28");

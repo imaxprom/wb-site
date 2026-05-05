@@ -2,10 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { readFileSync, existsSync } from "fs";
 import { execSync } from "child_process";
 import { join } from "path";
+import { requireMonitorAdmin } from "@/lib/monitor-auth";
 
 const REGISTRY_PATH = join(process.cwd(), "public/data/monitor/monitor-registry.json");
 
 export async function GET(req: NextRequest) {
+  const authError = requireMonitorAdmin(req);
+  if (authError) return authError;
+
   const { searchParams } = req.nextUrl;
   const id = searchParams.get("id");
   const lines = Math.min(parseInt(searchParams.get("lines") || "50", 10), 500);

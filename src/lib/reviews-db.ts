@@ -41,6 +41,23 @@ export interface ReviewAccount {
   updated_at: string;
 }
 
+export interface PublicReviewAccount extends Omit<ReviewAccount, "api_key" | "wb_authorize_v3" | "wb_validation_key"> {
+  has_api_key: boolean;
+  has_wb_authorize_v3: boolean;
+  has_wb_validation_key: boolean;
+}
+
+export function toPublicReviewAccount(account: ReviewAccount): PublicReviewAccount {
+  const { api_key, wb_authorize_v3, wb_validation_key, ...rest } = account;
+
+  return {
+    ...rest,
+    has_api_key: Boolean(api_key),
+    has_wb_authorize_v3: Boolean(wb_authorize_v3),
+    has_wb_validation_key: Boolean(wb_validation_key),
+  };
+}
+
 export interface Review {
   id: number;
   account_id: number;

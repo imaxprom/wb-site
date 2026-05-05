@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Standalone daily sync script — runs independently of Next.js.
- * Called by macOS launchd every hour (06:00–23:00).
+ * Called by production cron every hour.
  *
  * Pulls 3 data sources for yesterday into SQLite:
  * 1. Realization report (seller-services API)

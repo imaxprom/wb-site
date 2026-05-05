@@ -11,7 +11,7 @@ interface Account {
   store_name: string | null;
   inn: string | null;
   supplier_id: string | null;
-  api_key: string;
+  has_api_key: boolean;
   cookie_status: string;
   api_status: string;
   auto_replies: number;
@@ -19,8 +19,8 @@ interface Account {
   auto_complaints: number;
   use_auto_proxy: number;
   settings_json: string | null;
-  wb_authorize_v3: string | null;
-  wb_validation_key: string | null;
+  has_wb_authorize_v3: boolean;
+  has_wb_validation_key: boolean;
   wb_cookie_updated_at: string | null;
 }
 
@@ -197,6 +197,10 @@ function ConnectionTab({ account, apiKey, setApiKey, useAutoProxy, setUseAutoPro
   account: Account; apiKey: string; setApiKey: (v: string) => void; useAutoProxy: boolean; setUseAutoProxy: (v: boolean) => void;
   wbAuthorizeV3: string; setWbAuthorizeV3: (v: string) => void; wbValidationKey: string; setWbValidationKey: (v: string) => void;
 }) {
+  const apiKeyActive = account.has_api_key || Boolean(apiKey.trim());
+  const wbAuthorizeV3Active = account.has_wb_authorize_v3 || Boolean(wbAuthorizeV3.trim());
+  const wbValidationKeyActive = account.has_wb_validation_key || Boolean(wbValidationKey.trim());
+
   return (
     <div className="space-y-6">
       {/* Account info + Sync panel */}
@@ -245,10 +249,10 @@ function ConnectionTab({ account, apiKey, setApiKey, useAutoProxy, setUseAutoPro
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               className="flex-1 bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-xs text-[var(--text)] focus:outline-none focus:border-[var(--accent)] font-mono truncate"
-              placeholder="Вставьте API-ключ..."
+              placeholder={account.has_api_key ? "Ключ настроен, вставьте новый для замены" : "Вставьте API-ключ..."}
             />
-            <span className={`text-sm font-medium shrink-0 ${apiKey ? "text-green-400" : "text-red-400"}`}>
-              {apiKey ? "✅ Активен" : "❌ Неактивен"}
+            <span className={`text-sm font-medium shrink-0 ${apiKeyActive ? "text-green-400" : "text-red-400"}`}>
+              {apiKeyActive ? "✅ Активен" : "❌ Неактивен"}
             </span>
           </div>
           <div className="flex items-center gap-3 py-2">
@@ -258,10 +262,10 @@ function ConnectionTab({ account, apiKey, setApiKey, useAutoProxy, setUseAutoPro
               value={wbAuthorizeV3}
               onChange={(e) => setWbAuthorizeV3(e.target.value)}
               className="flex-1 bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-xs text-[var(--text)] focus:outline-none focus:border-[var(--accent)] font-mono truncate"
-              placeholder="DevTools → Network → заголовок authorizev3"
+              placeholder={account.has_wb_authorize_v3 ? "Токен настроен, вставьте новый для замены" : "DevTools → Network → заголовок authorizev3"}
             />
-            <span className={`text-sm font-medium shrink-0 ${wbAuthorizeV3 ? "text-green-400" : "text-red-400"}`}>
-              {wbAuthorizeV3 ? "✅ Активен" : "❌ Неактивен"}
+            <span className={`text-sm font-medium shrink-0 ${wbAuthorizeV3Active ? "text-green-400" : "text-red-400"}`}>
+              {wbAuthorizeV3Active ? "✅ Активен" : "❌ Неактивен"}
             </span>
           </div>
           <div className="flex items-center gap-3 py-2">
@@ -271,10 +275,10 @@ function ConnectionTab({ account, apiKey, setApiKey, useAutoProxy, setUseAutoPro
               value={wbValidationKey}
               onChange={(e) => setWbValidationKey(e.target.value)}
               className="flex-1 bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-xs text-[var(--text)] focus:outline-none focus:border-[var(--accent)] font-mono truncate"
-              placeholder="DevTools → Cookies → wbx-validation-key"
+              placeholder={account.has_wb_validation_key ? "Ключ настроен, вставьте новый для замены" : "DevTools → Cookies → wbx-validation-key"}
             />
-            <span className={`text-sm font-medium shrink-0 ${wbValidationKey ? "text-green-400" : "text-red-400"}`}>
-              {wbValidationKey ? "✅ Активен" : "❌ Неактивен"}
+            <span className={`text-sm font-medium shrink-0 ${wbValidationKeyActive ? "text-green-400" : "text-red-400"}`}>
+              {wbValidationKeyActive ? "✅ Активен" : "❌ Неактивен"}
             </span>
           </div>
           <div className="flex items-center justify-between py-2">
@@ -781,10 +785,10 @@ function OtherTab() {
 
 export function AccountSettings({ account, onSave, saved }: AccountSettingsProps) {
   const [activeTab, setActiveTab] = useState("connection");
-  const [apiKey, setApiKey] = useState(account.api_key);
+  const [apiKey, setApiKey] = useState("");
   const [useAutoProxy, setUseAutoProxy] = useState(account.use_auto_proxy === 1);
-  const [wbAuthorizeV3, setWbAuthorizeV3] = useState(account.wb_authorize_v3 || "");
-  const [wbValidationKey, setWbValidationKey] = useState(account.wb_validation_key || "");
+  const [wbAuthorizeV3, setWbAuthorizeV3] = useState("");
+  const [wbValidationKey, setWbValidationKey] = useState("");
 
   // Parse stored settings
   const stored: AccountCustomSettings = (() => {
@@ -858,14 +862,22 @@ export function AccountSettings({ account, onSave, saved }: AccountSettingsProps
       auto_complaints_config: complaintsConfig,
     });
 
-    onSave({
-      api_key: apiKey,
+    const payload: Partial<Account> & {
+      settings_json?: string;
+      api_key?: string;
+      wb_authorize_v3?: string;
+      wb_validation_key?: string;
+    } = {
       use_auto_proxy: useAutoProxy ? 1 : 0,
       auto_complaints: complaintsEnabled ? 1 : 0,
       settings_json: settingsJson,
-      wb_authorize_v3: wbAuthorizeV3 || null,
-      wb_validation_key: wbValidationKey || null,
-    } as Partial<Account> & { settings_json?: string });
+    };
+
+    if (apiKey.trim()) payload.api_key = apiKey.trim();
+    if (wbAuthorizeV3.trim()) payload.wb_authorize_v3 = wbAuthorizeV3.trim();
+    if (wbValidationKey.trim()) payload.wb_validation_key = wbValidationKey.trim();
+
+    onSave(payload);
   }
 
   return (

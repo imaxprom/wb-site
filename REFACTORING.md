@@ -1,6 +1,7 @@
 # MpHub — План рефакторинга
 
-> Документ подготовлен на основе полного аудита кодовой базы (04.04.2026)
+> Документ подготовлен на основе полного аудита кодовой базы (04.04.2026).
+> Актуализировано 05.05.2026 после production-аудита безопасности и деплоя.
 
 ---
 
@@ -30,7 +31,7 @@
 | **Итого** | **~124** | **~23 500** | |
 
 ### Ключевые проблемы
-1. **Безопасность** — SQL-инъекции, слабый JWT-секрет, эндпоинты без авторизации
+1. **Безопасность** — базовые production-риски закрыты 05.05.2026: API-авторизация, JWT runtime guard, reviews secret masking, безопасный deploy, параметризация `finance/reconciliation`
 2. **Баги** — несовпадение типов articleWB (string vs number), async внутри транзакций
 3. ~~**Дублирование** — 3 копии getDb()~~ → **ПЕРЕОСМЫСЛЕНО 12.04.2026**: модульная архитектура — каждый модуль имеет своё подключение к БД по дизайну (изоляция). Дублирование getDb() теперь намеренное, не баг
 4. ~~**God-объекты** — DataProvider (365 строк, 6 сущностей)~~ → **ЧАСТИЧНО РЕШЕНО 12.04.2026**: Аналитика отвязана от DataProvider (свой AnalyticsProvider)
@@ -46,15 +47,26 @@
 - WAL checkpoint после записи в weekly_reports.db
 - Процент выкупа из realization (delivery_amount/quantity) вместо shipment_orders.isCancel
 
+### Выполнено 05.05.2026
+- Production deploy переведён на `scripts/prod-safe-build.sh`: backup `.next`, stop PM2, build, restart, health-check, rollback.
+- `/api/monitor/*` закрыты admin-авторизацией через `requireMonitorAdmin`.
+- `/api/finance/*`, `/api/data/*`, `/api/reviews/*`, `/api/wb/*` закрыты admin-авторизацией через `requireAdmin`.
+- `src/lib/auth.ts`: в production runtime `JWT_SECRET` обязателен; dev fallback оставлен только вне production runtime.
+- Reviews API больше не отдаёт секреты аккаунтов на фронт: наружу идут `has_api_key`, `has_wb_authorize_v3`, `has_wb_validation_key`.
+- Убрана строковая вставка `source` в SQL в `/api/finance/reconciliation`; фильтр теперь параметризован.
+- Production-документация обновлена под фактическую схему `PM2 + cron + VPS`.
+
 ---
 
 ## 2. Фаза 0 — Критические баги и безопасность
 
 > Приоритет: **НЕМЕДЛЕННО**. Всё остальное можно делать параллельно, это — нет.
 
-### 2.1 SQL-инъекция в db.ts
+### 2.1 SQL-инъекции / строковая сборка SQL
 
-**Где:** `src/lib/db.ts`, строки ~64-67, ~157-159
+**Статус 05.05.2026:** частично закрыто. Конкретная найденная production-проблема в `src/app/api/finance/reconciliation/route.ts` исправлена: `source` передаётся через `?`, результат endpoint до/после совпал byte-for-byte.
+
+**Исторический аудит:** `src/lib/db.ts`, строки ~64-67, ~157-159
 **Что:** Строковая конкатенация в SQL-запросах
 ```typescript
 // СЕЙЧАС (ОПАСНО):
@@ -67,7 +79,7 @@ const placeholders = matchingPeriods.map(() => "(period_from = ? AND period_to =
 const params = matchingPeriods.flatMap(p => [p.period_from, p.period_to]);
 ```
 
-**Где ещё:** `src/app/api/wb/adv/route.ts` — `source = '${source}'`
+**Что ещё проверять:** все новые SQL-фильтры должны использовать параметры `?`, не шаблонные строки со значениями.
 
 **Зачем:** Даже если данные приходят из БД, а не от пользователя — это мина замедленного действия. Один рефакторинг, и данные начнут приходить от клиента.
 
@@ -76,35 +88,34 @@ const params = matchingPeriods.flatMap(p => [p.period_from, p.period_to]);
 ### 2.2 Слабый JWT-секрет
 
 **Где:** `src/lib/auth.ts`, строка ~8
+**Статус 05.05.2026:** закрыто для production runtime.
 ```typescript
-// СЕЙЧАС:
-const JWT_SECRET = process.env.JWT_SECRET || "mphub-dev-secret-2026";
-
-// ПОСЛЕ:
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) throw new Error("JWT_SECRET environment variable is required");
+const JWT_SECRET = process.env.JWT_SECRET || (IS_PRODUCTION_RUNTIME ? "" : "mphub-dev-secret-2026");
+if (!JWT_SECRET) throw new Error("JWT_SECRET environment variable is required in production runtime");
 ```
 
-**Зачем:** Если забыть выставить переменную окружения, любой может подделать токен.
+**Зачем:** если забыть выставить переменную окружения на проде, приложение не стартует с небезопасным дефолтом.
 
 ---
 
 ### 2.3 Эндпоинты без авторизации
 
-**Где:** Все `/api/monitor/*` роуты — **нет проверки токена**
-**Риск:** Кто угодно может перезапускать/останавливать сервисы
+**Статус 05.05.2026:** закрыто для `/api/monitor/*`, `/api/finance/*`, `/api/data/*`, `/api/reviews/*`, `/api/wb/*`.
 
-**Что делать:** Добавить проверку `mphub-token` cookie (как в остальных роутах) или обновить middleware.
+**Как закрыто:** `src/lib/api-auth.ts` проверяет `mphub-token`, JWT и роль `admin`; `src/lib/monitor-auth.ts` использует тот же admin-check.
+
+**Осторожность:** `/api/monitor/run` всё ещё содержит `child_process` и даёт Turbopack warning. Функцию ручного запуска решили не развивать, пока непонятно, нужны ли кнопки запуска.
 
 ---
 
 ### 2.4 Захардкоженные пути разработчика
 
-**Где:**
+**Исторически было:**
 - `src/app/api/reviews/accounts/route.ts` — `/Users/octopus/.openclaw/agents/...`
 - `src/app/api/reviews/route.ts` — тот же путь
+**Статус 05.05.2026:** закрыто в production API. Reviews routes используют данные аккаунтов из БД; секреты наружу не возвращаются.
 
-**Что делать:** Вынести в переменную окружения `WB_TOKEN_PATH` или читать из БД.
+**Что дальше:** не возвращать file fallback без отдельного решения и threat model.
 
 ---
 

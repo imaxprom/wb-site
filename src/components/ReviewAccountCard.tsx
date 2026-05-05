@@ -8,9 +8,9 @@ interface Account {
   name: string;
   store_name: string | null;
   inn: string | null;
-  api_key: string;
-  wb_authorize_v3: string | null;
-  wb_validation_key: string | null;
+  has_api_key: boolean;
+  has_wb_authorize_v3: boolean;
+  has_wb_validation_key: boolean;
   auto_replies: number;
   auto_dialogs: number;
   auto_complaints: number;
@@ -72,9 +72,9 @@ export function ReviewAccountCard({ account, onDelete }: ReviewAccountCardProps)
 
       {/* Statuses */}
       <div className="space-y-1.5 mt-1">
-        <StatusLine label="API-ключ" active={!!account.api_key} />
-        <StatusLine label="authorizev3" active={!!account.wb_authorize_v3} />
-        <StatusLine label="wbx-validation-key" active={!!account.wb_validation_key} />
+        <StatusLine label="API-ключ" active={account.has_api_key} />
+        <StatusLine label="authorizev3" active={account.has_wb_authorize_v3} />
+        <StatusLine label="wbx-validation-key" active={account.has_wb_validation_key} />
       </div>
 
       {/* Feature badges */}

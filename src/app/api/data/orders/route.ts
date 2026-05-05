@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/api-auth";
 import { initShipmentTables, getOrders, getLastWeekCorrection } from "@/lib/shipment-db";
 import { apiError } from "@/lib/api-utils";
 
 export async function GET(req: NextRequest) {
+  const authError = requireAdmin(req);
+  if (authError) return authError;
+
   try {
     initShipmentTables();
 

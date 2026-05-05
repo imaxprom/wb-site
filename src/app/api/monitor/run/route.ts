@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { execSync, spawn } from "child_process";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { requireMonitorAdmin } from "@/lib/monitor-auth";
 
 const REGISTRY_PATH = join(process.cwd(), "public/data/monitor/monitor-registry.json");
 
@@ -14,6 +15,9 @@ interface RegistryEntry {
 }
 
 export async function POST(req: NextRequest) {
+  const authError = requireMonitorAdmin(req);
+  if (authError) return authError;
+
   try {
     const { id } = await req.json();
 

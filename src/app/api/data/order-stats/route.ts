@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/api-auth";
 import { getDb, getExcludeDailyFilter } from "@/modules/analytics/lib/db";
 
 /**
@@ -12,6 +13,9 @@ import { getDb, getExcludeDailyFilter } from "@/modules/analytics/lib/db";
  * - buyouts: продажи (quantity из Продажи)
  */
 export async function GET(request: NextRequest) {
+  const authError = requireAdmin(request);
+  if (authError) return authError;
+
   const { searchParams } = new URL(request.url);
   const from = searchParams.get("from") || "";
   const to = searchParams.get("to") || "";

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { getDb } from "@/modules/finance/lib/queries";
 import { getExcludeDailyFilter } from "@/modules/analytics/lib/db";
@@ -33,6 +34,9 @@ function shiftDays(dateStr: string, days: number): string {
 }
 
 export async function GET(request: NextRequest) {
+  const authError = requireAdmin(request);
+  if (authError) return authError;
+
   const { searchParams } = new URL(request.url);
   const dateFrom = searchParams.get("from") || "";
   const dateTo = searchParams.get("to") || "";

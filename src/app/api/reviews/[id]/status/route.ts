@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/api-auth";
 import { updateReviewStatus, initReviewTables } from "@/lib/reviews-db";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const authError = requireAdmin(req);
+  if (authError) return authError;
+
   try {
     initReviewTables();
     const { id } = await params;

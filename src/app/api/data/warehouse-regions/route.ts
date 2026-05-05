@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/api-auth";
 import { getWbApiKey } from "@/lib/wb-api-key";
 
 /**
@@ -20,7 +21,10 @@ interface WarehouseRegion {
 let cache: { data: WarehouseRegion[]; ts: number } | null = null;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authError = requireAdmin(request);
+  if (authError) return authError;
+
   if (cache && Date.now() - cache.ts < CACHE_TTL_MS) {
     return NextResponse.json({ warehouses: cache.data, source: "cache" });
   }

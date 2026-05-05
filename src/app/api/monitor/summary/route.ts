@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import { requireMonitorAdmin } from "@/lib/monitor-auth";
 
 /**
  * GET /api/monitor/summary — сводный статус всех sync-систем.
@@ -57,7 +58,10 @@ function tailLog(logPath: string, lines: number, grepRegex?: RegExp): string[] {
   }
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const authError = requireMonitorAdmin(req);
+  if (authError) return authError;
+
   const dataDir = path.join(process.cwd(), "data");
   const monitorDir = path.join(process.cwd(), "public", "data", "monitor");
 

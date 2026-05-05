@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/api-auth";
 import {
   getReviewAccountById,
   getReviewAccounts,
@@ -271,6 +272,9 @@ async function submitComplaintToWB(
 // ─── POST: Submit complaint(s) ─────────────────────────────
 
 export async function POST(req: NextRequest) {
+  const authError = requireAdmin(req);
+  if (authError) return authError;
+
   try {
     const json = await req.json();
 
@@ -539,6 +543,9 @@ async function syncComplaintStatuses(): Promise<number> {
 // ─── GET: Complaints history + sync ────────────────────────
 
 export async function GET(req: NextRequest) {
+  const authError = requireAdmin(req);
+  if (authError) return authError;
+
   try {
     const sp = req.nextUrl.searchParams;
     const shouldSync = sp.get("sync") === "true";

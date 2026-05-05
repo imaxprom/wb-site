@@ -1,9 +1,13 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/api-auth";
 import { getWbApiKey } from "@/lib/wb-api-key";
 import { FALLBACK_WAREHOUSES } from "@/lib/warehouses-fallback";
 
 /** GET — list of WB warehouses. If `?raw=1`, returns full raw response from WB for inspection. */
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
+  const authError = requireAdmin(req);
+  if (authError) return authError;
+
   const url = new URL(req.url);
   const raw = url.searchParams.get("raw") === "1";
 

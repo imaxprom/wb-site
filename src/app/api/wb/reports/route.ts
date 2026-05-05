@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/api-auth";
 import { getWeeklyReports, downloadReportById } from "@/lib/wb-seller-api";
 import { listReports } from "@/lib/wb-scraper";
 import fs from "fs";
@@ -11,6 +12,9 @@ import fs from "fs";
  */
 
 export async function GET(req: NextRequest) {
+  const authError = requireAdmin(req);
+  if (authError) return authError;
+
   try {
     const fileName = req.nextUrl.searchParams.get("file");
 
@@ -47,6 +51,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const authError = requireAdmin(req);
+  if (authError) return authError;
+
   try {
     const body = await req.json();
     const reportId = body.reportId as number;

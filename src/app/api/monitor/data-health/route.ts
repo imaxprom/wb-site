@@ -1,7 +1,8 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
+import { requireMonitorAdmin } from "@/lib/monitor-auth";
 
 /**
  * GET /api/monitor/data-health
@@ -35,7 +36,10 @@ function fileSizeMB(p: string): number {
   try { return fs.statSync(p).size / 1024 / 1024; } catch { return 0; }
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const authError = requireMonitorAdmin(req);
+  if (authError) return authError;
+
   const checks: Check[] = [];
   const yd = yesterday();
 

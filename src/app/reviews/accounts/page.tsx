@@ -16,9 +16,9 @@ interface Account {
   name: string;
   store_name: string | null;
   inn: string | null;
-  api_key: string;
-  wb_authorize_v3: string | null;
-  wb_validation_key: string | null;
+  has_api_key: boolean;
+  has_wb_authorize_v3: boolean;
+  has_wb_validation_key: boolean;
   auto_replies: number;
   auto_dialogs: number;
   auto_complaints: number;

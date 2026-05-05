@@ -8,10 +8,10 @@
 ## КРИТИЧЕСКИЕ ПРАВИЛА
 
 1. **ЗАПРЕЩЕНО использовать память, кэш, предыдущий контекст.** Каждый файл открывай и читай заново через Read/cat. Даже если ты "помнишь" содержимое — перечитай.
-2. **Источник истины — только код и БД.** Не docs.json, не CLAUDE.md, не твои знания. Код = правда. Документация = то, что нужно привести в соответствие с кодом.
+2. **Источник истины — production + код + БД.** Для операционных вещей сначала проверяй `ssh wb-site`: PM2, crontab, `/home/makson/website`, runtime-файлы. Для логики приложения — код. Документация = то, что нужно привести в соответствие.
 3. **Один раздел за раз.** Не переходи к следующему разделу, пока не закончил текущий. Фокус на одном.
-4. **После каждого изменения — проверка.** `npx tsc --noEmit` + `./scripts/test-api.sh test`. Если тесты упали — откати и разберись.
-5. **Не меняй код приложения.** Только docs.json, REFACTORING.md, mphub-database-guide.md, e2e-checklist.md. Если нашёл баг в коде — запиши в отчёт, но не исправляй.
+4. **После каждого изменения — проверка.** Минимум: валидность JSON + `npm run build`. API smoke — по задаче и только если не трогает production-данные.
+5. **Не меняй код приложения в рамках аудита знаний.** Разрешённые файлы: `public/data/docs.json`, `CLAUDE.md`, `docs/*.md`, `REFACTORING.md`, `public/data/mphub-database-guide.md`, `scripts/*.md`. Если нашёл баг в коде — запиши в отчёт, но не исправляй без отдельного решения.
 
 ---
 
@@ -25,11 +25,11 @@ git log --oneline -5
 ```
 Запомни хеш последнего коммита — это точка отката.
 
-### 0.2 Запустить тесты (baseline)
+### 0.2 Проверить production baseline
 ```bash
-./scripts/test-api.sh test
+ssh wb-site 'cd ~/website && sudo pm2 status mphub --no-color && crontab -l'
 ```
-Все 9 должны быть ✅. Если нет — СТОП, сначала почини.
+Зафиксируй: PM2 process, production crontab, project path, health-check URL.
 
 ### 0.3 Прочитать структуру docs.json
 ```bash
@@ -188,12 +188,11 @@ with open('public/data/docs.json', 'w') as f:
     json.dump(d, f, ensure_ascii=False, indent=2)
 ```
 
-### 3.2 Перезапусти сервер и проверь
+### 3.2 Проверь локальную сборку
 ```bash
-./scripts/rebuild-server.sh
-./scripts/test-api.sh test
+npm run build
 ```
-Все 9 тестов должны пройти.
+`scripts/rebuild-server.sh` не использовать как production deploy; это legacy/local helper. Production deploy описан в `CLAUDE.md` и `docs/production-network.md`.
 
 ---
 
@@ -233,12 +232,16 @@ cat scripts/e2e-checklist.md
 - [ ] Количество вкладок правильное?
 - [ ] UI-проверки соответствуют текущему интерфейсу?
 
-### 4.4 CLAUDE.md
+### 4.4 CLAUDE.md и production docs
 ```bash
-cat CLAUDE.md
+sed -n '1,220p' CLAUDE.md
+sed -n '1,220p' docs/production-network.md
 ```
 - [ ] Стек технологий актуален?
 - [ ] Структура проекта соответствует реальной?
+- [ ] Production описан как `PM2 + cron + VPS`, а не как macOS `launchd`?
+- [ ] Deploy описан через `scripts/deploy.sh` + `scripts/prod-safe-build.sh`?
+- [ ] Health-check с VPS указан как `http://127.0.0.1`, а не публичный HTTPS-домен?
 
 ---
 
@@ -246,8 +249,7 @@ cat CLAUDE.md
 
 ### 5.1 Полный прогон тестов
 ```bash
-npx tsc --noEmit
-./scripts/test-api.sh test
+npm run build
 ```
 
 ### 5.2 Проверка JSON валидности

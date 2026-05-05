@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/api-auth";
 import { playwrightSendPhone, playwrightCheckSession, playwrightLogout } from "@/lib/wb-auth-playwright";
 import fs from "fs";
 import path from "path";
@@ -12,6 +13,9 @@ const TOKENS_PATH = path.join(process.cwd(), "data", "wb-tokens.json");
  */
 
 export async function POST(req: NextRequest) {
+  const authError = requireAdmin(req);
+  if (authError) return authError;
+
   try {
     const { phone } = await req.json();
     if (!phone) {
@@ -24,7 +28,10 @@ export async function POST(req: NextRequest) {
   }
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const authError = requireAdmin(req);
+  if (authError) return authError;
+
   try {
     const result = await playwrightCheckSession();
 
@@ -80,7 +87,10 @@ export async function GET() {
   }
 }
 
-export async function DELETE() {
+export async function DELETE(req: NextRequest) {
+  const authError = requireAdmin(req);
+  if (authError) return authError;
+
   try {
     playwrightLogout();
     return NextResponse.json({ ok: true });

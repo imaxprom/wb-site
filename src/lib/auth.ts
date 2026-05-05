@@ -5,9 +5,13 @@
 
 import crypto from "crypto";
 
-const JWT_SECRET = process.env.JWT_SECRET || "mphub-dev-secret-2026";
-if (!process.env.JWT_SECRET && process.env.NODE_ENV === "production") {
-  console.warn("[AUTH] WARNING: JWT_SECRET not set — using insecure default. Set JWT_SECRET env variable!");
+const IS_PRODUCTION_RUNTIME =
+  process.env.NODE_ENV === "production" &&
+  process.env.NEXT_PHASE !== "phase-production-build";
+
+const JWT_SECRET = process.env.JWT_SECRET || (IS_PRODUCTION_RUNTIME ? "" : "mphub-dev-secret-2026");
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET environment variable is required in production runtime");
 }
 import { AUTH } from "./constants";
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { readFileSync, writeFileSync } from "fs";
 import { execSync } from "child_process";
 import { join } from "path";
+import { requireMonitorAdmin } from "@/lib/monitor-auth";
 
 const REGISTRY_PATH = join(process.cwd(), "public/data/monitor/monitor-registry.json");
 const CHANGES_PATH = join(process.cwd(), "public/data/monitor/changes.json");
@@ -46,6 +47,9 @@ function startService(label: string): string {
 }
 
 export async function POST(req: NextRequest) {
+  const authError = requireMonitorAdmin(req);
+  if (authError) return authError;
+
   try {
     const { id, action } = await req.json();
 

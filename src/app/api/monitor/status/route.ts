@@ -1,13 +1,17 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { execSync } from "child_process";
 import { readFileSync, statSync } from "fs";
 import { join } from "path";
+import { requireMonitorAdmin } from "@/lib/monitor-auth";
 
 const STATUS_PATH = join(process.cwd(), "public/data/monitor/status.json");
 const COLLECTOR_PATH = join(process.cwd(), "scripts/health-collector.py");
 const MAX_AGE_MS = 30_000; // 30 seconds
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const authError = requireMonitorAdmin(req);
+  if (authError) return authError;
+
   try {
     // Check if status.json is fresh enough
     let needsRefresh = true;

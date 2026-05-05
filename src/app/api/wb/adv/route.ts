@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import Database from "better-sqlite3";
 import path from "path";
@@ -43,6 +44,9 @@ interface WbAdvExpense {
  */
 
 export async function POST(req: NextRequest) {
+  const authError = requireAdmin(req);
+  if (authError) return authError;
+
   const apiKey = req.headers.get("x-wb-api-key");
   if (!apiKey) return NextResponse.json({ error: "API key missing" }, { status: 401 });
 
@@ -189,6 +193,9 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
+  const authError = requireAdmin(req);
+  if (authError) return authError;
+
   const dateFrom = req.nextUrl.searchParams.get("from") || "2026-03-01";
   const dateTo = req.nextUrl.searchParams.get("to") || "2026-12-31";
 

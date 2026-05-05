@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
+import { requireAdmin } from "@/lib/api-auth";
 
 export const maxDuration = 600; // 10 minutes for full sync
 import {
@@ -17,25 +16,25 @@ import {
   type WBFeedback,
 } from "@/lib/reviews-db";
 
-const WB_TOKEN_PATH = "/Users/octopus/.openclaw/agents/prince/agent/.wb_token";
-
 const WB_FEEDBACKS_URL =
   "https://feedbacks-api.wildberries.ru/api/v1/feedbacks";
 
 // ─── Sync status (SQLite-backed) ────────────────────────────
 
 /**
- * Read API key: first try DB, then fall back to file and persist to DB.
+ * Read API key from DB. WB_API_KEY is only an explicit recovery fallback.
  */
 function resolveApiKey(): string {
   const fromDb = getDefaultAccountApiKey();
   if (fromDb) return fromDb;
 
-  // First run — read from file
-  const tokenPath = path.resolve(WB_TOKEN_PATH);
-  const token = fs.readFileSync(tokenPath, "utf-8").trim();
-  ensureDefaultAccount(token);
-  return token;
+  const fromEnv = process.env.WB_API_KEY?.trim();
+  if (fromEnv) {
+    ensureDefaultAccount(fromEnv);
+    return fromEnv;
+  }
+
+  throw new Error("WB API key is not configured. Add a reviews account or set WB_API_KEY.");
 }
 
 
@@ -240,6 +239,9 @@ async function syncFromWB(apiKey: string, accountId: number, fullSync: boolean):
 }
 
 export async function GET(req: NextRequest) {
+  const authError = requireAdmin(req);
+  if (authError) return authError;
+
   try {
     const sp = req.nextUrl.searchParams;
     const syncParam = sp.get("sync"); // "true" = incremental, "full" = full sync

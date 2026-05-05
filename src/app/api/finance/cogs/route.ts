@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import Database from "better-sqlite3";
 import path from "path";
@@ -20,7 +21,10 @@ function getReadDb() {
 /**
  * GET /api/finance/cogs — list all barcode costs
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authError = requireAdmin(request);
+  if (authError) return authError;
+
   try {
     const d = getReadDb();
     const rows = d.prepare("SELECT barcode, cost FROM cogs ORDER BY barcode").all();
@@ -36,6 +40,9 @@ export async function GET() {
  * Body: Record<string, number> (barcode → cost)
  */
 export async function PUT(request: NextRequest) {
+  const authError = requireAdmin(request);
+  if (authError) return authError;
+
   try {
     const body = await request.json() as Record<string, number>;
     const db = getWriteDb();

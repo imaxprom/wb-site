@@ -5,7 +5,7 @@
  * 2. Enriches with price & region from Orders API
  *
  * Usage: node scripts/reviews-sync.js
- * Or via cron/launchd every 10 minutes.
+ * Or via production cron every 10 minutes.
  */
 
 const Database = require("better-sqlite3");

@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/api-auth";
 import { playwrightSelectSupplier } from "@/lib/wb-auth-playwright";
 
 /**
  * POST /api/wb/auth/select-supplier — Choose supplier (юрлицо)
  */
 export async function POST(req: NextRequest) {
+  const authError = requireAdmin(req);
+  if (authError) return authError;
+
   try {
     const { supplier } = await req.json();
     if (!supplier) {

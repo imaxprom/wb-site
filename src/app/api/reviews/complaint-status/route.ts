@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/api-auth";
 import { getComplaintByReviewId } from "@/lib/reviews-db";
 
 /**
@@ -10,6 +11,9 @@ import { getComplaintByReviewId } from "@/lib/reviews-db";
  * - stuck: true если pending > 5 минут (процесс завис/упал)
  */
 export async function GET(req: NextRequest) {
+  const authError = requireAdmin(req);
+  if (authError) return authError;
+
   const reviewId = Number(req.nextUrl.searchParams.get("review_id"));
   if (!reviewId) {
     return NextResponse.json({ error: "review_id required" }, { status: 400 });

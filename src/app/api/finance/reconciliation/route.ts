@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import Database from "better-sqlite3";
 import path from "path";
@@ -39,7 +40,8 @@ const EMPTY_METRICS: WeekMetrics = {
  * Продажи/возвраты по sale_dt, сервисы по rr_dt
  */
 function getFinanceMetrics(db: Database.Database, dateFrom: string, dateTo: string, source?: string): WeekMetrics {
-  const sourceFilter = source ? ` AND source = '${source}'` : "";
+  const sourceFilter = source ? " AND source = ?" : "";
+  const queryParams = source ? [dateFrom, dateTo, source] : [dateFrom, dateTo];
   // weekly_final: фильтруем по date_from/date_to (период отчёта), т.к. sale_dt может быть из прошлого (коррекции)
   const useReportPeriod = source === "weekly_final";
   const saleDateFilter = useReportPeriod
@@ -65,7 +67,7 @@ function getFinanceMetrics(db: Database.Database, dateFrom: string, dateTo: stri
       ) THEN COALESCE(ppvz_for_pay, 0) + COALESCE(delivery_rub, 0) ELSE 0 END), 0) as corrections
     FROM realization
     WHERE ${saleDateFilter} ${sourceFilter}
-  `).get(dateFrom, dateTo) as Record<string, number>;
+  `).get(...queryParams) as Record<string, number>;
 
   const svcRow = db.prepare(`
     SELECT
@@ -81,7 +83,7 @@ function getFinanceMetrics(db: Database.Database, dateFrom: string, dateTo: stri
       COALESCE(SUM(additional_payment), 0) as compensation
     FROM realization
     WHERE ${svcDateFilter} ${sourceFilter}
-  `).get(dateFrom, dateTo) as Record<string, number>;
+  `).get(...queryParams) as Record<string, number>;
 
   return {
     salesQty: Math.round(salesRow.salesQty),
@@ -175,6 +177,9 @@ function getLoyaltyCompensation(db: Database.Database | null, dateFrom: string, 
  * Показывает расхождения между двумя источниками данных WB
  */
 export async function GET(request: NextRequest) {
+  const authError = requireAdmin(request);
+  if (authError) return authError;
+
   try {
     const finDb = new Database(FINANCE_DB, { readonly: true });
     finDb.pragma("busy_timeout = 5000");

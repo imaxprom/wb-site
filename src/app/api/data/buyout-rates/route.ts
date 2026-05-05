@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/api-auth";
 import { getDb, getExcludeDailyFilter } from "@/modules/analytics/lib/db";
 
 /**
@@ -10,7 +11,10 @@ import { getDb, getExcludeDailyFilter } from "@/modules/analytics/lib/db";
  * Выкупы = SUM(quantity) из Продажи по nm_id
  * Дедупликация: weekly_final > weekly > daily.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authError = requireAdmin(request);
+  if (authError) return authError;
+
   try {
     const db = getDb();
     const dedup = getExcludeDailyFilter(db, "rr_dt", "r");

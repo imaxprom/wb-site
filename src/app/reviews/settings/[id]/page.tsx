@@ -9,7 +9,7 @@ interface Account {
   store_name: string | null;
   inn: string | null;
   supplier_id: string | null;
-  api_key: string;
+  has_api_key: boolean;
   cookie_status: string;
   api_status: string;
   auto_replies: number;
@@ -17,8 +17,8 @@ interface Account {
   auto_complaints: number;
   use_auto_proxy: number;
   settings_json: string | null;
-  wb_authorize_v3: string | null;
-  wb_validation_key: string | null;
+  has_wb_authorize_v3: boolean;
+  has_wb_validation_key: boolean;
   wb_cookie_updated_at: string | null;
 }
 

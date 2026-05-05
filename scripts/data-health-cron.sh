@@ -53,3 +53,11 @@ fi
 # Сохраняем результат
 echo "{\"checks\":$CHECKS,\"timestamp\":\"$TIMESTAMP\"}" | python3 -m json.tool > "$OUT"
 echo "Data health cron: done ($(echo "$CHECKS" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))") checks)"
+
+# Обновляем общий снимок страницы мониторинга, чтобы status.json не зависел
+# только от открытия /monitor в браузере.
+if python3 scripts/health-collector.py >/dev/null 2>&1; then
+  echo "Monitor status: updated"
+else
+  echo "Monitor status: update failed" >&2
+fi

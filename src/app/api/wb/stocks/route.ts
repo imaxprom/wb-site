@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 
 export async function GET(req: NextRequest) {
+  const authError = requireAdmin(req);
+  if (authError) return authError;
+
   const apiKey = req.headers.get("x-wb-api-key");
   if (!apiKey) return NextResponse.json({ error: "API key missing" }, { status: 401 });
 

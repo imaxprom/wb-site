@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { getSyncStatus, syncDailyReport, syncYesterday, startDailyCron } from "@/lib/daily-sync";
 
@@ -11,7 +12,10 @@ import { getSyncStatus, syncDailyReport, syncYesterday, startDailyCron } from "@
 // Start cron on first request (lazy init)
 let cronStarted = false;
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const authError = requireAdmin(req);
+  if (authError) return authError;
+
   if (!cronStarted) {
     startDailyCron();
     cronStarted = true;
@@ -22,6 +26,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const authError = requireAdmin(req);
+  if (authError) return authError;
+
   if (!cronStarted) {
     startDailyCron();
     cronStarted = true;

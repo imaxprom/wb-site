@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { getDb } from "@/modules/finance/lib/queries";
 import { DEFAULT_COGS_PER_UNIT } from "@/lib/constants";
@@ -8,6 +9,9 @@ import { DEFAULT_COGS_PER_UNIT } from "@/lib/constants";
  * Returns per-article P&L breakdown for the given period.
  */
 export async function GET(request: NextRequest) {
+  const authError = requireAdmin(request);
+  if (authError) return authError;
+
   const { searchParams } = new URL(request.url);
   const dateFrom = searchParams.get("from") || "2026-03-02";
   const dateTo = searchParams.get("to") || "2026-03-22";

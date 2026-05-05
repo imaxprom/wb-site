@@ -1,30 +1,96 @@
 #!/bin/bash
 # Auto-sync shipment data from WB API
-# Runs 5 times/day: 09:00, 12:00, 15:00, 18:00, 21:00
-# Called by launchd: com.mphub.shipment-sync
+# Called by cron from the project root.
+
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+DATA_DIR="$PROJECT_DIR/data"
+LOG="$DATA_DIR/shipment-sync.log"
+LOCK_DIR="$DATA_DIR/shipment-sync.lock"
+
+mkdir -p "$DATA_DIR"
+
+log() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"
+}
+
+detect_base_url() {
+  if [ -n "${MPHUB_BASE_URL:-}" ]; then
+    echo "${MPHUB_BASE_URL%/}"
+    return 0
+  fi
+
+  for base in "http://127.0.0.1" "http://127.0.0.1:3000" "http://127.0.0.1:3002"; do
+    # /api/auth/me returns 401 when the app is healthy but unauthenticated.
+    status=$(curl --max-time 3 -sS -o /dev/null -w "%{http_code}" "$base/api/auth/me" 2>/dev/null || true)
+    if [ "$status" = "401" ] || [ "$status" = "200" ]; then
+      echo "$base"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+usage() {
+  echo "Usage: $0 [days|--check]"
+}
+
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+  usage
+  exit 0
+fi
+
+BASE_URL="$(detect_base_url || true)"
+
+if [ -z "$BASE_URL" ]; then
+  log "ERROR: MpHub app is not reachable on 127.0.0.1, 127.0.0.1:3000, or 127.0.0.1:3002"
+  exit 1
+fi
+
+if [ "${1:-}" = "--check" ]; then
+  log "Check OK: project=$PROJECT_DIR log=$LOG base_url=$BASE_URL"
+  echo "OK: project=$PROJECT_DIR"
+  echo "OK: log=$LOG"
+  echo "OK: base_url=$BASE_URL"
+  exit 0
+fi
 
 DAYS=${1:-28}
-LOG="/Users/octopus/Projects/website/data/shipment-sync.log"
-URL="http://localhost:3000/api/data/sync"
+if ! [[ "$DAYS" =~ ^[0-9]+$ ]] || [ "$DAYS" -lt 1 ] || [ "$DAYS" -gt 90 ]; then
+  log "ERROR: invalid days value: $DAYS"
+  usage
+  exit 2
+fi
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Shipment sync started (days=$DAYS)" >> "$LOG"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  log "Skip: shipment sync is already running (lock=$LOCK_DIR)"
+  exit 0
+fi
 
-# Login first to get JWT cookie
-COOKIE_JAR=$(mktemp)
-LOGIN_RESP=$(curl -s -c "$COOKIE_JAR" -X POST "$URL" \
+cleanup() {
+  rm -rf "$LOCK_DIR"
+}
+trap cleanup EXIT INT TERM
+
+URL="$BASE_URL/api/data/sync"
+log "Shipment sync started (days=$DAYS, url=$URL)"
+
+RESP=$(curl --max-time 600 -sS -X POST "$URL" \
   -H "Content-Type: application/json" \
   -d "{\"days\": $DAYS}" \
   -w "\n%{http_code}" 2>&1)
 
-HTTP_CODE=$(echo "$LOGIN_RESP" | tail -1)
-BODY=$(echo "$LOGIN_RESP" | head -n -1)
+HTTP_CODE=$(echo "$RESP" | tail -1)
+BODY=$(echo "$RESP" | sed '$d')
 
 if [ "$HTTP_CODE" = "200" ]; then
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ Sync OK: $BODY" >> "$LOG"
+  log "Sync OK: $BODY"
 elif [ "$HTTP_CODE" = "401" ]; then
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ API key not found (401)" >> "$LOG"
+  log "ERROR: API key not found (401): $BODY"
 else
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ Sync failed (HTTP $HTTP_CODE): $BODY" >> "$LOG"
+  log "ERROR: sync failed (HTTP $HTTP_CODE): $BODY"
+  exit 1
 fi
-
-rm -f "$COOKIE_JAR"

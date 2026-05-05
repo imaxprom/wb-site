@@ -27,7 +27,7 @@ data/
   weekly_reports.db       ← Excel-отчёты из ЛК WB (294 МБ)
   weekly_reports.db-shm
   weekly_reports.db-wal
-  wb-tokens.json          ← Токены WB Seller Portal (authorizev3, wbSellerLk)
+  wb-tokens.json          ← Токены WB Seller Portal (authorizev3, wbSellerLk, cookies)
   wb-api-key.txt          ← API-ключ WB (JWT ES256)
   daily-sync-status.json  ← История синхронизации (последние 30 дней)
   wb-auth-log.json        ← Лог HTTP-запросов авторизации WB
@@ -35,14 +35,15 @@ data/
   wb-cookies-full.json    ← CDP cookies всех доменов
   wb-cookies-meta.json    ← Метаданные cookies (savedAt)
   wb-localstorage.json    ← localStorage браузера WB
-  *.log                   ← Логи агентов (без ротации)
+  *.log                   ← Логи cron-скриптов (без ротации)
 
 public/data/
   docs.json               ← База знаний (разделы, блоки)
   changelog.json          ← История изменений
   monitor/
-    status.json           ← Здоровье сервисов (от health-collector)
-    monitor-registry.json ← Реестр зарегистрированных сервисов
+    status.json           ← Здоровье production-сервисов (PM2 + cron)
+    monitor-registry.json ← Реестр production-сервисов
+    data-health-cron.json ← Последний снимок здоровья данных
     repair-state.json     ← Состояние circuit breaker watchdog
     repair-log.json       ← История автовосстановлений (200 записей)
     changes.json          ← Журнал изменений скриптов
@@ -760,17 +761,18 @@ CREATE INDEX idx_wr_saledt_oper ON weekly_rows(sale_dt, supplier_oper_name);
   {
     "id": "daily-sync",
     "name": "Daily Sync",
-    "description": "Синхронизация финансовых данных",
+    "description": "Каждый час тянет реализацию, рекламу, заказы, хранение из WB API",
     "project": "mphub",
     "type": "node",
-    "scriptPath": "/Users/octopus/Projects/website/scripts/daily-sync.js",
-    "plistLabel": "com.wb-parser.daily-sync",
-    "logPath": "/Users/octopus/Projects/website/data/daily-sync.log",
-    "internalSchedule": "Каждый час 06:00-23:00",
+    "scriptPath": "/home/makson/website/scripts/daily-sync.js",
+    "cronPattern": "0 * * * *",
+    "logPath": "/home/makson/website/data/daily-sync.log",
     "lifecycle": "active"
   }
 ]
 ```
+
+Фактический production-реестр содержит 10 сервисов: `mphub-website`, `daily-sync`, `weekly-sync`, `shipment-sync`, `reviews-sync`, `reviews-complaints`, `mphub-watchdog`, `auth-check`, `paid-storage-sync`, `data-health-cron`. Production использует PM2 + cron; macOS `launchd` в этой схеме не используется.
 
 ### 4.5 repair-state.json — Состояние watchdog
 
@@ -795,7 +797,14 @@ CREATE INDEX idx_wr_saledt_oper ON weekly_rows(sale_dt, supplier_oper_name);
 
 ```typescript
 // src/lib/auth.ts
-const JWT_SECRET = process.env.JWT_SECRET || "mphub-dev-secret-2026";
+const IS_PRODUCTION_RUNTIME =
+  process.env.NODE_ENV === "production" &&
+  process.env.NEXT_PHASE !== "phase-production-build";
+
+const JWT_SECRET = process.env.JWT_SECRET || (IS_PRODUCTION_RUNTIME ? "" : "mphub-dev-secret-2026");
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET environment variable is required in production runtime");
+}
 const JWT_TTL = 30 * 24 * 60 * 60; // 30 дней
 
 // Формат токена: base64url(header).base64url(payload).hmac-sha256
@@ -804,6 +813,7 @@ const JWT_TTL = 30 * 24 * 60 * 60; // 30 дней
 ```
 
 **Cookie:** `mphub-token`, httpOnly, sameSite=lax, path=/, maxAge=30 дней
+**Важно:** dev fallback секрета допустим только вне production runtime. На проде отсутствие `JWT_SECRET` должно останавливать приложение.
 
 ### 5.2 Пароли
 
@@ -823,15 +833,21 @@ function verifyPassword(password: string, stored: string): boolean {
 }
 ```
 
-### 5.3 Middleware (защита роутов)
+### 5.3 Proxy и API-авторизация
 
 ```typescript
-// middleware.ts
-// Пропускает без проверки: /login, /api/auth/*, /api/data/*, /api/settings/*,
-//   /api/overrides/*, /api/wb/*, /api/reviews/*, /api/finance/*, /reviews,
-//   /_next, /data, /favicon.ico
-// Всё остальное: проверяет наличие cookie 'mphub-token', иначе → /login
+// src/proxy.ts
+// UI-страницы: проверяет наличие cookie 'mphub-token', иначе → /login.
+// JWT не валидируется на Edge: Node crypto недоступен.
+
+// src/lib/api-auth.ts
+// Server API: verifyToken + getUserById + role === "admin".
+
+// src/lib/monitor-auth.ts
+// Monitor API: сейчас тот же requireAdmin().
 ```
+
+Закрытые группы API: `/api/finance/*`, `/api/data/*`, `/api/reviews/*`, `/api/wb/*`, `/api/monitor/*`. Auth API (`/api/auth/*`) остаётся публичным для входа/выхода.
 
 ### 5.4 Права доступа файлов
 
@@ -840,7 +856,7 @@ function verifyPassword(password: string, stored: string): boolean {
 | `data/finance.db` | 600 | Все данные + пароли |
 | `data/weekly_reports.db` | 600 | Финансовые отчёты |
 | `data/wb-api-key.txt` | 600 | API-ключ WB |
-| `data/wb-tokens.json` | 644 | Токены WB (рекомендуется 600) |
+| `data/wb-tokens.json` | 600 рекомендуется | Токены WB |
 
 ---
 
@@ -853,13 +869,12 @@ function verifyPassword(password: string, stored: string): boolean {
 | `data/reviews-complaints.log` | reviews-complaints.js | Нет |
 | `data/weekly-sync.log` | sync-weekly-report.js | Нет |
 | `data/shipment-sync.log` | shipment-sync.sh | Нет |
-| `data/watchdog.log` | mphub-watchdog.py | Нет |
-| `data/watchdog-error.log` | mphub-watchdog.py (stderr) | Нет |
-| `data/website.log` | Next.js stdout | Нет |
-| `data/website-error.log` | Next.js stderr | Нет |
+| `data/watchdog.log` | vps-watchdog.py | Нет |
+| `/root/.pm2/logs/mphub-out.log` | Next.js stdout под PM2 | PM2 |
+| `/root/.pm2/logs/mphub-error.log` | Next.js stderr под PM2 | PM2 |
 | `data/dev-server.log` | npm run dev | Нет |
 
-**Ротация логов не настроена.** Логи растут бесконечно. Рекомендуется настроить openclaw-log-rotate или logrotate.
+Старые записи в PM2 error-log не считать новой ошибкой без проверки `stat` timestamp/size до и после диагностики.
 
 ---
 

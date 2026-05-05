@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/api-auth";
 import { getWbApiKey } from "@/lib/wb-api-key";
 
 const WB_STATS_URL =
@@ -36,6 +37,9 @@ function getToken(req: NextRequest): string | null {
 }
 
 export async function GET(req: NextRequest) {
+  const authError = requireAdmin(req);
+  if (authError) return authError;
+
   const token = getToken(req);
   if (!token) {
     return NextResponse.json({ error: "WB token not found" }, { status: 401 });
