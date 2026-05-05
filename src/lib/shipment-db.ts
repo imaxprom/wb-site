@@ -68,12 +68,14 @@ export function initShipmentTables(): void {
     )
   `);
 
-  // Insert default admin (password: "admin")
-  const adminHash = hashPassword("admin");
-  d.prepare(`
-    INSERT OR IGNORE INTO users (email, password_hash, name, role)
-    VALUES ('admin', ?, 'Администратор', 'admin')
-  `).run(adminHash);
+  const userCount = (d.prepare(`SELECT COUNT(*) as count FROM users`).get() as { count: number }).count;
+  if (process.env.NODE_ENV !== "production" && userCount === 0) {
+    const adminHash = hashPassword("admin");
+    d.prepare(`
+      INSERT INTO users (email, password_hash, name, role)
+      VALUES ('admin', ?, 'Администратор', 'admin')
+    `).run(adminHash);
+  }
 
   d.exec(`
     CREATE TABLE IF NOT EXISTS shipment_orders (
@@ -449,6 +451,11 @@ export function getUserByEmail(email: string): UserRow | null {
 export function getUserById(id: number): UserRow | null {
   const d = getDb();
   return (d.prepare(`SELECT * FROM users WHERE id = ?`).get(id) as UserRow) || null;
+}
+
+export function updateUserPasswordHash(userId: number, passwordHash: string): void {
+  const d = getDb();
+  d.prepare(`UPDATE users SET password_hash = ? WHERE id = ?`).run(passwordHash, userId);
 }
 
 // --- User settings ---

@@ -114,7 +114,7 @@ export default function LoginPage() {
               }}
               onFocus={(e) => (e.currentTarget.style.borderColor = "var(--accent)")}
               onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
-              placeholder="admin"
+              placeholder="email"
             />
           </div>
 

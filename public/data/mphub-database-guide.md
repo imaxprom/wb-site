@@ -226,16 +226,16 @@ CREATE TABLE tax_settings (
 CREATE TABLE users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT UNIQUE NOT NULL,          -- Логин (уникальный)
-    password_hash TEXT NOT NULL,         -- Формат: "salt:sha256hash"
+    password_hash TEXT NOT NULL,         -- Формат: "pbkdf2-sha256:iterations:salt:hash"
     name TEXT,                           -- Отображаемое имя
     role TEXT DEFAULT 'user',            -- 'admin' или 'user'
     created_at TEXT DEFAULT (datetime('now'))
 );
 ```
 
-**Пароль:** `salt:hash`, где salt — `crypto.randomBytes(16).toString('hex')`, hash — `SHA256(salt + password)`.
-**Проверка:** `crypto.timingSafeEqual()` для защиты от timing-атак.
-**Дефолт:** email=`admin`, password=`admin`, name=`Администратор`, role=`admin`.
+**Пароль:** новые хэши пишутся как `pbkdf2-sha256:iterations:salt:hash`.
+**Проверка:** `crypto.timingSafeEqual()` для защиты от timing-атак; legacy `salt:sha256hash` поддерживается только для обратной совместимости и обновляется при следующем успешном входе.
+**Важно:** production больше не создаёт дефолтного `admin/admin`; админ-пользователь должен быть создан или выдан осознанно.
 
 ---
 
@@ -812,24 +812,23 @@ const JWT_TTL = 30 * 24 * 60 * 60; // 30 дней
 // Payload: {"userId": number, "iat": number, "exp": number}
 ```
 
-**Cookie:** `mphub-token`, httpOnly, sameSite=lax, path=/, maxAge=30 дней
+**Cookie:** `mphub-token`, httpOnly, sameSite=lax, secure в production, path=/, maxAge=30 дней
 **Важно:** dev fallback секрета допустим только вне production runtime. На проде отсутствие `JWT_SECRET` должно останавливать приложение.
 
 ### 5.2 Пароли
 
 ```typescript
-// Хэширование: salt (32 hex) + SHA256
+// Хэширование: PBKDF2-SHA256
 function hashPassword(password: string): string {
   const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.createHash("sha256").update(salt + password).digest("hex");
-  return `${salt}:${hash}`;
+  const hash = crypto.pbkdf2Sync(password, salt, 310000, 32, "sha256").toString("hex");
+  return `pbkdf2-sha256:310000:${salt}:${hash}`;
 }
 
-// Проверка: timingSafeEqual для защиты от timing-атак
+// Проверка: timingSafeEqual; legacy salt:sha256hash поддерживается для миграции
 function verifyPassword(password: string, stored: string): boolean {
-  const [salt, hash] = stored.split(":");
-  const attempt = crypto.createHash("sha256").update(salt + password).digest("hex");
-  return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(attempt));
+  // См. полную реализацию в src/lib/auth.ts:
+  // PBKDF2 проверяется напрямую, legacy SHA256 — только для миграции.
 }
 ```
 
@@ -997,11 +996,8 @@ db.exec(`
   );
 `);
 
-// Дефолтный админ (пароль: admin)
-const salt = crypto.randomBytes(16).toString("hex");
-const hash = crypto.createHash("sha256").update(salt + "admin").digest("hex");
-db.prepare(`INSERT OR IGNORE INTO users (email, password_hash, name, role) VALUES (?, ?, ?, ?)`)
-  .run("admin", `${salt}:${hash}`, "Администратор", "admin");
+// В production дефолтный admin/admin не создаётся.
+// В dev допускается локальный bootstrap только если users пустая.
 
 // === ОТГРУЗКА ===
 db.exec(`
@@ -1226,7 +1222,7 @@ weekly_rows ←────────────→ realization (сверка
 
 4. **WAL режим:** Обязателен для параллельного чтения (API) и записи (sync-скрипты). После записи в weekly_reports.db выполняется `PRAGMA wal_checkpoint(TRUNCATE)` для предотвращения разрастания WAL-файла.
 
-5. **Дефолтный админ:** При первом запуске создаётся пользователь admin/admin. Смени пароль сразу.
+5. **Дефолтный админ:** В production не создаётся. Если в старой БД есть `admin/admin`, его нужно удалить или заменить пароль вручную.
 
 6. **sync_status — синглтон:** Таблица содержит ровно одну строку (id=1, CHECK constraint). Используется для отображения прогресса синхронизации отзывов на UI.
 

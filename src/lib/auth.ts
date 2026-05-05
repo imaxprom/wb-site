@@ -16,22 +16,48 @@ if (!JWT_SECRET) {
 import { AUTH } from "./constants";
 
 const TOKEN_TTL = AUTH.TOKEN_TTL_SECONDS;
+const PBKDF2_ALGORITHM = "sha256";
+const PBKDF2_ITERATIONS = 310000;
+const PBKDF2_KEY_LENGTH = 32;
 
 // --- Password hashing ---
 
-/** Returns "salt:hash" where hash = sha256(salt + password) */
+/** Returns "pbkdf2-sha256:iterations:salt:hash" */
 export function hashPassword(password: string): string {
   const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.createHash("sha256").update(salt + password).digest("hex");
-  return `${salt}:${hash}`;
+  const hash = crypto
+    .pbkdf2Sync(password, salt, PBKDF2_ITERATIONS, PBKDF2_KEY_LENGTH, PBKDF2_ALGORITHM)
+    .toString("hex");
+  return `pbkdf2-${PBKDF2_ALGORITHM}:${PBKDF2_ITERATIONS}:${salt}:${hash}`;
 }
 
-/** Verifies password against stored "salt:hash" */
+function safeHexEqual(leftHex: string, rightHex: string): boolean {
+  if (!/^[0-9a-f]+$/i.test(leftHex) || !/^[0-9a-f]+$/i.test(rightHex)) return false;
+  const left = Buffer.from(leftHex, "hex");
+  const right = Buffer.from(rightHex, "hex");
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+export function isLegacyPasswordHash(storedHash: string): boolean {
+  return !storedHash.startsWith(`pbkdf2-${PBKDF2_ALGORITHM}:`) && storedHash.split(":").length === 2;
+}
+
+/** Verifies password against current PBKDF2 hashes and legacy "salt:sha256hash" hashes. */
 export function verifyPassword(password: string, storedHash: string): boolean {
+  if (storedHash.startsWith(`pbkdf2-${PBKDF2_ALGORITHM}:`)) {
+    const [, iterationsRaw, salt, hash] = storedHash.split(":");
+    const iterations = Number(iterationsRaw);
+    if (!Number.isSafeInteger(iterations) || iterations < 100000 || !salt || !hash) return false;
+    const computed = crypto
+      .pbkdf2Sync(password, salt, iterations, PBKDF2_KEY_LENGTH, PBKDF2_ALGORITHM)
+      .toString("hex");
+    return safeHexEqual(computed, hash);
+  }
+
   const [salt, hash] = storedHash.split(":");
   if (!salt || !hash) return false;
   const computed = crypto.createHash("sha256").update(salt + password).digest("hex");
-  return crypto.timingSafeEqual(Buffer.from(computed, "hex"), Buffer.from(hash, "hex"));
+  return safeHexEqual(computed, hash);
 }
 
 // --- Token (custom JWT-like: base64url(header).base64url(payload).hmac-sha256) ---

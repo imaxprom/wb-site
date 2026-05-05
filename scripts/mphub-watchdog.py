@@ -28,10 +28,29 @@ STATUS_PATH = DATA_DIR / "status.json"
 STATE_PATH = DATA_DIR / "repair-state.json"
 LOG_PATH = DATA_DIR / "repair-log.json"
 LOCK_PATH = Path("/tmp/mphub-watchdog.lock")
+TELEGRAM_ENV_PATH = PROJECT_DIR / "data" / "telegram.env"
+
+
+def load_env_file(path):
+    try:
+        if not path.exists():
+            return
+        for raw in path.read_text().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip("'\"")
+            if key and key not in os.environ:
+                os.environ[key] = value
+    except Exception:
+        pass
 
 # Telegram
-TG_TOKEN = os.environ.get("MPHUB_WATCHDOG_TG_TOKEN", "8798691813:AAGdZtAF6WB59lif5SNYKiqOp09iUETzcpU")
-TG_CHAT_ID = os.environ.get("MPHUB_WATCHDOG_CHAT_ID", "317252096")
+load_env_file(TELEGRAM_ENV_PATH)
+TG_TOKEN = os.environ.get("MPHUB_WATCHDOG_TG_TOKEN", "")
+TG_CHAT_ID = os.environ.get("MPHUB_WATCHDOG_CHAT_ID", "")
 
 # Thresholds
 ERROR_THRESHOLD = 10          # errorsLast24h > this triggers analysis
@@ -226,6 +245,9 @@ def get_log_tail(svc, lines=50):
 LEVEL_EMOJI = {"INFO": "✅", "WARNING": "⚠️", "CRITICAL": "🚨"}
 
 def send_telegram(level, message):
+    if not TG_TOKEN or not TG_CHAT_ID:
+        log("  Telegram skipped: MPHUB_WATCHDOG_TG_TOKEN/MPHUB_WATCHDOG_CHAT_ID are not configured")
+        return
     emoji = LEVEL_EMOJI.get(level, "ℹ️")
     text = f"{emoji} *MpHub Watchdog — {level}*\n\n{message}"
     try:

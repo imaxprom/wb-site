@@ -21,6 +21,8 @@ const path = require("path");
 const PROFILE_DIR = "/Users/octopus/.puppeteer-profile";
 const BASE_URL = "http://localhost:3000";
 const DEFAULT_SCREENSHOTS_DIR = "/Users/octopus/.openclaw/agents/chuck/agent/test-results";
+const E2E_EMAIL = process.env.MPHUB_E2E_EMAIL || "admin";
+const E2E_PASSWORD = process.env.MPHUB_E2E_PASSWORD || "admin";
 
 // Parse args
 const args = process.argv.slice(2);
@@ -711,8 +713,8 @@ async function testRegressions(page) {
     const emailInput = await page.$('input[type="email"], input[type="text"], input[name="email"]');
     const passInput = await page.$('input[type="password"]');
     if (emailInput && passInput) {
-      await emailInput.type("admin");
-      await passInput.type("admin");
+      await emailInput.type(E2E_EMAIL);
+      await passInput.type(E2E_PASSWORD);
       await clickButton(page, "Войти");
       await new Promise((r) => setTimeout(r, 3000));
       console.log("🔐 Авторизация OK → " + page.url());

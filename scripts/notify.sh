@@ -9,14 +9,26 @@
 #   TG_PARSE_MODE=Markdown bash notify.sh "*bold*"
 #
 # Environment:
-#   TG_TOKEN       — бот-токен (по умолчанию @tehnichka_dobby_bot)
-#   TG_CHAT_ID     — чат-id (по умолчанию личка владельца)
+#   TG_TOKEN       — бот-токен (env или data/telegram.env)
+#   TG_CHAT_ID     — чат-id (env или data/telegram.env)
 #   TG_PARSE_MODE  — HTML (default) / Markdown / MarkdownV2
 set -e
 
-TG_TOKEN="${TG_TOKEN:-8654488203:AAE3vc3L-baecS3IpxE6fwnYnSjrxNM8hEc}"
-TG_CHAT_ID="${TG_CHAT_ID:-317252096}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ENV_FILE="$SCRIPT_DIR/../data/telegram.env"
+if [ -f "$ENV_FILE" ]; then
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+fi
+
+TG_TOKEN="${TG_TOKEN:-}"
+TG_CHAT_ID="${TG_CHAT_ID:-}"
 TG_PARSE_MODE="${TG_PARSE_MODE:-HTML}"
+
+if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT_ID" ]; then
+  echo "Telegram settings are missing: set TG_TOKEN and TG_CHAT_ID" >&2
+  exit 1
+fi
 
 # Текст: из аргумента или stdin
 if [ -n "$1" ]; then
@@ -24,8 +36,6 @@ if [ -n "$1" ]; then
 else
   MESSAGE=$(cat)
 fi
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Строим JSON-body через Python (безопасное экранирование любого текста)
 BODY=$(TG_CHAT_ID="$TG_CHAT_ID" TG_PARSE_MODE="$TG_PARSE_MODE" MSG="$MESSAGE" python3 -c "

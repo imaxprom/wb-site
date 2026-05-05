@@ -25,7 +25,7 @@
           "section": "shipment",
           "type": "feature",
           "title": "Авторизация + полный уход от кеша браузера",
-          "description": "Страница /login (admin/admin), JWT cookie на 30 дней, middleware redirect. API-ключ WB, настройки, overrides — всё в SQLite и серверных файлах. localStorage больше не используется для данных."
+          "description": "Страница /login, защищённая cookie-сессия на 30 дней, middleware redirect. API-ключ WB, настройки, overrides — всё в SQLite и серверных файлах. localStorage больше не используется для данных."
         },
         {
           "section": "shipment",

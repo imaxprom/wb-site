@@ -23,10 +23,27 @@ const API_KEY_PATH = path.join(PROJECT_DIR, "data", "wb-api-key.txt");
 const TOKENS_PATH = path.join(PROJECT_DIR, "data", "wb-tokens.json");
 const STATUS_PATH = path.join(PROJECT_DIR, "public", "data", "monitor", "auth-status.json");
 const LOG_PATH = path.join(PROJECT_DIR, "data", "auth-check.log");
+const TELEGRAM_ENV_PATH = path.join(PROJECT_DIR, "data", "telegram.env");
 
-// Telegram — берём из env или fallback
-const TG_TOKEN = process.env.TG_TOKEN || "8654488203:AAE3vc3L-baecS3IpxE6fwnYnSjrxNM8hEc";
-const TG_CHAT_ID = process.env.TG_CHAT_ID || "317252096";
+function loadEnvFile(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return;
+    const lines = fs.readFileSync(filePath, "utf-8").split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+      const index = trimmed.indexOf("=");
+      const key = trimmed.slice(0, index).trim();
+      const value = trimmed.slice(index + 1).trim().replace(/^['"]|['"]$/g, "");
+      if (key && process.env[key] === undefined) process.env[key] = value;
+    }
+  } catch { /* ignore */ }
+}
+
+loadEnvFile(TELEGRAM_ENV_PATH);
+
+const TG_TOKEN = process.env.TG_TOKEN || "";
+const TG_CHAT_ID = process.env.TG_CHAT_ID || "";
 
 const ALERT_COOLDOWN_MS = 20 * 60 * 60 * 1000; // 20 часов
 
@@ -99,6 +116,10 @@ async function checkLkAuth() {
  */
 function sendTelegram(text) {
   try {
+    if (!TG_TOKEN || !TG_CHAT_ID) {
+      log("[telegram] skipped: TG_TOKEN/TG_CHAT_ID are not configured");
+      return false;
+    }
     const body = JSON.stringify({
       chat_id: TG_CHAT_ID,
       text,

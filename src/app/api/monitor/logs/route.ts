@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFileSync, existsSync } from "fs";
-import { execSync } from "child_process";
 import { join } from "path";
 import { requireMonitorAdmin } from "@/lib/monitor-auth";
 
@@ -32,30 +31,19 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Log file not available", lines: [] });
     }
 
-    // Security: only allow paths from registry
-    let output: string;
-    if (errorsOnly) {
-      output = execSync(`grep -iE "ERROR|CRITICAL|Exception|WARNING" "${logPath}" | tail -n ${lines}`, {
-        timeout: 5_000,
-        encoding: "utf-8",
-      }).trim();
-    } else {
-      output = execSync(`tail -n ${lines} "${logPath}"`, {
-        timeout: 5_000,
-        encoding: "utf-8",
-      }).trim();
-    }
+    const raw = readFileSync(logPath, "utf-8");
+    const sourceLines = raw.split(/\r?\n/).filter(Boolean);
+    const filtered = errorsOnly
+      ? sourceLines.filter((line) => /ERROR|CRITICAL|Exception|WARNING/i.test(line))
+      : sourceLines;
+    const outputLines = filtered.slice(-lines);
 
     return NextResponse.json({
       id,
       name: service.name,
-      lines: output ? output.split("\n") : [],
+      lines: outputLines,
     });
   } catch (e: unknown) {
-    // grep returns exit code 1 when no matches
-    if (e instanceof Error && "status" in e && (e as { status: number }).status === 1) {
-      return NextResponse.json({ id, name: id, lines: [] });
-    }
     return NextResponse.json({ error: "Failed to read logs" }, { status: 500 });
   }
 }
