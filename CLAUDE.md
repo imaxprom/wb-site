@@ -9,7 +9,7 @@
 ## Стек технологий
 - Next.js 16 + TypeScript + Tailwind CSS 4
 - SQLite (better-sqlite3) — основная БД (data/finance.db)
-- xlsx-js-style — генерация Excel с стилями
+- exceljs — чтение Excel-отчётов WB; xlsx-js-style — клиентский Excel-экспорт с стилями
 - recharts — графики
 - Playwright (Python) — авторизация WB seller
 
@@ -42,10 +42,11 @@ docs/            — ТЗ и документация
 ## Production сеть
 - Публичный URL: `https://hub.imaxprom.site`
 - DNS: `hub.imaxprom.site` → `46.19.118.18` (внешний nginx/HTTPS-прокси)
-- Runtime на VPS: `192.168.55.104:80` — Next.js под PM2 (`mphub`) слушает порт 80 напрямую
-- На VPS nginx не используется; порт 443 открыт firewall, но локально на VPS не слушается приложением
+- Runtime на VPS: локальный nginx слушает `0.0.0.0:80` и проксирует в Next.js на `127.0.0.1:3000`
+- Next.js под PM2 (`mphub`) запущен от пользователя `makson`; root PM2 для сайта не используется
+- На VPS локальный порт 443 не слушается приложением; HTTPS терминируется внешним прокси на `46.19.118.18`
 - Снаружи проверять публичный сайт через `https://hub.imaxprom.site`
-- Изнутри VPS health-check делать через `http://127.0.0.1` или `http://192.168.55.104`
+- Изнутри VPS health-check приложения делать через `http://127.0.0.1:3000/login`; публичный вход через локальный nginx можно проверять `http://127.0.0.1/login`
 - Не использовать `https://hub.imaxprom.site` как внутренний health-check с самого VPS: обратный доступ к внешнему IP `46.19.118.18` из сети VPS таймаутится
 - Подробности: `docs/production-network.md`
 
@@ -53,7 +54,7 @@ docs/            — ТЗ и документация
 - Основной скрипт: `bash scripts/deploy.sh`
 - `deploy.sh` синхронизирует код через `rsync`, исключая `node_modules`, `.next`, `.deploy-backups`, `.git`, `/data/` и runtime JSON мониторинга.
 - На VPS всегда используется `bash scripts/prod-safe-build.sh`.
-- `prod-safe-build.sh` делает backup текущей `.next`, останавливает PM2, запускает `npm run build`, перезапускает PM2 и проверяет `http://127.0.0.1/login`.
+- `prod-safe-build.sh` делает backup текущей `.next`, останавливает PM2 пользователя `makson`, запускает `npm run build`, перезапускает PM2 и проверяет `http://127.0.0.1:3000/login`.
 - Если build/start/health-check падает, скрипт восстанавливает предыдущую `.next` и перезапускает PM2.
 - Старый `scripts/rebuild-server.sh` относится к локальной/macOS схеме и не является production deploy.
 

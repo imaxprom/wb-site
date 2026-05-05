@@ -455,11 +455,13 @@ page.tsx
 
 ### API-ключ
 - Хранится: `data/wb-api-key.txt`
+- Права на production: `600`, каталог `data` закрыт `700`
 - Управление: `GET/PUT/DELETE /api/settings/apikey`
 - JWT payload содержит: oid (1166225), sid, uid — но НЕ имя магазина
 
 ### Browser Auth (Puppeteer CDP)
 - Токены: `data/wb-tokens.json` (authorizev3, wbSellerLk, supplierId, cookies)
+- Права на production: `600`; debug-артефакты авторизации не хранить постоянно
 - wb-seller-lk обновляется автоматически при истечении (refresh через suppliers-auth API)
 - Аккаунты: таблица `accounts` в БД (поддержка нескольких номеров)
 

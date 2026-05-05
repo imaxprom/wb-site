@@ -855,7 +855,7 @@ function verifyPassword(password: string, stored: string): boolean {
 | `data/finance.db` | 600 | Все данные + пароли |
 | `data/weekly_reports.db` | 600 | Финансовые отчёты |
 | `data/wb-api-key.txt` | 600 | API-ключ WB |
-| `data/wb-tokens.json` | 600 рекомендуется | Токены WB |
+| `data/wb-tokens.json` | 600 | Токены WB |
 | `data/telegram.env` | 600 | Telegram bot token и chat id для cron-алертов |
 
 ---
@@ -870,8 +870,8 @@ function verifyPassword(password: string, stored: string): boolean {
 | `data/weekly-sync.log` | sync-weekly-report.js | Нет |
 | `data/shipment-sync.log` | shipment-sync.sh | Нет |
 | `data/watchdog.log` | vps-watchdog.py | Нет |
-| `/root/.pm2/logs/mphub-out.log` | Next.js stdout под PM2 | PM2 |
-| `/root/.pm2/logs/mphub-error.log` | Next.js stderr под PM2 | PM2 |
+| `/home/makson/.pm2/logs/mphub-out.log` | Next.js stdout под PM2 пользователя `makson` | PM2 |
+| `/home/makson/.pm2/logs/mphub-error.log` | Next.js stderr под PM2 пользователя `makson` | PM2 |
 | `data/dev-server.log` | npm run dev | Нет |
 
 Старые записи в PM2 error-log не считать новой ошибкой без проверки `stat` timestamp/size до и после диагностики.
@@ -1185,7 +1185,7 @@ touch data/{daily-sync,reviews-sync,reviews-complaints,weekly-sync,shipment-sync
 
 ```bash
 chmod 600 data/finance.db data/weekly_reports.db
-chmod 600 data/wb-api-key.txt data/wb-tokens.json
+chmod 600 data/wb-api-key.txt data/wb-tokens.json data/telegram.env data/cron-secret.txt
 chmod 600 public/data/monitor/*.json
 chmod 600 public/data/finance/*.json
 ```

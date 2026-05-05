@@ -27,7 +27,7 @@ git log --oneline -5
 
 ### 0.2 Проверить production baseline
 ```bash
-ssh wb-site 'cd ~/website && sudo pm2 status mphub --no-color && crontab -l'
+ssh wb-site 'cd ~/website && pm2 status mphub --no-color && crontab -l'
 ```
 Зафиксируй: PM2 process, production crontab, project path, health-check URL.
 

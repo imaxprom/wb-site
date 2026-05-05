@@ -27,9 +27,9 @@ curl -I https://hub.imaxprom.site/api/auth/me
 - SSH alias: `ssh wb-site`
 - VPS address in private network: `192.168.55.104`
 - Project path: `/home/makson/website`
-- PM2 process: `mphub`
-- Next.js listens directly on port `80`
-- Local nginx on `wb-site`: not used
+- PM2 process: `mphub`, user `makson`
+- Local nginx on `wb-site` listens on `0.0.0.0:80` and proxies to Next.js
+- Next.js listens only on `127.0.0.1:3000`
 - Local `443` on `wb-site`: firewall allows it, but no local process listens there
 - Background jobs: production `crontab`, not macOS `launchd`
 
@@ -37,10 +37,11 @@ curl -I https://hub.imaxprom.site/api/auth/me
 
 ```bash
 curl -I http://127.0.0.1:3000/login
+curl -I http://127.0.0.1/login
 curl -I http://192.168.55.104/login
 ```
 
-Ожидаемо: `200`.
+Ожидаемо: `200`. Первый URL проверяет Next.js напрямую, второй и третий — локальный nginx на VPS.
 
 ## Важное про health-check
 
@@ -55,12 +56,13 @@ curl -I https://hub.imaxprom.site/login
 Для внутренних cron/watchdog/monitor checks использовать:
 
 ```text
-http://127.0.0.1
+http://127.0.0.1:3000
 ```
 
-или:
+Для проверки локального nginx можно использовать:
 
 ```text
+http://127.0.0.1
 http://192.168.55.104
 ```
 
@@ -75,15 +77,16 @@ External user
   -> hub.imaxprom.site / 46.19.118.18
   -> external nginx / HTTPS termination
   -> 192.168.55.104:80
-  -> local proxy
+  -> local nginx on wb-site
   -> 127.0.0.1:3000
-  -> Next.js under PM2 (mphub)
+  -> Next.js under PM2 user makson (mphub)
 ```
 
 ## Что не менять без отдельного решения
 
 - Не переводить внутренние health-checks на `https://hub.imaxprom.site`
 - Не считать timeout с VPS до `hub.imaxprom.site` признаком падения сайта
+- Не возвращать Next.js на прямое прослушивание `0.0.0.0:80` или запуск под root
 - Не менять порт Next.js или схему nginx/HTTPS без отдельного плана миграции
 
 ## Production Deploy
@@ -112,9 +115,9 @@ cd ~/website && bash scripts/prod-safe-build.sh
 `prod-safe-build.sh`:
 
 1. сохраняет текущую `.next` в `.deploy-backups/.next-<stamp>`;
-2. останавливает PM2 process `mphub`;
+2. останавливает PM2 process `mphub` пользователя `makson`;
 3. запускает `npm run build`;
-4. перезапускает PM2;
+4. перезапускает PM2 пользователя `makson`;
 5. проверяет `http://127.0.0.1:3000/login`;
 6. при ошибке сборки, старта или health-check восстанавливает предыдущую `.next`.
 
