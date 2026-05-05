@@ -1,5 +1,5 @@
-import * as XLSX from "xlsx";
 import fs from "fs";
+import { readFirstSheetRows } from "@/lib/server/excel-rows";
 
 /**
  * Row structure matching the `realization` table in SQLite.
@@ -148,16 +148,8 @@ const DEFAULT_ROW: RealizationRow = {
  * Parse a WB daily/weekly financial report XLS file.
  * Returns array of rows compatible with `realization` table.
  */
-export function parseDailyReport(filePath: string): RealizationRow[] {
-  const buf = fs.readFileSync(filePath);
-  const workbook = XLSX.read(buf, { type: "buffer", cellDates: true });
-
-  const sheetName = workbook.SheetNames[0];
-  if (!sheetName) throw new Error("XLS файл не содержит листов");
-
-  const sheet = workbook.Sheets[sheetName];
-  const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
-
+export async function parseDailyReport(filePath: string): Promise<RealizationRow[]> {
+  const rawRows = await readFirstSheetRows(fs.readFileSync(filePath));
   if (rawRows.length === 0) throw new Error("Отчёт пустой");
 
   // Build column mapping from actual headers

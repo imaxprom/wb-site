@@ -14,8 +14,8 @@
 const Database = require("better-sqlite3");
 const path = require("path");
 const fs = require("fs");
-const XLSX = require("xlsx");
 const AdmZip = require("adm-zip");
+const { readFirstSheetRows } = require("./lib/excel-rows");
 
 const DB_PATH = path.join(__dirname, "..", "data", "weekly_reports.db");
 const TOKENS_PATH = path.join(__dirname, "..", "data", "wb-tokens.json");
@@ -164,10 +164,8 @@ async function downloadExcel(headers, reportId) {
   throw new Error(`В ZIP нет .xlsx файла для #${reportId}`);
 }
 
-function loadExcelToDB(db, xlsxBuffer, reportId, reportType, periodFrom, periodTo) {
-  const wb = XLSX.read(xlsxBuffer, { type: "buffer" });
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
-
+async function loadExcelToDB(db, xlsxBuffer, reportId, reportType, periodFrom, periodTo) {
+  const rows = await readFirstSheetRows(xlsxBuffer);
   if (rows.length === 0) {
     console.log(`  ⚠️ Отчёт #${reportId}: Excel пустой`);
     return 0;
@@ -293,7 +291,7 @@ async function main() {
         const xlsxBuf = await downloadExcel(headers, report.id);
         if (!xlsxBuf) continue;
 
-        const rowsLoaded = loadExcelToDB(db, xlsxBuf, report.id, report.type, periodFrom, periodTo);
+        const rowsLoaded = await loadExcelToDB(db, xlsxBuf, report.id, report.type, periodFrom, periodTo);
         console.log(`  ✅ type=${report.type}: загружено ${rowsLoaded} строк`);
         newCount++;
       } catch (e) {

@@ -8,6 +8,7 @@
 const Database = require("better-sqlite3");
 const path = require("path");
 const fs = require("fs");
+const { readFirstSheetRows } = require("./lib/excel-rows");
 
 const DB_PATH = path.join(__dirname, "..", "data", "weekly_reports.db");
 
@@ -142,11 +143,8 @@ function createDB() {
   return db;
 }
 
-function loadExcel(db, xlsxPath, reportId, reportType, periodFrom, periodTo) {
-  const XLSX = require("xlsx");
-  const wb = XLSX.read(fs.readFileSync(xlsxPath), { type: "buffer" });
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
-
+async function loadExcel(db, xlsxPath, reportId, reportType, periodFrom, periodTo) {
+  const rows = await readFirstSheetRows(fs.readFileSync(xlsxPath));
   if (rows.length === 0) {
     console.log("⚠️ Файл пустой: " + xlsxPath);
     return 0;
@@ -190,23 +188,29 @@ function loadExcel(db, xlsxPath, reportId, reportType, periodFrom, periodTo) {
   return rows.length;
 }
 
-// Main
-const db = createDB();
+async function main() {
+  const db = createDB();
 
-// Загрузка из аргументов или из уже скачанных файлов
-if (fs.existsSync("/tmp/weekly-full.xlsx")) {
-  loadExcel(db, "/tmp/weekly-full.xlsx", 672230168, 1, "2026-03-23", "2026-03-29");
+  // Загрузка из аргументов или из уже скачанных файлов
+  if (fs.existsSync("/tmp/weekly-full.xlsx")) {
+    await loadExcel(db, "/tmp/weekly-full.xlsx", 672230168, 1, "2026-03-23", "2026-03-29");
+  }
+  if (fs.existsSync("/tmp/weekly-type2.xlsx")) {
+    await loadExcel(db, "/tmp/weekly-type2.xlsx", 672230169, 2, "2026-03-23", "2026-03-29");
+  }
+
+  // Проверка
+  const count = db.prepare("SELECT COUNT(*) as c FROM weekly_rows").get();
+  const reports = db.prepare("SELECT * FROM reports ORDER BY period_from").all();
+  console.log("\nИтого в базе: " + count.c + " строк");
+  reports.forEach((r) =>
+    console.log(`  Отчёт #${r.report_id} type=${r.report_type}: ${r.period_from}—${r.period_to} (${r.rows_count} строк)`)
+  );
+
+  db.close();
 }
-if (fs.existsSync("/tmp/weekly-type2.xlsx")) {
-  loadExcel(db, "/tmp/weekly-type2.xlsx", 672230169, 2, "2026-03-23", "2026-03-29");
-}
 
-// Проверка
-const count = db.prepare("SELECT COUNT(*) as c FROM weekly_rows").get();
-const reports = db.prepare("SELECT * FROM reports ORDER BY period_from").all();
-console.log("\nИтого в базе: " + count.c + " строк");
-reports.forEach((r) =>
-  console.log(`  Отчёт #${r.report_id} type=${r.report_type}: ${r.period_from}—${r.period_to} (${r.rows_count} строк)`)
-);
-
-db.close();
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

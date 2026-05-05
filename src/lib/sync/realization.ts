@@ -6,6 +6,7 @@ import fs from "fs";
 import path from "path";
 import Database from "better-sqlite3";
 import { SourceStatus, emptySource, DB_PATH, TOKENS_PATH } from "./types";
+import { readFirstSheetRows } from "@/lib/server/excel-rows";
 
 export async function syncReport(date: string): Promise<SourceStatus> {
   const s: SourceStatus = { ...emptySource(), lastAttempt: new Date().toISOString() };
@@ -73,7 +74,6 @@ export async function syncReport(date: string): Promise<SourceStatus> {
       )
     `);
     let totalRows = 0;
-    const XLSX = await import("xlsx");
 
     const reportsDir = path.join(process.cwd(), "data", "reports");
     const extractDir = path.join(reportsDir, "extracted");
@@ -135,8 +135,7 @@ export async function syncReport(date: string): Promise<SourceStatus> {
       if (!fs.existsSync(xlsxPath)) continue;
 
       const xlsxBuffer = fs.readFileSync(xlsxPath);
-      const wb = XLSX.read(xlsxBuffer, { type: "buffer" });
-      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]) as Record<string, unknown>[];
+      const rows = await readFirstSheetRows(xlsxBuffer);
       if (rows.length === 0) continue;
 
       const COL_MAP: Record<string, string> = {

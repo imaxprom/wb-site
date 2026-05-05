@@ -17,10 +17,11 @@
     "adm-zip": "^0.5.16",
     "better-sqlite3": "^12.8.0",
     "clsx": "^2.1.1",
+    "exceljs": "^4.4.0",
     "idb": "^8.0.3",
     "lucide-react": "^0.577.0",
-    "next": "^16.2.1",
-    "postcss": "^8.5.8",
+    "next": "^16.2.4",
+    "postcss": "8.5.14",
     "puppeteer": "^24.40.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
@@ -30,10 +31,12 @@
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.2.2",
     "typescript": "^5.9.3",
-    "xlsx": "^0.18.5",
     "xlsx-js-style": "^1.2.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1"
+  },
+  "overrides": {
+    "postcss": "8.5.14"
   }
 }

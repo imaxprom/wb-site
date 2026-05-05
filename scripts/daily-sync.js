@@ -12,6 +12,7 @@
 const fs = require("fs");
 const path = require("path");
 const Database = require("better-sqlite3");
+const { readFirstSheetRows } = require("./lib/excel-rows");
 
 const PROJECT_DIR = path.join(__dirname, "..");
 const DB_PATH = path.join(PROJECT_DIR, "data", "finance.db");
@@ -258,7 +259,6 @@ async function syncReport(date) {
         imported_at TEXT NOT NULL
       )
     `);
-    const XLSX = require("xlsx");
     const AdmZip = require("adm-zip");
     let totalRows = 0;
 
@@ -310,8 +310,7 @@ async function syncReport(date) {
 
       // Parse
       const xlsxBuffer = fs.readFileSync(xlsxPath);
-      const wb = XLSX.read(xlsxBuffer, { type: "buffer" });
-      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+      const rows = await readFirstSheetRows(xlsxBuffer);
       if (rows.length === 0) continue;
 
       // Import
