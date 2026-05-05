@@ -56,6 +56,15 @@ export function initShipmentTables(): void {
   `);
 
   d.exec(`
+    CREATE TABLE IF NOT EXISTS auth_login_attempts (
+      key TEXT PRIMARY KEY,
+      count INTEGER NOT NULL DEFAULT 0,
+      first_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+
+  d.exec(`
     CREATE TABLE IF NOT EXISTS product_overrides (
       user_id INTEGER NOT NULL,
       article_wb TEXT NOT NULL,

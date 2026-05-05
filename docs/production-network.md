@@ -6,7 +6,8 @@
 
 - Публичный URL: `https://hub.imaxprom.site`
 - DNS: `hub.imaxprom.site` -> `46.19.118.18`
-- На `46.19.118.18` отвечает внешний `nginx/1.24.0` и терминирует HTTPS
+- На `46.19.118.18` отвечает внешний nginx в Proxmox CT `105` (`proxy`, `192.168.55.105`) и терминирует HTTPS
+- External nginx hardening: `/etc/nginx/conf.d/server-tokens.conf` содержит `server_tokens off`
 - Сертификат: Let's Encrypt, CN/SAN `hub.imaxprom.site`
 
 Проверка с внешней машины:
@@ -29,6 +30,7 @@ curl -I https://hub.imaxprom.site/api/auth/me
 - Project path: `/home/makson/website`
 - PM2 process: `mphub`, user `makson`
 - Local nginx on `wb-site` listens on `0.0.0.0:80` and proxies to Next.js
+- Local nginx hardening: `server_tokens off`
 - Next.js listens only on `127.0.0.1:3000`
 - Local `443` on `wb-site`: firewall allows it, but no local process listens there
 - Background jobs: production `crontab`, not macOS `launchd`
@@ -87,6 +89,7 @@ External user
 - Не переводить внутренние health-checks на `https://hub.imaxprom.site`
 - Не считать timeout с VPS до `hub.imaxprom.site` признаком падения сайта
 - Не возвращать Next.js на прямое прослушивание `0.0.0.0:80` или запуск под root
+- Не убирать production security headers из `next.config.ts`: HSTS, CSP, noindex, nosniff, frame/referrer/permissions policy
 - Не менять порт Next.js или схему nginx/HTTPS без отдельного плана миграции
 
 ## Production Deploy

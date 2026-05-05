@@ -844,6 +844,10 @@ function verifyPassword(password: string, stored: string): boolean {
 
 // src/lib/monitor-auth.ts
 // Monitor API: сейчас тот же requireAdmin().
+
+// src/app/api/auth/login/route.ts
+// Login rate-limit хранится в SQLite auth_login_attempts,
+// поэтому счётчик не сбрасывается при рестарте PM2.
 ```
 
 Закрытые группы API: `/api/finance/*`, `/api/data/*`, `/api/reviews/*`, `/api/wb/*`, `/api/monitor/*`. Auth API (`/api/auth/*`) остаётся публичным для входа/выхода.

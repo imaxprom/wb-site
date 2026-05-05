@@ -42,6 +42,7 @@ docs/            — ТЗ и документация
 ## Production сеть
 - Публичный URL: `https://hub.imaxprom.site`
 - DNS: `hub.imaxprom.site` → `46.19.118.18` (внешний nginx/HTTPS-прокси)
+- Внешний HTTPS-прокси: Proxmox CT `105` (`proxy`, `192.168.55.105`), `server_tokens off`
 - Runtime на VPS: локальный nginx слушает `0.0.0.0:80` и проксирует в Next.js на `127.0.0.1:3000`
 - Next.js под PM2 (`mphub`) запущен от пользователя `makson`; root PM2 для сайта не используется
 - На VPS локальный порт 443 не слушается приложением; HTTPS терминируется внешним прокси на `46.19.118.18`
@@ -78,6 +79,9 @@ docs/            — ТЗ и документация
 - `/api/monitor/*` использует `src/lib/monitor-auth.ts`, сейчас это тот же admin-check.
 - Закрытые группы: `/api/finance/*`, `/api/data/*`, `/api/reviews/*`, `/api/wb/*`, `/api/monitor/*`.
 - В production `JWT_SECRET` обязателен во время runtime. Dev fallback допустим только вне production runtime.
+- Login rate-limit хранится в SQLite `auth_login_attempts`, а не в памяти процесса.
+- Security headers задаются в `next.config.ts`: noindex, nosniff, DENY frame, referrer/permissions policy, HSTS и CSP в production.
+- Локальный nginx на VPS должен иметь `server_tokens off`.
 - SQL со значениями из переменных писать через параметры `?`, не через строковую вставку.
 
 ## Режим работы

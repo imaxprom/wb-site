@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { initShipmentTables, getUserByEmail, updateUserPasswordHash } from "@/lib/shipment-db";
+import { initShipmentTables, getDb, getUserByEmail, updateUserPasswordHash } from "@/lib/shipment-db";
 import { verifyPassword, createToken, hashPassword, isLegacyPasswordHash } from "@/lib/auth";
 
 initShipmentTables();
@@ -8,8 +8,7 @@ const MAX_AGE = 30 * 24 * 60 * 60; // 30 days
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILED_ATTEMPTS = 5;
 
-type AttemptState = { count: number; firstAt: number };
-const attempts = new Map<string, AttemptState>();
+type AttemptState = { count: number; first_at: number };
 
 function getClientIp(req: NextRequest): string {
   return (
@@ -24,23 +23,48 @@ function attemptKey(req: NextRequest, email: string): string {
 }
 
 function isBlocked(key: string): boolean {
-  const state = attempts.get(key);
+  const state = getDb()
+    .prepare("SELECT count, first_at FROM auth_login_attempts WHERE key = ?")
+    .get(key) as AttemptState | undefined;
+
   if (!state) return false;
-  if (Date.now() - state.firstAt > LOGIN_WINDOW_MS) {
-    attempts.delete(key);
+
+  if (Date.now() - state.first_at > LOGIN_WINDOW_MS) {
+    getDb().prepare("DELETE FROM auth_login_attempts WHERE key = ?").run(key);
     return false;
   }
+
   return state.count >= MAX_FAILED_ATTEMPTS;
 }
 
 function recordFailure(key: string): void {
   const now = Date.now();
-  const state = attempts.get(key);
-  if (!state || now - state.firstAt > LOGIN_WINDOW_MS) {
-    attempts.set(key, { count: 1, firstAt: now });
+  getDb()
+    .prepare("DELETE FROM auth_login_attempts WHERE updated_at < ?")
+    .run(now - LOGIN_WINDOW_MS * 4);
+
+  const state = getDb()
+    .prepare("SELECT count, first_at FROM auth_login_attempts WHERE key = ?")
+    .get(key) as AttemptState | undefined;
+
+  if (!state || now - state.first_at > LOGIN_WINDOW_MS) {
+    getDb()
+      .prepare(`
+        INSERT INTO auth_login_attempts (key, count, first_at, updated_at)
+        VALUES (?, 1, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET count = 1, first_at = excluded.first_at, updated_at = excluded.updated_at
+      `)
+      .run(key, now, now);
     return;
   }
-  state.count += 1;
+
+  getDb()
+    .prepare("UPDATE auth_login_attempts SET count = count + 1, updated_at = ? WHERE key = ?")
+    .run(now, key);
+}
+
+function clearFailures(key: string): void {
+  getDb().prepare("DELETE FROM auth_login_attempts WHERE key = ?").run(key);
 }
 
 export async function POST(req: NextRequest) {
@@ -69,7 +93,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Неверный email или пароль" }, { status: 401 });
     }
 
-    attempts.delete(key);
+    clearFailures(key);
     if (isLegacyPasswordHash(user.password_hash)) {
       updateUserPasswordHash(user.id, hashPassword(password));
     }

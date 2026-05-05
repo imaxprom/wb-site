@@ -1899,10 +1899,12 @@
             "ssh wb-site",
             "  Путь проекта: /home/makson/website",
             "  Local nginx: 0.0.0.0:80 -> 127.0.0.1:3000",
+            "  Nginx hardening: server_tokens off",
             "  PM2 process: mphub, user makson",
             "  Команда: next start, bind 127.0.0.1:3000",
             "  Health-check приложения изнутри VPS: http://127.0.0.1:3000/login",
             "  Проверка локального nginx: http://127.0.0.1/login",
+            "  External nginx: Proxmox CT 105 proxy, server_tokens off",
             "  Публичный вход: https://hub.imaxprom.site через внешний nginx/HTTPS",
             "",
             "Проверки:",
@@ -1958,7 +1960,11 @@
             "Внутренний health-check делать через http://127.0.0.1, не через https://hub.imaxprom.site с самого VPS",
             "PM2 error-log может содержать старые записи; проверять timestamp/size до и после диагностики",
             "Перед точечными правками на проде делать backup изменяемого файла/каталога в /home/makson",
-            "Старый scripts/rebuild-server.sh относится к локальной/macOS схеме и не должен использоваться как production deploy"
+            "Старый scripts/rebuild-server.sh относится к локальной/macOS схеме и не должен использоваться как production deploy",
+            "Security headers задаются в next.config.ts: noindex, nosniff, X-Frame-Options DENY, Referrer-Policy, Permissions-Policy, HSTS и CSP в production",
+            "Login rate-limit хранится в SQLite auth_login_attempts и переживает рестарт PM2",
+            "Локальный nginx на VPS должен оставаться с server_tokens off, чтобы не раскрывать точную версию nginx",
+            "Внешний HTTPS-прокси CT 105 proxy тоже должен оставаться с server_tokens off: /etc/nginx/conf.d/server-tokens.conf"
           ]
         }
       ]
@@ -2012,7 +2018,7 @@
           "type": "list",
           "title": "Auth и настройки",
           "items": [
-            "POST /api/auth/login — вход (email + пароль → httpOnly mphub-token)",
+            "POST /api/auth/login — вход (email + пароль -> httpOnly mphub-token), rate-limit хранится в SQLite auth_login_attempts",
             "POST /api/auth/logout — выход (удаление cookie)",
             "GET /api/auth/me — текущий пользователь из JWT",
             "GET|PUT /api/settings — пользовательские настройки, требует mphub-token",
