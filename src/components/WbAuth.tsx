@@ -4,6 +4,16 @@ import { useState, useEffect, useRef } from "react";
 import { AutoCheckLine } from "./AutoCheckLine";
 
 type Step = "loading" | "phone" | "captcha" | "code" | "supplier_select" | "authenticated";
+type AuthApiResult = {
+  ok: boolean;
+  step: string;
+  captchaImage?: string;
+  error?: string;
+  warning?: string;
+  suppliers?: string[];
+  currentSupplier?: string;
+  retryAfterSeconds?: number;
+};
 
 export function WbAuth() {
   const [step, setStep] = useState<Step>("loading");
@@ -34,12 +44,26 @@ export function WbAuth() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
+  const [cooldownUntil, setCooldownUntil] = useState<number | null>(null);
+  const [cooldownPhone, setCooldownPhone] = useState("");
+  const [now, setNow] = useState(Date.now());
   const codeRef = useRef<HTMLInputElement>(null);
   const captchaRef = useRef<HTMLInputElement>(null);
+  const phoneCooldownSeconds = cooldownPhone === normalizePhoneForCooldown(phone) && cooldownUntil
+    ? Math.max(0, Math.ceil((cooldownUntil - now) / 1000))
+    : 0;
 
   useEffect(() => {
     checkSession();
   }, []);
+
+  useEffect(() => {
+    if (!cooldownUntil) return;
+
+    setNow(Date.now());
+    const interval = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [cooldownUntil]);
 
   // Auto-focus inputs when step changes
   useEffect(() => {
@@ -62,8 +86,12 @@ export function WbAuth() {
     }
   }
 
-  function handleStepResult(data: { ok: boolean; step: string; captchaImage?: string; error?: string; warning?: string; suppliers?: string[]; currentSupplier?: string }) {
+  function handleStepResult(data: AuthApiResult) {
     if (!data.ok && data.step === "error") {
+      if (data.retryAfterSeconds && data.retryAfterSeconds > 0) {
+        setCooldownPhone(normalizePhoneForCooldown(phone));
+        setCooldownUntil(Date.now() + data.retryAfterSeconds * 1000);
+      }
       setError(data.error || "Неизвестная ошибка");
       return;
     }
@@ -77,6 +105,7 @@ export function WbAuth() {
     }
 
     setError("");
+    setCooldownUntil(null);
     if (data.warning) setWarning(data.warning);
 
     switch (data.step) {
@@ -113,6 +142,10 @@ export function WbAuth() {
 
   async function handleSendPhone() {
     const cleaned = phone.replace(/[^\d+]/g, "");
+    if (phoneCooldownSeconds > 0) {
+      setError(`WB временно не даёт запросить новый SMS. Повтор через ${formatCooldown(phoneCooldownSeconds)}.`);
+      return;
+    }
     if (cleaned.length < 11) {
       setError("Введите корректный номер телефона");
       return;
@@ -261,11 +294,11 @@ export function WbAuth() {
           />
           <button
             onClick={handleSendPhone}
-            disabled={loading}
+            disabled={loading || phoneCooldownSeconds > 0}
             className="px-5 py-2.5 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white text-sm rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
           >
             {loading && <Spinner />}
-            {loading ? "Подключение..." : "Получить код"}
+            {loading ? "Подключение..." : phoneCooldownSeconds > 0 ? `Повтор через ${formatCooldown(phoneCooldownSeconds)}` : "Получить код"}
           </button>
         </div>
       )}
@@ -420,6 +453,22 @@ export function WbAuth() {
       )}
     </div>
   );
+}
+
+function normalizePhoneForCooldown(value: string): string {
+  let digits = value.replace(/\D/g, "");
+  if (digits.startsWith("8") && digits.length === 11) digits = "7" + digits.slice(1);
+  if (digits.startsWith("7") && digits.length === 11) digits = digits.slice(1);
+  return digits;
+}
+
+function formatCooldown(seconds: number): string {
+  const minutes = Math.max(1, Math.ceil(seconds / 60));
+  if (minutes < 60) return `${minutes} мин.`;
+
+  const hours = Math.floor(minutes / 60);
+  const restMinutes = minutes % 60;
+  return restMinutes > 0 ? `${hours} ч. ${restMinutes} мин.` : `${hours} ч.`;
 }
 
 function Spinner() {

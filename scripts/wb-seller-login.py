@@ -53,6 +53,36 @@ def wait_for_file(path, timeout=180):
         time.sleep(1)
     return None
 
+def normalize_rate_limit_text(value):
+    """Normalize common WB countdown text for the Node.js cooldown parser."""
+    return (
+        value.strip()
+        .replace("hours", "ч.")
+        .replace("hour", "ч.")
+        .replace("hrs", "ч.")
+        .replace("hr", "ч.")
+        .replace("minutes", "мин.")
+        .replace("minute", "мин.")
+        .replace("mins", "мин.")
+        .replace("min", "мин.")
+        .replace("seconds", "сек.")
+        .replace("second", "сек.")
+        .replace("secs", "сек.")
+        .replace("sec", "сек.")
+    )
+
+def extract_rate_limit_remaining(page_text):
+    """Return WB retry countdown from Russian or English auth text."""
+    patterns = [
+        r"(?:request\s+a\s+new\s+code|new\s+code).*?\bin\s+((?:\d+\s*(?:hours?|hrs?|minutes?|mins?|seconds?|secs?)\s*)+)",
+        r"(?:запрос[а-яё\s]*код[а-яё\s]*(?:возможен|можно)|через)\s+((?:\d+\s*(?:час[а-яё]*|ч\.?|минут[а-яё]*|мин\.?|секунд[а-яё]*|сек\.?)\s*)+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, page_text, re.IGNORECASE)
+        if match:
+            return normalize_rate_limit_text(match.group(1))
+    return None
+
 cleanup()
 print("Starting WB SELLER auth...")
 
@@ -94,12 +124,8 @@ with sync_playwright() as p:
     page_text = page.inner_text("body")[:1500]
 
     # Check rate limit
-    time_match = re.search(r'new code in\s+(\d+\s*hours?\s*\d*\s*minutes?)', page_text, re.IGNORECASE)
-    if not time_match:
-        time_match = re.search(r'через\s+(\d+\s*час[а-я]*\s*\d*\s*мин[а-я]*)', page_text, re.IGNORECASE)
-    if time_match:
-        remaining = time_match.group(1).strip()
-        remaining = remaining.replace("hours", "ч.").replace("hour", "ч.").replace("minutes", "мин.").replace("minute", "мин.")
+    remaining = extract_rate_limit_remaining(page_text)
+    if remaining:
         status("blocked", message="WB заблокировал отправку SMS. Повтор через " + remaining)
         browser.close()
         sys.exit(0)
