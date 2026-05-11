@@ -16,6 +16,8 @@ import { packItems, unitVolumeLiters, type PackingItem, type BoxConfig } from "@
 import { PackingSummaryTable, aggregatePackingByRegion, type SummaryArticle } from "./PackingSummaryTable";
 import { ArticleMultiSelect } from "./ArticleMultiSelect";
 
+const V2_BOX_ROUNDING_OPTIONS = Array.from({ length: 10 }, (_, i) => Math.round((i + 1) * 10) / 100);
+
 // ─── Trend Badge ────────────────────────────────────────────
 
 function TrendBadge({ trend, v1Need, v2Need }: { trend: TrendResult; v1Need?: number; v2Need?: number }) {
@@ -498,8 +500,9 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-[var(--text-muted)]">Округл. до короба</span>
                     <select value={v2BoxRounding} onChange={(e) => { const v = Number(e.target.value); setV2BoxRounding(v); updateSettings({ v2RoundTo: v }); }} className="w-14 bg-[var(--bg)] border border-[var(--border)] rounded px-1 py-1 text-center text-xs focus:outline-none focus:border-[var(--accent)]">
-                      <option value={0.5}>0.5</option>
-                      <option value={1}>1</option>
+                      {V2_BOX_ROUNDING_OPTIONS.map((value) => (
+                        <option key={value} value={value}>{value.toFixed(1)}</option>
+                      ))}
                     </select>
                   </div>
                 ) : (
