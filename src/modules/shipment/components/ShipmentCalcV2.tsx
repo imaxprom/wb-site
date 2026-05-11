@@ -425,8 +425,9 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
       regions: v2SummaryRegions,
       viewMode: v2ViewMode,
       rowMeta: v2RowMeta,
+      boxRounding: v2BoxRounding,
     });
-  }, [allCalculations, v2Articles, v2SummaryRegions, v2ViewMode, v2RowMeta]);
+  }, [allCalculations, v2Articles, v2SummaryRegions, v2ViewMode, v2RowMeta, v2BoxRounding]);
 
   return (
     <div className="space-y-4">

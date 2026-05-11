@@ -10,6 +10,7 @@ interface ExportInput {
   regions: Array<{ id: string; shortName: string }>;
   viewMode: "units" | "boxes";
   rowMeta?: Record<string, { plan: number; fact: number; need: number }>;
+  boxRounding?: number;
 }
 
 // ─── Styles ────────────────────────────────────────────────
@@ -55,8 +56,17 @@ function setF(ws: XLSX.WorkSheet, r: number, c: number, formula: string, compute
   ws[addr] = { t: "n", f: formula, v: computed ?? 0, s };
 }
 
+function roundBoxes(boxes: number, step: number): number {
+  if (step <= 0) return boxes;
+  return Math.round((Math.round(boxes / step) * step) * 1000) / 1000;
+}
+
+function roundUnits(units: number): number {
+  return Math.round(units);
+}
+
 // ─── Main ──────────────────────────────────────────────────
-export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMeta }: ExportInput) {
+export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMeta, boxRounding = 0.5 }: ExportInput) {
   if (articles.length === 0) return;
   const isBoxes = viewMode === "boxes";
 
@@ -185,17 +195,19 @@ export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMet
         const region = regions[i];
         const qty = sr.qtyByRegion[region.id] || 0;
         if (isBoxes) {
-          const boxes = perBox > 0 ? Math.round((qty / perBox) * 2) / 2 : 0;
+          const boxes = perBox > 0 ? roundBoxes(qty / perBox, boxRounding) : 0;
           const boxesCol = 8 + i * 2;
           const unitsCol = boxesCol + 1;
+          const units = roundUnits(boxes * perBox);
           setV(ws, r, boxesCol, boxes > 0 ? boxes : null, { ...(boxes > 0 ? bold : muted), border: { ...baseBorder, left: BORDER_THICK } });
-          setF(ws, r, unitsCol, `=IFERROR(${ref(r, boxesCol)}*${ref(r, 2)},"")`, boxes * perBox, { ...muted, border: { ...baseBorder, right: BORDER_THICK } });
+          setF(ws, r, unitsCol, `=IFERROR(ROUND(${ref(r, boxesCol)}*${ref(r, 2)},0),"")`, units, { ...muted, border: { ...baseBorder, right: BORDER_THICK } });
           computedShipBoxes += boxes;
-          computedShipUnits += boxes * perBox;
+          computedShipUnits += units;
         } else {
           const col = 8 + i;
-          setV(ws, r, col, qty > 0 ? qty : null, { ...(qty > 0 ? bold : muted), border: { ...baseBorder, left: BORDER_THICK, right: BORDER_THICK } });
-          computedShipUnits += qty;
+          const units = roundUnits(qty);
+          setV(ws, r, col, units > 0 ? units : null, { ...(units > 0 ? bold : muted), border: { ...baseBorder, left: BORDER_THICK, right: BORDER_THICK } });
+          computedShipUnits += units;
         }
       }
 
