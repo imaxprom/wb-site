@@ -29,6 +29,10 @@ function roundBoxes(boxes: number, step: number): number {
   return Math.round((Math.round(boxes / step) * step) * 1000) / 1000;
 }
 
+function roundUnits(units: number): number {
+  return Math.round(units);
+}
+
 /** Helper: aggregate packing-by-region into SummaryArticle[] (for boxes mode) */
 export function aggregatePackingByRegion(
   packingByRegion: Array<{ region: { id: string; shortName: string }; packing: PackingResult }>,
@@ -149,7 +153,7 @@ export function PackingSummaryTable({
           const boxes = override !== undefined && override !== ""
             ? (isNaN(Number(override.replace(",", "."))) ? 0 : Number(override.replace(",", ".")))
             : autoBoxes;
-          const units = boxes * perBox;
+          const units = roundUnits(boxes * perBox);
           totalBoxesByRegion[region.id] = (totalBoxesByRegion[region.id] || 0) + boxes;
           totalQtyByRegion[region.id] = (totalQtyByRegion[region.id] || 0) + units;
           rowShippedBoxes += boxes;
@@ -160,8 +164,9 @@ export function PackingSummaryTable({
           const units = override !== undefined && override !== ""
             ? (isNaN(Number(override)) ? 0 : Number(override))
             : qty;
-          totalQtyByRegion[region.id] = (totalQtyByRegion[region.id] || 0) + units;
-          rowShippedUnits += units;
+          const roundedUnits = roundUnits(units);
+          totalQtyByRegion[region.id] = (totalQtyByRegion[region.id] || 0) + roundedUnits;
+          rowShippedUnits += roundedUnits;
         }
       }
       totalShippedBoxes += rowShippedBoxes;
@@ -189,8 +194,9 @@ export function PackingSummaryTable({
           totalBoxesByRegion[region.id] = (totalBoxesByRegion[region.id] || 0) + n;
           totalShippedBoxes += n;
         } else {
-          totalQtyByRegion[region.id] = (totalQtyByRegion[region.id] || 0) + n;
-          totalShippedUnits += n;
+          const roundedUnits = roundUnits(n);
+          totalQtyByRegion[region.id] = (totalQtyByRegion[region.id] || 0) + roundedUnits;
+          totalShippedUnits += roundedUnits;
         }
       }
     }
@@ -332,7 +338,7 @@ export function PackingSummaryTable({
                       const autoBoxes = perBox > 0 ? roundBoxes(qty / perBox, boxRounding) : 0;
                       const parsedOverride = hasOverride ? Number((overrideStr as string).replace(",", ".")) : NaN;
                       const boxes = hasOverride ? (isNaN(parsedOverride) ? 0 : parsedOverride) : autoBoxes;
-                      const units = boxes * perBox;
+                      const units = roundUnits(boxes * perBox);
                       const isOverridden = hasOverride && parsedOverride !== autoBoxes;
                       rowShippedBoxes += boxes;
                       rowShippedUnits += units;
@@ -347,7 +353,7 @@ export function PackingSummaryTable({
                     } else {
                       // units mode: single editable "Штук" per region
                       const parsedOverride = hasOverride ? Number(overrideStr) : NaN;
-                      const units = hasOverride ? (isNaN(parsedOverride) ? 0 : parsedOverride) : qty;
+                      const units = roundUnits(hasOverride ? (isNaN(parsedOverride) ? 0 : parsedOverride) : qty);
                       const isOverridden = hasOverride && parsedOverride !== qty;
                       rowShippedUnits += units;
                       regionCells.push(
