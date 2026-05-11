@@ -24,9 +24,15 @@ export interface SummaryArticle {
 
 export type ViewMode = "units" | "boxes";
 
+function roundBoxes(boxes: number, step: number): number {
+  if (step <= 0) return boxes;
+  return Math.round((Math.round(boxes / step) * step) * 1000) / 1000;
+}
+
 /** Helper: aggregate packing-by-region into SummaryArticle[] (for boxes mode) */
 export function aggregatePackingByRegion(
-  packingByRegion: Array<{ region: { id: string; shortName: string }; packing: PackingResult }>
+  packingByRegion: Array<{ region: { id: string; shortName: string }; packing: PackingResult }>,
+  boxRounding: number = 0.5
 ): SummaryArticle[] {
   const map = new Map<string, SummaryArticle>();
   for (const { region, packing } of packingByRegion) {
@@ -57,7 +63,7 @@ export function aggregatePackingByRegion(
       const perBox = sr.item.perBox;
       for (const regId in sr.qtyByRegion) {
         const q = sr.qtyByRegion[regId];
-        totalBoxes += perBox > 0 ? Math.round((q / perBox) * 2) / 2 : 0;
+        totalBoxes += perBox > 0 ? roundBoxes(q / perBox, boxRounding) : 0;
       }
     }
     if (totalBoxes === 0) map.delete(key);
@@ -83,11 +89,13 @@ export function PackingSummaryTable({
   regions,
   viewMode,
   rowMeta,
+  boxRounding = 0.5,
 }: {
   articles: SummaryArticle[];
   regions: Array<{ id: string; shortName: string }>;
   viewMode: ViewMode;
   rowMeta?: Record<string, { plan: number; fact: number; need: number }>;
+  boxRounding?: number;
 }) {
   const [stockByBarcode, setStockByBarcode] = useState<Record<string, string>>({});
   const [sampleByKey, setSampleByKey] = useState<Record<string, string>>({});
@@ -135,7 +143,7 @@ export function PackingSummaryTable({
       for (const region of regions) {
         const qty = sr.qtyByRegion[region.id] || 0;
         if (isBoxes) {
-          const autoBoxes = perBox > 0 ? Math.round((qty / perBox) * 2) / 2 : 0;
+          const autoBoxes = perBox > 0 ? roundBoxes(qty / perBox, boxRounding) : 0;
           const key = `${sr.item.barcode}-${region.id}`;
           const override = boxesByKey[key];
           const boxes = override !== undefined && override !== ""
@@ -321,7 +329,7 @@ export function PackingSummaryTable({
                     const overrideStr = boxesByKey[key];
                     const hasOverride = overrideStr !== undefined && overrideStr !== "";
                     if (isBoxes) {
-                      const autoBoxes = perBox > 0 ? Math.round((qty / perBox) * 2) / 2 : 0;
+                      const autoBoxes = perBox > 0 ? roundBoxes(qty / perBox, boxRounding) : 0;
                       const parsedOverride = hasOverride ? Number((overrideStr as string).replace(",", ".")) : NaN;
                       const boxes = hasOverride ? (isNaN(parsedOverride) ? 0 : parsedOverride) : autoBoxes;
                       const units = boxes * perBox;

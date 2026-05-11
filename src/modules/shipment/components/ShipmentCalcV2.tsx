@@ -306,7 +306,7 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
       };
     }).filter((p) => p.packing.totalBoxes > 0);
 
-    const articles = aggregatePackingByRegion(packingByRegion);
+    const articles = aggregatePackingByRegion(packingByRegion, v2BoxRounding);
 
     // Дозаполняем размеры с нулевой потребностью — чтобы режим «Кораба»
     // показывал тот же набор размеров, что и «Штуки» (с прочерками).
@@ -551,7 +551,7 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
               {v2ViewMode === "boxes" ? "📦 Кораба" : "🔢 Штуки"} — сводная по артикулам
             </h3>
           </div>
-          <PackingSummaryTable articles={v2Articles} regions={v2SummaryRegions} viewMode={v2ViewMode} rowMeta={v2RowMeta} />
+          <PackingSummaryTable articles={v2Articles} regions={v2SummaryRegions} viewMode={v2ViewMode} rowMeta={v2RowMeta} boxRounding={v2BoxRounding} />
         </div>
       )}
 
