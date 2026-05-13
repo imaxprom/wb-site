@@ -82,11 +82,13 @@ export default function CogsSettingsPage() {
         cost: storedCogs[b.barcode] ?? null,
       }));
 
-      // Sort: no cost first, then by sa_name, ts_name
+      // Sort: no cost first, then by stable WB article and seller article.
       merged.sort((a, b) => {
         if ((a.cost === null) !== (b.cost === null)) {
           return a.cost === null ? -1 : 1;
         }
+        const nm = a.nm_id - b.nm_id;
+        if (nm !== 0) return nm;
         const sa = a.sa_name.localeCompare(b.sa_name, "ru");
         if (sa !== 0) return sa;
         return a.ts_name.localeCompare(b.ts_name, "ru");
@@ -179,6 +181,8 @@ export default function CogsSettingsPage() {
         if ((a.cost === null) !== (b.cost === null)) {
           return a.cost === null ? -1 : 1;
         }
+        const nm = a.nm_id - b.nm_id;
+        if (nm !== 0) return nm;
         const sa = a.sa_name.localeCompare(b.sa_name, "ru");
         if (sa !== 0) return sa;
         return a.ts_name.localeCompare(b.ts_name, "ru");
@@ -198,6 +202,7 @@ export default function CogsSettingsPage() {
     return rows.filter(
       (r) =>
         r.barcode.includes(q) ||
+        String(r.nm_id).includes(q) ||
         r.sa_name.toLowerCase().includes(q) ||
         r.ts_name.toLowerCase().includes(q)
     );
@@ -303,7 +308,7 @@ export default function CogsSettingsPage() {
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Поиск по артикулу или баркоду…"
+          placeholder="Поиск по NM ID, артикулу продавца, баркоду или размеру…"
           className="w-full pl-9 pr-4 py-2.5 bg-[var(--bg-card)] border border-[var(--border)] rounded-xl text-sm text-[var(--text)] focus:border-[var(--accent)] focus:outline-none"
         />
       </div>
@@ -314,7 +319,8 @@ export default function CogsSettingsPage() {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Артикул</th>
+                <th>NM ID</th>
+                <th>Артикул продавца</th>
                 <th>Баркод</th>
                 <th>Размер</th>
                 <th className="num">Себестоимость</th>
@@ -333,6 +339,9 @@ export default function CogsSettingsPage() {
                       !hasCost && "border-l-2 border-[var(--danger)] bg-[var(--danger)]/5"
                     )}
                   >
+                    <td className="font-mono text-sm text-[var(--text)]">
+                      {row.nm_id || "—"}
+                    </td>
                     <td className="font-mono text-[var(--accent)]">
                       {row.sa_name || "—"}
                     </td>
@@ -377,7 +386,7 @@ export default function CogsSettingsPage() {
               })}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="text-center py-8 text-[var(--text-muted)]">
+                  <td colSpan={6} className="text-center py-8 text-[var(--text-muted)]">
                     Ничего не найдено
                   </td>
                 </tr>
