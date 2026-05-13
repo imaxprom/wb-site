@@ -223,6 +223,10 @@ export default function CogsSettingsPage() {
       setCostEdit((prev) => prev ? { ...prev, error: "Выберите дату, с которой применять себестоимость." } : prev);
       return;
     }
+    if (costEdit.mode === "custom" && costEdit.date > todayInputValue()) {
+      setCostEdit((prev) => prev ? { ...prev, error: "Дата не может быть позже сегодняшнего дня." } : prev);
+      return;
+    }
 
     setCostEdit((prev) => prev ? { ...prev, saving: true, error: null } : prev);
 
@@ -721,6 +725,7 @@ export default function CogsSettingsPage() {
                     <input
                       type="date"
                       value={costEdit.date}
+                      max={todayInputValue()}
                       disabled={costEdit.mode !== "custom"}
                       onChange={(e) => setCostEdit((prev) => prev ? { ...prev, date: e.target.value, error: null } : prev)}
                       className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2 text-sm text-[var(--text)] disabled:opacity-50"

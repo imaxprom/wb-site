@@ -143,6 +143,10 @@ function resolveValidFrom(
   return todayMsk();
 }
 
+function isValidDateString(value: string | undefined): value is string {
+  return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
+}
+
 /**
  * GET /api/finance/cogs — list all barcode costs
  */
@@ -248,7 +252,17 @@ export async function PATCH(request: NextRequest) {
     ensureCogsHistory(db);
     const upsert = db.prepare("INSERT INTO cogs (barcode, cost) VALUES (?, ?) ON CONFLICT(barcode) DO UPDATE SET cost = ?");
     const del = db.prepare("DELETE FROM cogs WHERE barcode = ?");
+    if (body.applyMode === "custom" && !isValidDateString(body.validFrom)) {
+      db.close();
+      return NextResponse.json({ error: "validFrom must be YYYY-MM-DD" }, { status: 400 });
+    }
+
     const validFrom = resolveValidFrom(db, barcode, body.applyMode, body.validFrom);
+    if (validFrom > todayMsk()) {
+      db.close();
+      return NextResponse.json({ error: "validFrom cannot be in the future" }, { status: 400 });
+    }
+
     const normalized = body.cost === null || body.cost === undefined ? null : Number(body.cost);
 
     const tx = db.transaction(() => {
