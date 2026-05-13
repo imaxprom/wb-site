@@ -319,7 +319,7 @@ export default function CogsSettingsPage() {
           <table className="data-table">
             <thead>
               <tr>
-                <th>NM ID</th>
+                <th>Артикул</th>
                 <th>Артикул продавца</th>
                 <th>Баркод</th>
                 <th>Размер</th>
