@@ -6,7 +6,7 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 
-const DEFAULT_COGS_PER_UNIT = 300;
+const ZERO_COGS_PER_UNIT = 0;
 const DB_PATH = path.join(process.cwd(), "data", "finance.db");
 const WEEKLY_DB_PATH = path.join(process.cwd(), "data", "weekly_reports.db");
 
@@ -14,7 +14,14 @@ const WEEKLY_DB_PATH = path.join(process.cwd(), "data", "weekly_reports.db");
 
 let db: Database.Database | null = null;
 let weeklyDb: Database.Database | null = null;
-let cogsMap: Map<string, number> | null = null;
+let cogsHistoryMap: Map<string, CogsHistoryRow[]> | null = null;
+
+interface CogsHistoryRow {
+  barcode: string;
+  cost: number;
+  valid_from: string;
+  valid_to: string | null;
+}
 
 export function getDb(): Database.Database {
   if (!db) {
@@ -35,12 +42,57 @@ function getWeeklyDb(): Database.Database | null {
   return weeklyDb;
 }
 
-function getCogsMap(): Map<string, number> {
-  if (cogsMap) return cogsMap;
+function tableExists(d: Database.Database, tableName: string): boolean {
+  const row = d
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(tableName);
+  return Boolean(row);
+}
+
+function getCogsHistoryMap(): Map<string, CogsHistoryRow[]> {
+  if (cogsHistoryMap) return cogsHistoryMap;
   const d = getDb();
-  const rows = d.prepare("SELECT barcode, cost FROM cogs").all() as { barcode: string; cost: number }[];
-  cogsMap = new Map(rows.map(r => [r.barcode, r.cost]));
-  return cogsMap;
+  const rows = tableExists(d, "cogs_history")
+    ? d.prepare(`
+        SELECT barcode, cost, valid_from, valid_to
+        FROM cogs_history
+        ORDER BY barcode, valid_from
+      `).all() as CogsHistoryRow[]
+    : d.prepare(`
+        SELECT barcode, cost, '0000-01-01' AS valid_from, NULL AS valid_to
+        FROM cogs
+      `).all() as CogsHistoryRow[];
+
+  cogsHistoryMap = new Map();
+  for (const row of rows) {
+    const barcodeRows = cogsHistoryMap.get(row.barcode) || [];
+    barcodeRows.push(row);
+    cogsHistoryMap.set(row.barcode, barcodeRows);
+  }
+  return cogsHistoryMap;
+}
+
+function getCostForDate(barcode: string, date: string): number {
+  const history = getCogsHistoryMap().get(barcode);
+  if (!history || !date) return ZERO_COGS_PER_UNIT;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const row = history[i];
+    if (row.valid_from <= date && (!row.valid_to || row.valid_to >= date)) {
+      return row.cost;
+    }
+  }
+  return ZERO_COGS_PER_UNIT;
+}
+
+function cogsCostSql(alias: string, dateColumn: string): string {
+  return `COALESCE((
+    SELECT h.cost FROM cogs_history h
+    WHERE h.barcode = ${alias}.barcode
+      AND h.valid_from <= ${alias}.${dateColumn}
+      AND (h.valid_to IS NULL OR h.valid_to >= ${alias}.${dateColumn})
+    ORDER BY h.valid_from DESC
+    LIMIT 1
+  ), 0)`;
 }
 
 // ─── Dedup Filter ────────────────────────────────────────────
@@ -184,24 +236,23 @@ function getPnlFromExcel(wdb: Database.Database, dateFrom: string, dateTo: strin
     WHERE 1=1 ${pf}
   `).get(...periodParams) as Record<string, number>;
 
-  const costs = getCogsMap();
   let cogs = 0;
   const qtyRows = wdb.prepare(`
-    SELECT barcode, SUM(quantity) as qty FROM weekly_rows
+    SELECT barcode, sale_dt, SUM(quantity) as qty FROM weekly_rows
     WHERE supplier_oper_name = 'Продажа' AND sale_dt >= ? AND sale_dt <= ?
-    GROUP BY barcode
-  `).all(dateFrom, excelSaleTo) as { barcode: string; qty: number }[];
+    GROUP BY barcode, sale_dt
+  `).all(dateFrom, excelSaleTo) as { barcode: string; sale_dt: string; qty: number }[];
   for (const row of qtyRows) {
-    cogs += row.qty * (costs.get(row.barcode) || DEFAULT_COGS_PER_UNIT);
+    cogs += row.qty * getCostForDate(row.barcode, row.sale_dt);
   }
   let cogsReturns = 0;
   const retQtyRows = wdb.prepare(`
-    SELECT barcode, SUM(quantity) as qty FROM weekly_rows
+    SELECT barcode, sale_dt, SUM(quantity) as qty FROM weekly_rows
     WHERE supplier_oper_name = 'Возврат' AND sale_dt >= ? AND sale_dt <= ?
-    GROUP BY barcode
-  `).all(dateFrom, excelSaleTo) as { barcode: string; qty: number }[];
+    GROUP BY barcode, sale_dt
+  `).all(dateFrom, excelSaleTo) as { barcode: string; sale_dt: string; qty: number }[];
   for (const row of retQtyRows) {
-    cogsReturns += row.qty * (costs.get(row.barcode) || DEFAULT_COGS_PER_UNIT);
+    cogsReturns += row.qty * getCostForDate(row.barcode, row.sale_dt);
   }
 
   if (excelEnd < dateTo) {
@@ -215,7 +266,7 @@ function getPnlFromExcel(wdb: Database.Database, dateFrom: string, dateTo: strin
         COALESCE(SUM(retail_amount), 0) as ra,
         COALESCE(SUM(ppvz_for_pay), 0) as ppvz,
         COALESCE(SUM(quantity), 0) as qty,
-        COALESCE(SUM(quantity * COALESCE((SELECT cost FROM cogs WHERE cogs.barcode = r.barcode), ${DEFAULT_COGS_PER_UNIT})), 0) as cogs
+        COALESCE(SUM(quantity * ${cogsCostSql("r", "sale_dt")}), 0) as cogs
       FROM realization r
       WHERE supplier_oper_name = 'Продажа' AND sale_dt >= ? AND sale_dt <= ?
     `).get(tailFrom, tailTo) as Record<string, number>;
@@ -226,7 +277,7 @@ function getPnlFromExcel(wdb: Database.Database, dateFrom: string, dateTo: strin
         COALESCE(SUM(retail_amount), 0) as ra,
         COALESCE(SUM(ppvz_for_pay), 0) as ppvz,
         COALESCE(SUM(quantity), 0) as qty,
-        COALESCE(SUM(quantity * COALESCE((SELECT cost FROM cogs WHERE cogs.barcode = r.barcode), ${DEFAULT_COGS_PER_UNIT})), 0) as cogs
+        COALESCE(SUM(quantity * ${cogsCostSql("r", "sale_dt")}), 0) as cogs
       FROM realization r
       WHERE supplier_oper_name = 'Возврат' AND sale_dt >= ? AND sale_dt <= ?
     `).get(tailFrom, tailTo) as Record<string, number>;
@@ -329,14 +380,14 @@ export function getPnl(dateFrom: string, dateTo: string, nmId?: number): PnlResu
   const salesRow = d.prepare(`
     SELECT COALESCE(SUM(retail_price_withdisc_rub), 0) as rpwd, COALESCE(SUM(retail_amount), 0) as ra,
       COALESCE(SUM(ppvz_for_pay), 0) as ppvz, COALESCE(SUM(quantity), 0) as qty,
-      COALESCE(SUM(quantity * COALESCE((SELECT cost FROM cogs WHERE cogs.barcode = r.barcode), ${DEFAULT_COGS_PER_UNIT})), 0) as cogs
+      COALESCE(SUM(quantity * ${cogsCostSql("r", "sale_dt")}), 0) as cogs
     FROM realization r WHERE supplier_oper_name = 'Продажа' AND ${saleDateFilter} ${salesWhere} ${excludeDaily.sql}
   `).get(...salesParams) as Record<string, number>;
 
   const returnsRow = d.prepare(`
     SELECT COALESCE(SUM(retail_price_withdisc_rub), 0) as rpwd, COALESCE(SUM(retail_amount), 0) as ra,
       COALESCE(SUM(ppvz_for_pay), 0) as ppvz, COALESCE(SUM(quantity), 0) as qty,
-      COALESCE(SUM(quantity * COALESCE((SELECT cost FROM cogs WHERE cogs.barcode = r.barcode), ${DEFAULT_COGS_PER_UNIT})), 0) as cogs
+      COALESCE(SUM(quantity * ${cogsCostSql("r", "sale_dt")}), 0) as cogs
     FROM realization r WHERE supplier_oper_name = 'Возврат' AND ${saleDateFilter} ${salesWhere} ${excludeDaily.sql}
   `).get(...salesParams) as Record<string, number>;
 
@@ -429,7 +480,7 @@ export function getDaily(dateFrom: string, dateTo: string, nmId?: number): Daily
 
   const salesDaily = d.prepare(`
     SELECT sale_dt as date, SUM(retail_price_withdisc_rub) as rpwd, SUM(ppvz_for_pay) as ppvz,
-      SUM(quantity) as qty, SUM(quantity * COALESCE((SELECT cost FROM cogs WHERE cogs.barcode = r.barcode), ${DEFAULT_COGS_PER_UNIT})) as cogs_sum
+      SUM(quantity) as qty, SUM(quantity * ${cogsCostSql("r", "sale_dt")}) as cogs_sum
     FROM realization r WHERE supplier_oper_name = 'Продажа' AND sale_dt >= ? AND sale_dt <= ? ${nmWhere} ${exSale.sql}
     GROUP BY sale_dt
   `).all(...saleParams) as Record<string, number>[];
@@ -484,7 +535,7 @@ export function getDaily(dateFrom: string, dateTo: string, nmId?: number): Daily
     const nds = ppvz * 5 / 105;
     const usn = (ppvz - nds) * 0.01;
     const totalSvc = comm.comm + svc.logistics + ad.total + svc.storage + svc.penalty;
-    const avgCogs = s.qty > 0 ? s.cogs_sum / s.qty : 300;
+    const avgCogs = s.qty > 0 ? s.cogs_sum / s.qty : ZERO_COGS_PER_UNIT;
     const profit = realization - totalSvc - s.cogs_sum + (retMap[dt]?.qty || 0) * avgCogs - usn - nds;
 
     result.push({

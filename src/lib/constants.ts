@@ -2,8 +2,8 @@
  * Centralized constants — no more magic numbers scattered across codebase.
  */
 
-/** Default cost of goods per unit (RUB) when COGS not set for barcode */
-export const DEFAULT_COGS_PER_UNIT = 300;
+/** Cost of goods per unit (RUB) when COGS is not set for barcode */
+export const DEFAULT_COGS_PER_UNIT = 0;
 
 /** Date ranges for various data queries */
 export const DATE_RANGES = {

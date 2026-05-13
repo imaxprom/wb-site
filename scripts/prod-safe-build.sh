@@ -66,6 +66,13 @@ if ! npm run build; then
   restore_previous_build "build failed"
 fi
 
+if [ -f scripts/migrate-cogs-history.js ]; then
+  echo "[deploy] migrating COGS history"
+  if ! node scripts/migrate-cogs-history.js; then
+    restore_previous_build "COGS history migration failed"
+  fi
+fi
+
 echo "[deploy] starting PM2 app"
 if ! pm2 restart "$APP_NAME"; then
   restore_previous_build "PM2 restart failed"

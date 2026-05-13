@@ -2,7 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { getDb } from "@/modules/finance/lib/queries";
-import { DEFAULT_COGS_PER_UNIT } from "@/lib/constants";
+
+function cogsCostSql(alias: string, dateColumn: string): string {
+  return `COALESCE((
+    SELECT h.cost FROM cogs_history h
+    WHERE h.barcode = ${alias}.barcode
+      AND h.valid_from <= ${alias}.${dateColumn}
+      AND (h.valid_to IS NULL OR h.valid_to >= ${alias}.${dateColumn})
+    ORDER BY h.valid_from DESC
+    LIMIT 1
+  ), 0)`;
+}
 
 /**
  * GET /api/finance/articles?from=YYYY-MM-DD&to=YYYY-MM-DD
@@ -28,8 +38,8 @@ export async function GET(request: NextRequest) {
         SUM(CASE WHEN supplier_oper_name = 'Возврат' THEN retail_price_withdisc_rub ELSE 0 END) as returns_rpwd,
         SUM(CASE WHEN supplier_oper_name = 'Продажа' THEN ppvz_for_pay ELSE 0 END) as sales_ppvz,
         SUM(CASE WHEN supplier_oper_name = 'Возврат' THEN ppvz_for_pay ELSE 0 END) as returns_ppvz,
-        SUM(CASE WHEN supplier_oper_name = 'Продажа' THEN quantity * COALESCE((SELECT cost FROM cogs WHERE cogs.barcode = r.barcode), ${DEFAULT_COGS_PER_UNIT}) ELSE 0 END) as cogs_total,
-        SUM(CASE WHEN supplier_oper_name = 'Возврат' THEN quantity * COALESCE((SELECT cost FROM cogs WHERE cogs.barcode = r.barcode), ${DEFAULT_COGS_PER_UNIT}) ELSE 0 END) as cogs_returns
+        SUM(CASE WHEN supplier_oper_name = 'Продажа' THEN quantity * ${cogsCostSql("r", "sale_dt")} ELSE 0 END) as cogs_total,
+        SUM(CASE WHEN supplier_oper_name = 'Возврат' THEN quantity * ${cogsCostSql("r", "sale_dt")} ELSE 0 END) as cogs_returns
       FROM realization r
       WHERE supplier_oper_name IN ('Продажа', 'Возврат')
         AND sale_dt >= ? AND sale_dt <= ?

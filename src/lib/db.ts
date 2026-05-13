@@ -607,7 +607,7 @@ export function getDaily(dateFrom: string, dateTo: string, nmId?: number): Daily
     const nds = ppvz * 5 / 105;
     const usn = (ppvz - nds) * 0.01;
     const totalSvc = comm.comm + svc.logistics + ad.total + svc.storage + svc.penalty;
-    const avgCogs = s.qty > 0 ? s.cogs_sum / s.qty : 300;
+    const avgCogs = s.qty > 0 ? s.cogs_sum / s.qty : DEFAULT_COGS_PER_UNIT;
     const profit = realization - totalSvc - s.cogs_sum + (retMap[dt]?.qty || 0) * avgCogs - usn - nds;
 
     result.push({

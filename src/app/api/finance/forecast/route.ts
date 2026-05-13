@@ -3,16 +3,57 @@ import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { getDb } from "@/modules/finance/lib/queries";
 import { getExcludeDailyFilter } from "@/modules/analytics/lib/db";
-import { DEFAULT_COGS_PER_UNIT } from "@/lib/constants";
 
 /** Предзагрузка себестоимости в Map (кэш, как в db.ts) */
-let forecastCogsMap: Map<string, number> | null = null;
-function getCogsMap(): Map<string, number> {
-  if (forecastCogsMap) return forecastCogsMap;
+interface CogsHistoryRow {
+  barcode: string;
+  cost: number;
+  valid_from: string;
+  valid_to: string | null;
+}
+
+let forecastCogsHistoryMap: Map<string, CogsHistoryRow[]> | null = null;
+
+function tableExists(db: ReturnType<typeof getDb>, tableName: string): boolean {
+  const row = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(tableName);
+  return Boolean(row);
+}
+
+function getCogsHistoryMap(): Map<string, CogsHistoryRow[]> {
+  if (forecastCogsHistoryMap) return forecastCogsHistoryMap;
   const d = getDb();
-  const rows = d.prepare("SELECT barcode, cost FROM cogs").all() as { barcode: string; cost: number }[];
-  forecastCogsMap = new Map(rows.map(r => [r.barcode, r.cost]));
-  return forecastCogsMap;
+  const rows = tableExists(d, "cogs_history")
+    ? d.prepare(`
+        SELECT barcode, cost, valid_from, valid_to
+        FROM cogs_history
+        ORDER BY barcode, valid_from
+      `).all() as CogsHistoryRow[]
+    : d.prepare(`
+        SELECT barcode, cost, '0000-01-01' AS valid_from, NULL AS valid_to
+        FROM cogs
+      `).all() as CogsHistoryRow[];
+
+  forecastCogsHistoryMap = new Map();
+  for (const row of rows) {
+    const history = forecastCogsHistoryMap.get(row.barcode) || [];
+    history.push(row);
+    forecastCogsHistoryMap.set(row.barcode, history);
+  }
+  return forecastCogsHistoryMap;
+}
+
+function getCostForDate(barcode: string, date: string): number {
+  const history = getCogsHistoryMap().get(barcode);
+  if (!history || !date) return 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const row = history[i];
+    if (row.valid_from <= date && (!row.valid_to || row.valid_to >= date)) {
+      return row.cost;
+    }
+  }
+  return 0;
 }
 
 /**
@@ -90,19 +131,18 @@ export async function GET(request: NextRequest) {
       logistics: logisticsMap.get(s.nm_id) || 0,
     }));
 
-    // COGS через Map (без коррелированного подзапроса)
-    const costs = getCogsMap();
+    // COGS через историю по датам продажи.
     const cogsRows = d.prepare(`
-      SELECT r.nm_id, r.barcode, SUM(r.quantity) as qty
+      SELECT r.nm_id, r.barcode, r.sale_dt, SUM(r.quantity) as qty
       FROM realization r
       WHERE r.supplier_oper_name = 'Продажа' AND r.sale_dt >= ? AND r.sale_dt <= ? AND r.nm_id > 0
         ${dedupSale.sql}
-      GROUP BY r.nm_id, r.barcode
-    `).all(econFrom, econTo, ...dedupSale.params) as { nm_id: number; barcode: string; qty: number }[];
+      GROUP BY r.nm_id, r.barcode, r.sale_dt
+    `).all(econFrom, econTo, ...dedupSale.params) as { nm_id: number; barcode: string; sale_dt: string; qty: number }[];
     const cogsMap = new Map<number, number>();
     const cogsQtyMap = new Map<number, number>();
     for (const r of cogsRows) {
-      const cost = costs.get(r.barcode) || DEFAULT_COGS_PER_UNIT;
+      const cost = getCostForDate(r.barcode, r.sale_dt);
       cogsMap.set(r.nm_id, (cogsMap.get(r.nm_id) || 0) + r.qty * cost);
       cogsQtyMap.set(r.nm_id, (cogsQtyMap.get(r.nm_id) || 0) + r.qty);
     }
@@ -121,7 +161,7 @@ export async function GET(request: NextRequest) {
       const avgPpvz = a.sales_ppvz / a.sales_qty;
       const totalCogs = cogsMap.get(a.nm_id) || 0;
       const totalQty = cogsQtyMap.get(a.nm_id) || 0;
-      const cogsUnit = totalQty > 0 ? totalCogs / totalQty : DEFAULT_COGS_PER_UNIT;
+      const cogsUnit = totalQty > 0 ? totalCogs / totalQty : 0;
       const logUnit = a.logistics / netQty;
       const commissionUnit = avgPrice - avgPpvz;
       // Налоги от retail_amount (Вайлдберриз реализовал Товар Пр) —
