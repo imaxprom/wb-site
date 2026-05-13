@@ -73,24 +73,23 @@ function ensureCogsHistory(db: Database.Database) {
 }
 
 function upsertHistory(db: Database.Database, barcode: string, cost: number, validFrom: string) {
-  const active = db.prepare(`
-    SELECT id, valid_from, cost
+  const previous = db.prepare(`
+    SELECT id, valid_from
     FROM cogs_history
-    WHERE barcode = ? AND valid_to IS NULL
+    WHERE barcode = ?
+      AND valid_from < ?
+      AND (valid_to IS NULL OR valid_to >= ?)
     ORDER BY valid_from DESC
     LIMIT 1
-  `).get(barcode) as { id: number; valid_from: string; cost: number } | undefined;
+  `).get(barcode, validFrom, validFrom) as { id: number; valid_from: string } | undefined;
 
-  if (active && active.valid_from >= validFrom) {
-    db.prepare("UPDATE cogs_history SET cost = ?, valid_from = ? WHERE id = ?")
-      .run(cost, validFrom, active.id);
-    return;
-  }
-
-  if (active) {
+  if (previous) {
     db.prepare("UPDATE cogs_history SET valid_to = ? WHERE id = ?")
-      .run(shiftDays(validFrom, -1), active.id);
+      .run(shiftDays(validFrom, -1), previous.id);
   }
+
+  db.prepare("DELETE FROM cogs_history WHERE barcode = ? AND valid_from >= ?")
+    .run(barcode, validFrom);
 
   db.prepare(`
     INSERT INTO cogs_history (barcode, cost, valid_from, valid_to)
@@ -115,6 +114,33 @@ function closeHistory(db: Database.Database, barcode: string, validFrom: string)
 
   db.prepare("UPDATE cogs_history SET valid_to = ? WHERE id = ?")
     .run(shiftDays(validFrom, -1), active.id);
+}
+
+function getFirstSaleDate(db: Database.Database, barcode: string): string | null {
+  const row = db.prepare(`
+    SELECT MIN(sale_dt) AS first_sale
+    FROM realization
+    WHERE barcode = ?
+      AND supplier_oper_name = 'Продажа'
+      AND sale_dt IS NOT NULL
+      AND sale_dt != ''
+  `).get(barcode) as { first_sale: string | null } | undefined;
+  return row?.first_sale || null;
+}
+
+function resolveValidFrom(
+  db: Database.Database,
+  barcode: string,
+  mode: string | undefined,
+  validFrom: string | undefined
+): string {
+  if (mode === "first_sale") {
+    return getFirstSaleDate(db, barcode) || todayMsk();
+  }
+  if (mode === "custom" && validFrom && /^\d{4}-\d{2}-\d{2}$/.test(validFrom)) {
+    return validFrom;
+  }
+  return todayMsk();
 }
 
 /**
@@ -192,6 +218,54 @@ export async function PUT(request: NextRequest) {
     db.close();
 
     return NextResponse.json({ ok: true, count: Object.keys(body).length });
+  } catch (error) {
+    return apiError(error);
+  }
+}
+
+/**
+ * PATCH /api/finance/cogs — update one barcode cost with history date mode
+ * Body: { barcode, cost, applyMode: "today" | "first_sale" | "custom", validFrom? }
+ */
+export async function PATCH(request: NextRequest) {
+  const authError = requireAdmin(request);
+  if (authError) return authError;
+
+  try {
+    const body = await request.json() as {
+      barcode?: string;
+      cost?: number | null;
+      applyMode?: "today" | "first_sale" | "custom";
+      validFrom?: string;
+    };
+
+    const barcode = String(body.barcode || "").trim();
+    if (!barcode) {
+      return NextResponse.json({ error: "barcode required" }, { status: 400 });
+    }
+
+    const db = getWriteDb();
+    ensureCogsHistory(db);
+    const upsert = db.prepare("INSERT INTO cogs (barcode, cost) VALUES (?, ?) ON CONFLICT(barcode) DO UPDATE SET cost = ?");
+    const del = db.prepare("DELETE FROM cogs WHERE barcode = ?");
+    const validFrom = resolveValidFrom(db, barcode, body.applyMode, body.validFrom);
+    const normalized = body.cost === null || body.cost === undefined ? null : Number(body.cost);
+
+    const tx = db.transaction(() => {
+      if (normalized === null || Number.isNaN(normalized)) {
+        del.run(barcode);
+        closeHistory(db, barcode, validFrom);
+        return;
+      }
+
+      upsert.run(barcode, normalized, normalized);
+      upsertHistory(db, barcode, normalized, validFrom);
+    });
+
+    tx();
+    db.close();
+
+    return NextResponse.json({ ok: true, barcode, cost: normalized, validFrom });
   } catch (error) {
     return apiError(error);
   }

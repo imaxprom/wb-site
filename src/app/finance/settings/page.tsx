@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { Fragment, useState, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
 import { ChevronDown, ChevronRight, Search } from "lucide-react";
 import { StatCard } from "@/components/StatCard";
@@ -37,8 +37,24 @@ interface ArticleGroup {
   coverage: number;
 }
 
+type CostApplyMode = "today" | "first_sale" | "custom";
+
+interface CostEditState {
+  row: RowData;
+  value: string;
+  mode: CostApplyMode;
+  date: string;
+  saving: boolean;
+  error: string | null;
+}
+
 function hasCost(row: RowData): boolean {
   return row.cost !== null && row.cost > 0;
+}
+
+function todayInputValue(): string {
+  const dt = new Date();
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 }
 
 function getGroupKey(row: RowData): string {
@@ -104,13 +120,11 @@ export default function CogsSettingsPage() {
   const [cogs, setCogs] = useState<Record<string, number>>({});
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
-  const [editingBarcode, setEditingBarcode] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState("");
+  const [costEdit, setCostEdit] = useState<CostEditState | null>(null);
   const [showBulkImport, setShowBulkImport] = useState(false);
   const [bulkText, setBulkText] = useState("");
   const [bulkResult, setBulkResult] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
-  const editRef = useRef<HTMLInputElement>(null);
 
   // Load data on mount
   useEffect(() => {
@@ -185,37 +199,71 @@ export default function CogsSettingsPage() {
     } catch { /* ignore */ }
   }, []);
 
-  // Update cost for a barcode
-  function applyCost(barcode: string, value: number | null) {
-    const newCogs = { ...cogs };
+  function openCostEdit(row: RowData) {
+    setCostEdit({
+      row,
+      value: row.cost !== null ? String(row.cost) : "",
+      mode: hasCost(row) ? "today" : "first_sale",
+      date: todayInputValue(),
+      saving: false,
+      error: null,
+    });
+  }
 
-    if (value === null || isNaN(value)) {
-      delete newCogs[barcode];
-    } else {
-      newCogs[barcode] = value;
+  async function saveCostEdit() {
+    if (!costEdit) return;
+
+    const rawValue = costEdit.value.trim().replace(",", ".");
+    const value = rawValue === "" ? null : Number(rawValue);
+    if (value !== null && (Number.isNaN(value) || value < 0)) {
+      setCostEdit((prev) => prev ? { ...prev, error: "Укажите корректную себестоимость от 0 и выше." } : prev);
+      return;
+    }
+    if (costEdit.mode === "custom" && !costEdit.date) {
+      setCostEdit((prev) => prev ? { ...prev, error: "Выберите дату, с которой применять себестоимость." } : prev);
+      return;
     }
 
-    setCogs(newCogs);
-    persistCogs(newCogs);
+    setCostEdit((prev) => prev ? { ...prev, saving: true, error: null } : prev);
 
-    setRows((prev) =>
-      prev.map((r) =>
-        r.barcode === barcode ? { ...r, cost: value } : r
-      )
-    );
-  }
+    try {
+      const resp = await fetch("/api/finance/cogs", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          barcode: costEdit.row.barcode,
+          cost: value,
+          applyMode: costEdit.mode,
+          validFrom: costEdit.mode === "custom" ? costEdit.date : undefined,
+        }),
+      });
 
-  // Inline edit handlers
-  function startEdit(barcode: string, current: number | null) {
-    setEditingBarcode(barcode);
-    setEditValue(current !== null ? String(current) : "");
-    setTimeout(() => editRef.current?.focus(), 30);
-  }
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status}`);
+      }
 
-  function commitEdit(barcode: string) {
-    const num = parseFloat(editValue);
-    applyCost(barcode, isNaN(num) ? null : num);
-    setEditingBarcode(null);
+      setCogs((prev) => {
+        const next = { ...prev };
+        if (value === null) {
+          delete next[costEdit.row.barcode];
+        } else {
+          next[costEdit.row.barcode] = value;
+        }
+        return next;
+      });
+      setRows((prev) =>
+        prev.map((row) =>
+          row.barcode === costEdit.row.barcode ? { ...row, cost: value } : row
+        )
+      );
+      setCostEdit(null);
+    } catch {
+      setCostEdit((prev) => prev ? {
+        ...prev,
+        saving: false,
+        error: "Не удалось сохранить себестоимость. Проверьте подключение и попробуйте ещё раз.",
+      } : prev);
+    }
   }
 
   // Bulk import handler
@@ -511,8 +559,6 @@ export default function CogsSettingsPage() {
 
                         {group.rows.map((row) => {
                           const rowHasCost = hasCost(row);
-                          const isEditing = editingBarcode === row.barcode;
-
                           return (
                             <tr
                               key={`${group.key}:${row.barcode}`}
@@ -531,33 +577,17 @@ export default function CogsSettingsPage() {
                                 {row.ts_name || "—"}
                               </td>
                               <td colSpan={2} className="num tabular-nums">
-                                {isEditing ? (
-                                  <input
-                                    ref={editRef}
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    value={editValue}
-                                    onChange={(e) => setEditValue(e.target.value)}
-                                    onBlur={() => commitEdit(row.barcode)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Enter") commitEdit(row.barcode);
-                                      if (e.key === "Escape") setEditingBarcode(null);
-                                    }}
-                                    className="w-28 bg-[var(--bg)] border border-[var(--accent)] rounded px-2 py-1 text-sm text-right focus:outline-none"
-                                  />
-                                ) : (
-                                  <span
-                                    onClick={() => startEdit(row.barcode, row.cost)}
-                                    className={cn(
-                                      "cursor-pointer rounded px-2 py-0.5 hover:bg-[var(--bg-card-hover)] transition-colors",
-                                      rowHasCost ? "text-[var(--text)]" : "text-[var(--danger)] italic"
-                                    )}
-                                    title="Нажмите для редактирования"
-                                  >
-                                    {rowHasCost ? RUB(row.cost!) : "не задана"}
-                                  </span>
-                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => openCostEdit(row)}
+                                  className={cn(
+                                    "rounded px-2 py-0.5 text-right tabular-nums hover:bg-[var(--bg-card-hover)] transition-colors",
+                                    rowHasCost ? "text-[var(--text)]" : "text-[var(--danger)] italic"
+                                  )}
+                                  title="Нажмите для редактирования"
+                                >
+                                  {rowHasCost ? RUB(row.cost!) : "не задана"}
+                                </button>
                               </td>
                               <td className="text-center text-base">
                                 {rowHasCost ? "✅" : "🔴"}
@@ -593,6 +623,140 @@ export default function CogsSettingsPage() {
           {search && <span>| Показано групп: <strong className="text-[var(--text)]">{formatNumber(visibleGroups.length)}</strong></span>}
         </div>
       </div>
+
+      {costEdit && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6"
+          onClick={() => !costEdit.saving && setCostEdit(null)}
+        >
+          <div
+            className="w-full max-w-xl rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="space-y-1">
+              <h3 className="text-xl font-semibold text-[var(--text)]">
+                Себестоимость баркода
+              </h3>
+              <p className="font-mono text-sm text-[var(--text-muted)]">
+                {costEdit.row.barcode}
+              </p>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              <label className="block">
+                <span className="text-sm font-medium text-[var(--text-muted)]">
+                  Себестоимость
+                </span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={costEdit.value}
+                  onChange={(e) => setCostEdit((prev) => prev ? { ...prev, value: e.target.value, error: null } : prev)}
+                  className="mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-[var(--text)] focus:border-[var(--accent)] focus:outline-none"
+                  placeholder="Например, 330"
+                  autoFocus
+                />
+                <span className="mt-1 block text-xs text-[var(--text-muted)]">
+                  Если оставить поле пустым, себестоимость будет снята.
+                </span>
+              </label>
+
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-[var(--text-muted)]">
+                  С какой даты применять
+                </p>
+
+                <label className="flex gap-3 rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="apply-mode"
+                    checked={costEdit.mode === "today"}
+                    onChange={() => setCostEdit((prev) => prev ? { ...prev, mode: "today", error: null } : prev)}
+                    className="mt-1"
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-[var(--text)]">
+                      С сегодняшнего дня
+                    </span>
+                    <span className="block text-xs text-[var(--text-muted)]">
+                      Новая себестоимость применяется только к продажам с сегодняшней даты. Прошлые дни остаются по прежней истории.
+                    </span>
+                  </span>
+                </label>
+
+                <label className="flex gap-3 rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="apply-mode"
+                    checked={costEdit.mode === "first_sale"}
+                    onChange={() => setCostEdit((prev) => prev ? { ...prev, mode: "first_sale", error: null } : prev)}
+                    className="mt-1"
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-[var(--text)]">
+                      С даты первой продажи
+                    </span>
+                    <span className="block text-xs text-[var(--text-muted)]">
+                      Себестоимость применяется с первой продажи этого баркода. Подходит, если товар продавался раньше, а себестоимость внесли позже.
+                    </span>
+                  </span>
+                </label>
+
+                <label className="flex gap-3 rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="apply-mode"
+                    checked={costEdit.mode === "custom"}
+                    onChange={() => setCostEdit((prev) => prev ? { ...prev, mode: "custom", error: null } : prev)}
+                    className="mt-1"
+                  />
+                  <span className="flex-1">
+                    <span className="block text-sm font-medium text-[var(--text)]">
+                      С выбранной даты
+                    </span>
+                    <span className="block text-xs text-[var(--text-muted)]">
+                      Себестоимость применяется начиная с указанного дня. Всё до этой даты не меняется.
+                    </span>
+                    <input
+                      type="date"
+                      value={costEdit.date}
+                      disabled={costEdit.mode !== "custom"}
+                      onChange={(e) => setCostEdit((prev) => prev ? { ...prev, date: e.target.value, error: null } : prev)}
+                      className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2 text-sm text-[var(--text)] disabled:opacity-50"
+                    />
+                  </span>
+                </label>
+              </div>
+
+              {costEdit.error && (
+                <p className="rounded-lg border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-3 py-2 text-sm text-[var(--danger)]">
+                  {costEdit.error}
+                </p>
+              )}
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setCostEdit(null)}
+                disabled={costEdit.saving}
+                className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm text-[var(--text)] hover:bg-[var(--bg-card-hover)] disabled:opacity-50"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                onClick={saveCostEdit}
+                disabled={costEdit.saving}
+                className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+              >
+                {costEdit.saving ? "Сохранение…" : "Сохранить"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
