@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { Fragment, useState, useEffect, useMemo, useRef, useCallback } from "react";
 import Link from "next/link";
+import { ChevronDown, ChevronRight, Search } from "lucide-react";
 import { StatCard } from "@/components/StatCard";
 import { formatNumber, cn } from "@/lib/utils";
 
@@ -24,6 +25,77 @@ interface RowData extends BarcodeItem {
   cost: number | null;
 }
 
+interface ArticleGroup {
+  key: string;
+  nm_id: number;
+  sellerArticle: string;
+  sellerArticles: string[];
+  rows: RowData[];
+  total: number;
+  withCost: number;
+  withoutCost: number;
+  coverage: number;
+}
+
+function hasCost(row: RowData): boolean {
+  return row.cost !== null && row.cost > 0;
+}
+
+function getGroupKey(row: RowData): string {
+  return row.nm_id > 0 ? `nm:${row.nm_id}` : `barcode:${row.barcode}`;
+}
+
+function rowMatches(row: RowData, query: string): boolean {
+  return (
+    row.barcode.includes(query) ||
+    String(row.nm_id).includes(query) ||
+    row.sa_name.toLowerCase().includes(query) ||
+    row.ts_name.toLowerCase().includes(query)
+  );
+}
+
+function buildArticleGroups(sourceRows: RowData[]): ArticleGroup[] {
+  const groups = new Map<string, RowData[]>();
+
+  for (const row of sourceRows) {
+    const key = getGroupKey(row);
+    const groupRows = groups.get(key) || [];
+    groupRows.push(row);
+    groups.set(key, groupRows);
+  }
+
+  return Array.from(groups.entries()).map(([key, groupRows]) => {
+    const sortedRows = [...groupRows].sort((a, b) => {
+      const size = a.ts_name.localeCompare(b.ts_name, "ru");
+      if (size !== 0) return size;
+      return a.barcode.localeCompare(b.barcode, "ru");
+    });
+    const sellerArticles = Array.from(
+      new Set(sortedRows.map((row) => row.sa_name).filter(Boolean))
+    ).sort((a, b) => a.localeCompare(b, "ru"));
+    const withCost = sortedRows.filter(hasCost).length;
+    const total = sortedRows.length;
+
+    return {
+      key,
+      nm_id: sortedRows[0]?.nm_id || 0,
+      sellerArticle: sellerArticles[0] || "",
+      sellerArticles,
+      rows: sortedRows,
+      total,
+      withCost,
+      withoutCost: total - withCost,
+      coverage: total > 0 ? (withCost / total) * 100 : 0,
+    };
+  }).sort((a, b) => {
+    if ((a.withoutCost > 0) !== (b.withoutCost > 0)) {
+      return a.withoutCost > 0 ? -1 : 1;
+    }
+    if (a.nm_id !== b.nm_id) return a.nm_id - b.nm_id;
+    return a.sellerArticle.localeCompare(b.sellerArticle, "ru");
+  });
+}
+
 // ──────────────────────────────────────────────
 // Main Page
 // ──────────────────────────────────────────────
@@ -37,6 +109,7 @@ export default function CogsSettingsPage() {
   const [showBulkImport, setShowBulkImport] = useState(false);
   const [bulkText, setBulkText] = useState("");
   const [bulkResult, setBulkResult] = useState<string | null>(null);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const editRef = useRef<HTMLInputElement>(null);
 
   // Load data on mount
@@ -195,22 +268,49 @@ export default function CogsSettingsPage() {
     setBulkText("");
   }
 
-  // Filtered rows
-  const filtered = useMemo(() => {
-    if (!search.trim()) return rows;
-    const q = search.toLowerCase();
-    return rows.filter(
-      (r) =>
-        r.barcode.includes(q) ||
-        String(r.nm_id).includes(q) ||
-        r.sa_name.toLowerCase().includes(q) ||
-        r.ts_name.toLowerCase().includes(q)
-    );
-  }, [rows, search]);
+  const articleGroups = useMemo(() => buildArticleGroups(rows), [rows]);
+
+  const visibleGroups = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return articleGroups;
+
+    return articleGroups.flatMap((group) => {
+      const groupMatches =
+        String(group.nm_id).includes(q) ||
+        group.sellerArticles.some((article) => article.toLowerCase().includes(q));
+
+      if (groupMatches) return [group];
+
+      const matchedRows = group.rows.filter((row) => rowMatches(row, q));
+      if (matchedRows.length === 0) return [];
+
+      const withCost = matchedRows.filter(hasCost).length;
+      return [{
+        ...group,
+        rows: matchedRows,
+        total: matchedRows.length,
+        withCost,
+        withoutCost: matchedRows.length - withCost,
+        coverage: matchedRows.length > 0 ? (withCost / matchedRows.length) * 100 : 0,
+      }];
+    });
+  }, [articleGroups, search]);
+
+  function toggleGroup(key: string) {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }
 
   // Stats
   const total = rows.length;
-  const withCost = rows.filter((r) => r.cost !== null && r.cost > 0).length;
+  const withCost = rows.filter(hasCost).length;
   const withoutCost = total - withCost;
   const coverage = total > 0 ? (withCost / total) * 100 : 0;
 
@@ -301,9 +401,11 @@ export default function CogsSettingsPage() {
 
       {/* Search */}
       <div className="relative">
-        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)] text-sm">
-          🔍
-        </span>
+        <Search
+          size={16}
+          className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]"
+          aria-hidden="true"
+        />
         <input
           type="text"
           value={search}
@@ -316,75 +418,159 @@ export default function CogsSettingsPage() {
       {/* Table */}
       <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
         <div className="data-table-wrapper">
-          <table className="data-table">
+          <table className="data-table table-fixed">
+            <colgroup>
+              <col className="w-[16%]" />
+              <col className="w-[34%]" />
+              <col className="w-[10%]" />
+              <col className="w-[18%]" />
+              <col className="w-[12%]" />
+              <col className="w-[10%]" />
+            </colgroup>
             <thead>
               <tr>
                 <th>Артикул</th>
                 <th>Артикул продавца</th>
-                <th>Баркод</th>
-                <th>Размер</th>
-                <th className="num">Себестоимость</th>
+                <th className="num">Баркоды</th>
+                <th className="num">Без себестоимости</th>
+                <th className="num">Покрытие</th>
                 <th className="text-center">Статус</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((row) => {
-                const hasCost = row.cost !== null && row.cost > 0;
-                const isEditing = editingBarcode === row.barcode;
+              {visibleGroups.map((group) => {
+                const isExpanded = search.trim() ? true : expandedGroups.has(group.key);
+                const hasMissingCost = group.withoutCost > 0;
 
                 return (
-                  <tr
-                    key={row.barcode}
-                    className={cn(
-                      !hasCost && "border-l-2 border-[var(--danger)] bg-[var(--danger)]/5"
-                    )}
-                  >
-                    <td className="font-mono text-sm text-[var(--text)]">
-                      {row.nm_id || "—"}
-                    </td>
-                    <td className="font-mono text-[var(--accent)]">
-                      {row.sa_name || "—"}
-                    </td>
-                    <td className="font-mono text-sm text-[var(--text-muted)]">
-                      {row.barcode}
-                    </td>
-                    <td className="text-base">{row.ts_name || "—"}</td>
-                    <td className="num">
-                      {isEditing ? (
-                        <input
-                          ref={editRef}
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={editValue}
-                          onChange={(e) => setEditValue(e.target.value)}
-                          onBlur={() => commitEdit(row.barcode)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") commitEdit(row.barcode);
-                            if (e.key === "Escape") setEditingBarcode(null);
-                          }}
-                          className="w-28 bg-[var(--bg)] border border-[var(--accent)] rounded px-2 py-1 text-sm text-right focus:outline-none"
-                        />
-                      ) : (
-                        <span
-                          onClick={() => startEdit(row.barcode, row.cost)}
-                          className={cn(
-                            "cursor-pointer rounded px-2 py-0.5 hover:bg-[var(--bg-card-hover)] transition-colors",
-                            hasCost ? "text-[var(--text)]" : "text-[var(--danger)] italic"
-                          )}
-                          title="Нажмите для редактирования"
-                        >
-                          {hasCost ? RUB(row.cost!) : "не задана"}
-                        </span>
+                  <Fragment key={group.key}>
+                    <tr
+                      key={group.key}
+                      className={cn(
+                        "cursor-pointer",
+                        hasMissingCost && "border-l-2 border-[var(--danger)] bg-[var(--danger)]/5"
                       )}
-                    </td>
-                    <td className="text-center text-base">
-                      {hasCost ? "✅" : "🔴"}
-                    </td>
-                  </tr>
+                      onClick={() => toggleGroup(group.key)}
+                    >
+                      <td className="font-mono text-sm text-[var(--text)]">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-2 text-left"
+                          aria-expanded={isExpanded}
+                        >
+                          {isExpanded ? (
+                            <ChevronDown size={16} className="text-[var(--text-muted)]" />
+                          ) : (
+                            <ChevronRight size={16} className="text-[var(--text-muted)]" />
+                          )}
+                          <span>{group.nm_id || "—"}</span>
+                        </button>
+                      </td>
+                      <td className="font-mono text-[var(--accent)]">
+                        <span title={group.sellerArticles.join(", ")}>
+                          {group.sellerArticle || "—"}
+                          {group.sellerArticles.length > 1 && (
+                            <span className="ml-2 text-xs text-[var(--text-muted)]">
+                              +{group.sellerArticles.length - 1}
+                            </span>
+                          )}
+                        </span>
+                      </td>
+                      <td className="num">{formatNumber(group.total)}</td>
+                      <td className={cn(hasMissingCost ? "text-[var(--danger)]" : "text-[var(--success)]")}>
+                        {formatNumber(group.withoutCost)}
+                      </td>
+                      <td className="num">{group.coverage.toFixed(1)}%</td>
+                      <td className="text-center text-base">
+                        {hasMissingCost ? "🔴" : "✅"}
+                      </td>
+                    </tr>
+
+                    {isExpanded && (
+                      <>
+                        <tr className="bg-[var(--bg)]/70">
+                          <td
+                            colSpan={2}
+                            className="pl-12 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]"
+                          >
+                            Баркод
+                          </td>
+                          <td className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                            Размер
+                          </td>
+                          <td
+                            colSpan={2}
+                            className="num text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]"
+                          >
+                            Себестоимость
+                          </td>
+                          <td className="text-center text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                            Статус
+                          </td>
+                        </tr>
+
+                        {group.rows.map((row) => {
+                          const rowHasCost = hasCost(row);
+                          const isEditing = editingBarcode === row.barcode;
+
+                          return (
+                            <tr
+                              key={`${group.key}:${row.barcode}`}
+                              className={cn(
+                                "bg-[var(--bg)]/40 text-sm",
+                                !rowHasCost && "border-l-2 border-[var(--danger)] bg-[var(--danger)]/5"
+                              )}
+                            >
+                              <td
+                                colSpan={2}
+                                className="pl-12 font-mono text-[var(--text-muted)]"
+                              >
+                                {row.barcode}
+                              </td>
+                              <td className="text-[var(--text)]">
+                                {row.ts_name || "—"}
+                              </td>
+                              <td colSpan={2} className="num tabular-nums">
+                                {isEditing ? (
+                                  <input
+                                    ref={editRef}
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={editValue}
+                                    onChange={(e) => setEditValue(e.target.value)}
+                                    onBlur={() => commitEdit(row.barcode)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") commitEdit(row.barcode);
+                                      if (e.key === "Escape") setEditingBarcode(null);
+                                    }}
+                                    className="w-28 bg-[var(--bg)] border border-[var(--accent)] rounded px-2 py-1 text-sm text-right focus:outline-none"
+                                  />
+                                ) : (
+                                  <span
+                                    onClick={() => startEdit(row.barcode, row.cost)}
+                                    className={cn(
+                                      "cursor-pointer rounded px-2 py-0.5 hover:bg-[var(--bg-card-hover)] transition-colors",
+                                      rowHasCost ? "text-[var(--text)]" : "text-[var(--danger)] italic"
+                                    )}
+                                    title="Нажмите для редактирования"
+                                  >
+                                    {rowHasCost ? RUB(row.cost!) : "не задана"}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="text-center text-base">
+                                {rowHasCost ? "✅" : "🔴"}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </>
+                    )}
+                  </Fragment>
                 );
               })}
-              {filtered.length === 0 && (
+              {visibleGroups.length === 0 && (
                 <tr>
                   <td colSpan={6} className="text-center py-8 text-[var(--text-muted)]">
                     Ничего не найдено
@@ -402,7 +588,9 @@ export default function CogsSettingsPage() {
           <span>Без себестоимости: <strong className={withoutCost > 0 ? "text-[var(--danger)]" : "text-[var(--success)]"}>{formatNumber(withoutCost)}</strong></span>
           <span>|</span>
           <span>Покрытие: <strong className={coverage >= 90 ? "text-[var(--success)]" : coverage >= 50 ? "text-[var(--warning)]" : "text-[var(--danger)]"}>{coverage.toFixed(1)}%</strong></span>
-          {search && <span>| Показано: <strong className="text-[var(--text)]">{formatNumber(filtered.length)}</strong></span>}
+          <span>|</span>
+          <span>Артикулов: <strong className="text-[var(--text)]">{formatNumber(articleGroups.length)}</strong></span>
+          {search && <span>| Показано групп: <strong className="text-[var(--text)]">{formatNumber(visibleGroups.length)}</strong></span>}
         </div>
       </div>
     </div>
