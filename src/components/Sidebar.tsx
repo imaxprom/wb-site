@@ -17,15 +17,19 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const NAV_ITEMS = [
-  { href: "/analytics", label: "Аналитика", icon: BarChart3 },
-  { href: "/reviews", label: "Отзывы", icon: MessageSquare },
-  { href: "/finance", label: "Финансы", icon: DollarSign },
-  { href: "/monitor", label: "Мониторинг", icon: Activity },
-  { href: "/shipment", label: "Расчёт отгрузки", icon: Package },
-  { href: "/changelog", label: "Журнал", icon: FileText },
-  { href: "/docs", label: "База знаний", icon: BookOpen },
-  { href: "/settings", label: "Настройки", icon: SettingsIcon },
+const NAV_GROUPS = [
+  [
+    { href: "/analytics", label: "Аналитика", icon: BarChart3 },
+    { href: "/reviews", label: "Отзывы", icon: MessageSquare },
+    { href: "/finance", label: "Финансы", icon: DollarSign },
+    { href: "/shipment", label: "Расчёт отгрузки", icon: Package },
+  ],
+  [
+    { href: "/monitor", label: "Мониторинг", icon: Activity },
+    { href: "/changelog", label: "Журнал", icon: FileText },
+    { href: "/docs", label: "База знаний", icon: BookOpen },
+    { href: "/settings", label: "Настройки", icon: SettingsIcon },
+  ],
 ];
 
 export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
@@ -67,27 +71,39 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
         </div>
 
         <nav className="flex-1 py-4 overflow-y-auto overflow-x-hidden">
-          {NAV_ITEMS.map((item) => {
-            const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => setOpen(false)}
-                title={collapsed ? item.label : undefined}
-                className={cn(
-                  "flex items-center text-base transition-colors",
-                  collapsed ? "justify-center px-3 py-3" : "px-5 py-3",
-                  isActive
-                    ? "bg-[var(--accent)]/10 text-[var(--accent)] border-r-2 border-[var(--accent)]"
-                    : "text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--bg-card-hover)]"
-                )}
-              >
-                <item.icon size={18} className={cn("shrink-0", !collapsed && "mr-2")} />
-                {!collapsed && <span className="whitespace-nowrap">{item.label}</span>}
-              </Link>
-            );
-          })}
+          {NAV_GROUPS.map((group, groupIndex) => (
+            <div key={groupIndex}>
+              {groupIndex > 0 && (
+                <div
+                  className={cn(
+                    "my-3 border-t border-[var(--border)]/80",
+                    collapsed ? "mx-4" : "mx-5"
+                  )}
+                />
+              )}
+              {group.map((item) => {
+                const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={() => setOpen(false)}
+                    title={collapsed ? item.label : undefined}
+                    className={cn(
+                      "flex items-center text-base transition-colors",
+                      collapsed ? "justify-center px-3 py-3" : "px-5 py-3",
+                      isActive
+                        ? "bg-[var(--accent)]/10 text-[var(--accent)] border-r-2 border-[var(--accent)]"
+                        : "text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--bg-card-hover)]"
+                    )}
+                  >
+                    <item.icon size={18} className={cn("shrink-0", !collapsed && "mr-2")} />
+                    {!collapsed && <span className="whitespace-nowrap">{item.label}</span>}
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </nav>
 
         {/* Collapse toggle — desktop only */}
