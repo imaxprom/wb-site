@@ -29,6 +29,23 @@ function roundBoxes(boxes: number, step: number): number {
   return Math.round((Math.round(boxes / step) * step) * 1000) / 1000;
 }
 
+function normalizeBoxes(boxes: number): number {
+  const rounded = Math.round(boxes * 10) / 10;
+  return Object.is(rounded, -0) ? 0 : rounded;
+}
+
+function formatBoxes(boxes: number): string {
+  return normalizeBoxes(boxes).toLocaleString("ru-RU", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+}
+
+function signedBoxes(boxes: number): string {
+  const normalized = normalizeBoxes(boxes);
+  return normalized > 0 ? `+${formatBoxes(normalized)}` : formatBoxes(normalized);
+}
+
 function roundUnits(units: number): number {
   return Math.round(units);
 }
@@ -154,9 +171,9 @@ export function PackingSummaryTable({
             ? (isNaN(Number(override.replace(",", "."))) ? 0 : Number(override.replace(",", ".")))
             : autoBoxes;
           const units = roundUnits(boxes * perBox);
-          totalBoxesByRegion[region.id] = (totalBoxesByRegion[region.id] || 0) + boxes;
+          totalBoxesByRegion[region.id] = normalizeBoxes((totalBoxesByRegion[region.id] || 0) + boxes);
           totalQtyByRegion[region.id] = (totalQtyByRegion[region.id] || 0) + units;
-          rowShippedBoxes += boxes;
+          rowShippedBoxes = normalizeBoxes(rowShippedBoxes + boxes);
           rowShippedUnits += units;
         } else {
           const key = `${sr.item.barcode}-${region.id}`;
@@ -169,7 +186,7 @@ export function PackingSummaryTable({
           rowShippedUnits += roundedUnits;
         }
       }
-      totalShippedBoxes += rowShippedBoxes;
+      totalShippedBoxes = normalizeBoxes(totalShippedBoxes + rowShippedBoxes);
       totalShippedUnits += rowShippedUnits;
       const stockStr = stockByBarcode[sr.item.barcode];
       const stock = stockStr !== undefined && stockStr !== "" ? Number(stockStr) : null;
@@ -191,8 +208,8 @@ export function PackingSummaryTable({
       const n = v !== undefined && v !== "" ? Number(v) : 0;
       if (!isNaN(n)) {
         if (isBoxes) {
-          totalBoxesByRegion[region.id] = (totalBoxesByRegion[region.id] || 0) + n;
-          totalShippedBoxes += n;
+          totalBoxesByRegion[region.id] = normalizeBoxes((totalBoxesByRegion[region.id] || 0) + n);
+          totalShippedBoxes = normalizeBoxes(totalShippedBoxes + n);
         } else {
           const roundedUnits = roundUnits(n);
           totalQtyByRegion[region.id] = (totalQtyByRegion[region.id] || 0) + roundedUnits;
@@ -340,11 +357,11 @@ export function PackingSummaryTable({
                       const boxes = hasOverride ? (isNaN(parsedOverride) ? 0 : parsedOverride) : autoBoxes;
                       const units = roundUnits(boxes * perBox);
                       const isOverridden = hasOverride && parsedOverride !== autoBoxes;
-                      rowShippedBoxes += boxes;
+                      rowShippedBoxes = normalizeBoxes(rowShippedBoxes + boxes);
                       rowShippedUnits += units;
                       regionCells.push(
                         <td key={`${region.id}-b`} style={{ ...cellBase, padding: 0, background: isOverridden ? "rgba(129, 140, 248, 0.1)" : "transparent" }}>
-                          <input type="text" inputMode="numeric" value={overrideStr ?? (autoBoxes > 0 ? String(autoBoxes) : "")} onChange={(e) => setBoxesByKey(prev => ({ ...prev, [key]: e.target.value }))} placeholder="—" style={{ width: "100%", padding: "6px 10px", background: "transparent", border: "none", outline: "none", textAlign: "center", color: isOverridden ? "var(--accent)" : "var(--text)", fontWeight: 600, fontVariantNumeric: "tabular-nums", fontSize: 12 }} />
+                          <input type="text" inputMode="numeric" value={overrideStr ?? (autoBoxes > 0 ? formatBoxes(autoBoxes) : "")} onChange={(e) => setBoxesByKey(prev => ({ ...prev, [key]: e.target.value }))} placeholder="—" style={{ width: "100%", padding: "6px 10px", background: "transparent", border: "none", outline: "none", textAlign: "center", color: isOverridden ? "var(--accent)" : "var(--text)", fontWeight: 600, fontVariantNumeric: "tabular-nums", fontSize: 12 }} />
                         </td>,
                         <td key={`${region.id}-u`} style={{ ...cellBase, color: "var(--text-muted)", fontVariantNumeric: "tabular-nums", background: "rgba(255,255,255,0.02)" }}>
                           {units > 0 ? units : <span style={{ color: "var(--border)" }}>—</span>}
@@ -393,11 +410,11 @@ export function PackingSummaryTable({
                       </td>
                       {regionCells}
                       <td style={{ ...cellBase, fontWeight: 700, color: sverkaColor, background: sverkaBg, fontVariantNumeric: "tabular-nums" }}>
-                        {sverka !== null && !isNaN(sverka) ? (sverka > 0 ? `+${sverka}` : sverka) : "—"}
+                        {sverka !== null && !isNaN(sverka) ? (isBoxes ? signedBoxes(sverka) : (sverka > 0 ? `+${sverka}` : sverka)) : "—"}
                       </td>
                       {isBoxes && (
                         <td style={{ ...cellBase, fontWeight: 700, color: "var(--accent)", background: "rgba(129, 140, 248, 0.05)", fontVariantNumeric: "tabular-nums" }}>
-                          {rowShippedBoxes}
+                          {formatBoxes(rowShippedBoxes)}
                         </td>
                       )}
                       <td style={{ ...cellBase, fontWeight: 700, color: "var(--accent)", background: "rgba(129, 140, 248, 0.05)", fontVariantNumeric: "tabular-nums" }}>
@@ -425,7 +442,7 @@ export function PackingSummaryTable({
                     const key = `${art.articleWB}-${region.id}`;
                     const v = sampleByKey[key] ?? "";
                     const n = v !== "" ? Number(v) : 0;
-                    if (!isNaN(n)) sampleShipped += n;
+                    if (!isNaN(n)) sampleShipped = isBoxes ? normalizeBoxes(sampleShipped + n) : sampleShipped + n;
                     if (isBoxes) {
                       sampleCells.push(
                         <td key={`s-${region.id}-b`} style={{ ...cellBase, padding: 0, background: "rgba(129, 140, 248, 0.04)" }}>
@@ -454,7 +471,7 @@ export function PackingSummaryTable({
                       <td style={{ ...cellBase, color: "var(--border)" }}>—</td>
                       {isBoxes && (
                         <td style={{ ...cellBase, fontWeight: 700, color: "var(--accent)", background: "rgba(129, 140, 248, 0.05)", fontVariantNumeric: "tabular-nums" }}>
-                          {sampleShipped || "—"}
+                          {sampleShipped ? formatBoxes(sampleShipped) : "—"}
                         </td>
                       )}
                       <td style={{ ...cellBase, fontWeight: 700, color: "var(--accent)", background: "rgba(129, 140, 248, 0.05)", fontVariantNumeric: "tabular-nums" }}>
@@ -476,7 +493,7 @@ export function PackingSummaryTable({
             {regions.map(r => (
               isBoxes ? (
                 <React.Fragment key={r.id}>
-                  <td style={{ ...cellBase, fontWeight: 700, background: "rgba(34, 197, 94, 0.08)", borderTop: "2px solid var(--success)", fontVariantNumeric: "tabular-nums" }}>{totalBoxesByRegion[r.id] || 0}</td>
+                  <td style={{ ...cellBase, fontWeight: 700, background: "rgba(34, 197, 94, 0.08)", borderTop: "2px solid var(--success)", fontVariantNumeric: "tabular-nums" }}>{totalBoxesByRegion[r.id] ? formatBoxes(totalBoxesByRegion[r.id]) : "0,0"}</td>
                   <td style={{ ...cellBase, fontWeight: 700, background: "rgba(34, 197, 94, 0.08)", borderTop: "2px solid var(--success)", fontVariantNumeric: "tabular-nums" }}>{totalQtyByRegion[r.id] || 0}</td>
                 </React.Fragment>
               ) : (
@@ -484,11 +501,11 @@ export function PackingSummaryTable({
               )
             ))}
             <td style={{ ...cellBase, fontWeight: 700, background: "rgba(34, 197, 94, 0.08)", borderTop: "2px solid var(--success)", color: totalSverka > 0 ? "var(--success)" : totalSverka < 0 ? "#f87171" : "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
-              {totalSverka > 0 ? `+${totalSverka}` : totalSverka || "—"}
+              {isBoxes && totalSverka ? signedBoxes(totalSverka) : totalSverka > 0 ? `+${totalSverka}` : totalSverka || "—"}
             </td>
             {isBoxes && (
               <td style={{ ...cellBase, fontWeight: 700, color: "var(--accent)", background: "rgba(129, 140, 248, 0.08)", borderTop: "2px solid var(--success)", fontVariantNumeric: "tabular-nums" }}>
-                {totalShippedBoxes}
+                {formatBoxes(totalShippedBoxes)}
               </td>
             )}
             <td style={{ ...cellBase, fontWeight: 700, color: "var(--accent)", background: "rgba(129, 140, 248, 0.08)", borderTop: "2px solid var(--success)", fontVariantNumeric: "tabular-nums" }}>
