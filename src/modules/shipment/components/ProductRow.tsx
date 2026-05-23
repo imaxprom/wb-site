@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useData } from "@/components/DataProvider";
 import { sortShipmentRows } from "@/modules/shipment/lib/engine";
 import { formatNumber } from "@/lib/utils";
 import { getWbImageUrlCandidates } from "@/lib/wb-image";
 import type { Product, StockItem } from "@/types";
 import Link from "next/link";
+import { Check, Pencil, X } from "lucide-react";
 
 interface ProductRowProps {
   product: Product;
@@ -29,6 +30,32 @@ export const ProductRow = React.memo(function ProductRow({
 
   const override = overrides[product.articleWB];
   const customName = override?.customName || "";
+  const [isNameEditing, setIsNameEditing] = useState(false);
+  const [nameDraft, setNameDraft] = useState(customName);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const rowRef = useRef<HTMLTableRowElement>(null);
+  const anchorTopRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!isNameEditing) setNameDraft(customName);
+  }, [customName, isNameEditing]);
+
+  useEffect(() => {
+    if (isNameEditing) nameInputRef.current?.focus();
+  }, [isNameEditing]);
+
+  useLayoutEffect(() => {
+    if (anchorTopRef.current === null || typeof window === "undefined") return;
+    const beforeTop = anchorTopRef.current;
+    const frame = window.requestAnimationFrame(() => {
+      const afterTop = rowRef.current?.getBoundingClientRect().top;
+      if (typeof afterTop === "number") {
+        window.scrollBy(0, afterTop - beforeTop);
+      }
+      anchorTopRef.current = null;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [isExpanded]);
 
   const { warehouseMap, allWarehouses } = useMemo(() => {
     const whMap = new Map<string, Map<string, number>>();
@@ -71,9 +98,27 @@ export const ProductRow = React.memo(function ProductRow({
     [product.articleWB, updateCustomName]
   );
 
+  const handleToggle = useCallback(() => {
+    anchorTopRef.current = rowRef.current?.getBoundingClientRect().top ?? null;
+    onToggle();
+  }, [onToggle]);
+
+  const saveName = useCallback(() => {
+    const next = nameDraft.trim();
+    if (next !== customName) {
+      handleNameChange(next);
+    }
+    setIsNameEditing(false);
+  }, [customName, handleNameChange, nameDraft]);
+
+  const cancelNameEdit = useCallback(() => {
+    setNameDraft(customName);
+    setIsNameEditing(false);
+  }, [customName]);
+
   return (
     <>
-      <tr onClick={onToggle} className="cursor-pointer">
+      <tr ref={rowRef} onClick={handleToggle} className="cursor-pointer">
         <td>
           <div className="flex items-center gap-2">
             <ProductThumb nmId={product.articleWB} />
@@ -83,16 +128,68 @@ export const ProductRow = React.memo(function ProductRow({
         <td className="font-medium" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
           {product.name}
         </td>
-        <td onClick={(e) => e.stopPropagation()}>
-          <input
-            type="text"
-            value={customName}
-            onChange={(e) => handleNameChange(e.target.value)}
-            onKeyDown={(e) => e.stopPropagation()}
-            onPaste={(e) => e.stopPropagation()}
-            placeholder="—"
-            className="w-full bg-transparent border-b border-transparent hover:border-[var(--border)] focus:border-[var(--accent)] px-1 py-0.5 text-base focus:outline-none"
-          />
+        <td>
+          {isNameEditing ? (
+            <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+              <input
+                ref={nameInputRef}
+                type="text"
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (e.key === "Enter") saveName();
+                  if (e.key === "Escape") cancelNameEdit();
+                }}
+                onPaste={(e) => e.stopPropagation()}
+                onBlur={saveName}
+                placeholder="—"
+                className="min-w-0 flex-1 bg-[var(--bg)] border border-[var(--accent)] rounded px-2 py-1 text-base focus:outline-none"
+              />
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  saveName();
+                }}
+                className="inline-flex h-7 w-7 items-center justify-center rounded border border-[var(--border)] text-[var(--success)] hover:border-[var(--success)]"
+                title="Сохранить"
+              >
+                <Check size={14} />
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  cancelNameEdit();
+                }}
+                className="inline-flex h-7 w-7 items-center justify-center rounded border border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--danger)] hover:text-[var(--danger)]"
+                title="Отменить"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="min-w-0 flex-1 truncate text-[var(--text)]" title={customName || "Не задано"}>
+                {customName || <span className="text-[var(--text-muted)]">—</span>}
+              </span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setNameDraft(customName);
+                  setIsNameEditing(true);
+                }}
+                className="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded border border-transparent text-[var(--text-muted)] hover:border-[var(--border)] hover:text-[var(--accent)]"
+                title="Редактировать наименование"
+              >
+                <Pencil size={14} />
+              </button>
+            </div>
+          )}
         </td>
         <td style={{ textAlign: "center" }}>{formatNumber(totalOnWH)}</td>
         <td style={{ textAlign: "center" }}>{formatNumber(orderCount)}</td>

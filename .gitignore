@@ -9,6 +9,7 @@ node_modules/
 
 # Data (DB, logs, keys, tokens)
 data/*.db
+data/*.db.backup-*
 data/*.db-shm
 data/*.db-wal
 data/*.log
