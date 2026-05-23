@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * Reviews auto-sync script — runs every 10 minutes.
- * 1. Fetches new reviews (incremental: unanswered + last 500 answered)
+ * Reviews auto-sync script — production cron currently runs hourly.
+ * 1. Fetches new reviews (unanswered + recent answered + archive)
  * 2. Enriches with price & region from Orders API
  *
  * Usage: node scripts/reviews-sync.js
- * Or via production cron every 10 minutes.
+ * Or via production cron.
  */
 
 const Database = require("better-sqlite3");
@@ -14,6 +14,7 @@ const path = require("path");
 const PROJECT_DIR = path.join(__dirname, "..");
 const DB_PATH = path.join(PROJECT_DIR, "data", "finance.db");
 const LOG_PATH = path.join(PROJECT_DIR, "data", "reviews-sync.log");
+const LOCK_PATH = path.join(PROJECT_DIR, "data", "reviews-sync.lock");
 const fs = require("fs");
 
 // ─── Logging ────────────────────────────────────────────────
@@ -45,31 +46,98 @@ function getAccountId(db) {
 // ─── Fetch feedbacks ────────────────────────────────────────
 
 const WB_FEEDBACKS_URL = "https://feedbacks-api.wildberries.ru/api/v1/feedbacks";
+const WB_FEEDBACKS_ARCHIVE_URL = "https://feedbacks-api.wildberries.ru/api/v1/feedbacks/archive";
 
-async function fetchFeedbacks(apiKey) {
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function fetchWbJson(url, apiKey) {
+  let lastBody = "";
+
+  const retryDelays = [10000, 30000, 60000, 120000, 180000, 300000, 300000, 300000];
+  for (let attempt = 1; attempt <= retryDelays.length; attempt++) {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    const text = await res.text().catch(() => "");
+    lastBody = text;
+
+    if (res.ok) {
+      return text ? JSON.parse(text) : {};
+    }
+
+    if (res.status === 429 || res.status >= 500) {
+      log(`WB ${res.status}, retry ${attempt}/${retryDelays.length} after ${Math.round(retryDelays[attempt - 1] / 1000)}s backoff`);
+      await sleep(retryDelays[attempt - 1]);
+      continue;
+    }
+
+    throw new Error(`WB feedbacks API ${res.status}: ${text}`);
+  }
+
+  throw new Error(`WB feedbacks API retry exhausted: ${lastBody}`);
+}
+
+function getFeedbacksFromResponse(data) {
+  return Array.isArray(data?.data?.feedbacks) ? data.data.feedbacks : [];
+}
+
+function getArgNumber(name, defaultValue) {
+  const prefix = `--${name}=`;
+  const arg = process.argv.find(item => item.startsWith(prefix));
+  if (!arg) return defaultValue;
+  const value = Number(arg.slice(prefix.length));
+  return Number.isFinite(value) && value > 0 ? value : defaultValue;
+}
+
+async function fetchFeedbacks(apiKey, fullSync = false) {
   const all = [];
 
   // 1) Unanswered
   for (let skip = 0; ; skip += 100) {
-    const res = await fetch(`${WB_FEEDBACKS_URL}?isAnswered=false&take=100&skip=${skip}`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-    if (!res.ok) break;
-    const data = await res.json();
-    const fbs = data.data?.feedbacks ?? [];
+    const data = await fetchWbJson(`${WB_FEEDBACKS_URL}?isAnswered=false&take=100&skip=${skip}`, apiKey);
+    const fbs = getFeedbacksFromResponse(data);
     all.push(...fbs);
     if (fbs.length < 100) break;
-    await new Promise(r => setTimeout(r, 350));
+    await sleep(500);
   }
 
-  // 2) Last 500 answered
-  const res = await fetch(`${WB_FEEDBACKS_URL}?isAnswered=true&take=500&skip=0`, {
-    headers: { Authorization: `Bearer ${apiKey}` },
-  });
-  if (res.ok) {
-    const data = await res.json();
-    const fbs = data.data?.feedbacks ?? [];
+  // 2) Answered
+  if (fullSync) {
+    for (let skip = 0; ; skip += 5000) {
+      const data = await fetchWbJson(`${WB_FEEDBACKS_URL}?isAnswered=true&take=5000&skip=${skip}`, apiKey);
+      const fbs = getFeedbacksFromResponse(data);
+      all.push(...fbs);
+      log(`Fetched answered page skip=${skip}: ${fbs.length}`);
+      if (fbs.length < 5000) break;
+      await sleep(500);
+    }
+  } else {
+    const data = await fetchWbJson(`${WB_FEEDBACKS_URL}?isAnswered=true&take=500&skip=0`, apiKey);
+    all.push(...getFeedbacksFromResponse(data));
+  }
+
+  // 3) Archive: processed reviews and rating-only reviews live here.
+  const archivePageLimit = fullSync ? Infinity : 3;
+  let archivePages = 0;
+  for (let skip = 0; archivePages < archivePageLimit; skip += 5000) {
+    const data = await fetchWbJson(`${WB_FEEDBACKS_ARCHIVE_URL}?take=5000&skip=${skip}`, apiKey);
+    const fbs = getFeedbacksFromResponse(data);
     all.push(...fbs);
+    archivePages++;
+    log(`Fetched archive page skip=${skip}: ${fbs.length}`);
+    if (fbs.length < 5000) break;
+    await sleep(500);
+
+    if (!fullSync) {
+      const oldestDate = fbs
+        .map(fb => fb.createdDate ? fb.createdDate.slice(0, 10) : "")
+        .filter(Boolean)
+        .sort()[0];
+      const cutoff = new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10);
+      if (oldestDate && oldestDate < cutoff) break;
+    }
   }
 
   return all;
@@ -172,12 +240,27 @@ async function enrichFromOrders(db, apiKey, accountId) {
 
 async function main() {
   log("=== Reviews sync started ===");
+  const fullSync = process.argv.includes("--full");
+  const archiveOnly = process.argv.includes("--archive-only");
+  let lockFd;
+  const releaseLock = () => {
+    try { if (lockFd !== undefined) fs.closeSync(lockFd); } catch {}
+    try { fs.rmSync(LOCK_PATH, { force: true }); } catch {}
+  };
+  try {
+    lockFd = fs.openSync(LOCK_PATH, "wx");
+    fs.writeFileSync(lockFd, String(process.pid));
+  } catch {
+    log("Another reviews sync is already running, exiting");
+    return;
+  }
 
   const db = getDb();
   const apiKey = getApiKey(db);
   if (!apiKey) {
     log("ERROR: No API key found");
     db.close();
+    releaseLock();
     return;
   }
 
@@ -185,12 +268,42 @@ async function main() {
   if (!accountId) {
     log("ERROR: No account found");
     db.close();
+    releaseLock();
+    return;
+  }
+
+  if (archiveOnly) {
+    const pageLimit = getArgNumber("archive-pages", 3);
+    const before = db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE account_id = ?`).get(accountId).cnt;
+    let fetched = 0;
+    let upserted = 0;
+
+    for (let page = 0; page < pageLimit; page++) {
+      const skip = page * 5000;
+      const data = await fetchWbJson(`${WB_FEEDBACKS_ARCHIVE_URL}?take=5000&skip=${skip}`, apiKey);
+      const feedbacks = getFeedbacksFromResponse(data);
+      fetched += feedbacks.length;
+      if (feedbacks.length === 0) break;
+      upserted += upsertReviews(db, accountId, feedbacks);
+      const afterPage = db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE account_id = ?`).get(accountId).cnt;
+      log(`Archive page ${page + 1}/${pageLimit} skip=${skip}: fetched=${feedbacks.length}, total=${afterPage}, new=${afterPage - before}`);
+      if (feedbacks.length < 5000) break;
+      await sleep(1000);
+    }
+
+    const after = db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE account_id = ?`).get(accountId).cnt;
+    const withPrice = db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE price > 0`).get().cnt;
+    db.prepare(`UPDATE sync_status SET status = 'done', loaded = ?, total = ?, message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1`)
+      .run(after, after, `В базе: ${after.toLocaleString("ru-RU")} ✅ | Архив: +${(after - before).toLocaleString("ru-RU")} | Цена и ПВЗ: ${withPrice.toLocaleString("ru-RU")}`);
+    log(`=== Archive done. Fetched: ${fetched}, upserted: ${upserted}, new: ${after - before}, total: ${after} ===`);
+    db.close();
+    releaseLock();
     return;
   }
 
   // 1. Fetch & upsert reviews
-  const feedbacks = await fetchFeedbacks(apiKey);
-  log(`Fetched ${feedbacks.length} feedbacks from WB`);
+  const feedbacks = await fetchFeedbacks(apiKey, fullSync);
+  log(`Fetched ${feedbacks.length} feedbacks from WB${fullSync ? " (full with archive)" : ""}`);
 
   if (feedbacks.length > 0) {
     const before = db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE account_id = ?`).get(accountId).cnt;
@@ -212,9 +325,11 @@ async function main() {
 
   log(`=== Done. Total: ${total}, with price: ${withPrice} ===`);
   db.close();
+  releaseLock();
 }
 
 main().catch(e => {
   log(`FATAL: ${e.message}`);
+  try { fs.rmSync(LOCK_PATH, { force: true }); } catch {}
   process.exit(1);
 });

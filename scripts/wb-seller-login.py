@@ -6,11 +6,12 @@ STATUS:{"state":"...","message":"..."}
 States: sms_sent, blocked, code_error, code_expired, supplier_select, success, failed
 """
 from playwright.sync_api import sync_playwright
-import json, time, sys, os, re
+import base64, json, time, sys, os, re, sqlite3, urllib.request
 
 PHONE = os.environ.get("WB_PHONE", "9641521652")
 WEBSITE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOKENS_PATH = os.path.join(WEBSITE_DIR, "data", "wb-tokens.json")
+FINANCE_DB_PATH = os.path.join(WEBSITE_DIR, "data", "finance.db")
 LOG_PATH = "/tmp/wb_auth_log.txt"
 SMS_CODE_PATH = "/tmp/wb_sms_code"
 SUPPLIER_CHOICE_PATH = "/tmp/wb_supplier_choice"
@@ -40,6 +41,39 @@ def write_secret_json(path, data):
         except OSError:
             pass
         raise
+
+
+def sync_review_account_tokens(tokens, cookies_dict):
+    supplier_id = str(tokens.get("supplierId") or "")
+    if not supplier_id or not os.path.exists(FINANCE_DB_PATH):
+        return
+
+    validation_key = cookies_dict.get("wbx-validation-key") or ""
+    try:
+        conn = sqlite3.connect(FINANCE_DB_PATH)
+        cur = conn.execute(
+            """
+            UPDATE review_accounts
+               SET wb_authorize_v3 = ?,
+                   wb_validation_key = COALESCE(NULLIF(?, ''), wb_validation_key),
+                   wb_seller_lk = COALESCE(NULLIF(?, ''), wb_seller_lk),
+                   wb_cookie_updated_at = CURRENT_TIMESTAMP,
+                   updated_at = CURRENT_TIMESTAMP
+             WHERE supplier_id = ?
+            """,
+            (
+                tokens.get("authorizev3") or "",
+                validation_key,
+                tokens.get("wbSellerLk") or "",
+                supplier_id,
+            ),
+        )
+        conn.commit()
+        if cur.rowcount:
+            print("Review account tokens synced for supplierId", supplier_id)
+        conn.close()
+    except Exception as exc:
+        print("Review account token sync failed:", str(exc))
 
 class TeeWriter:
     def __init__(self, *streams):
@@ -109,6 +143,229 @@ def extract_rate_limit_remaining(page_text):
             return normalize_rate_limit_text(match.group(1))
     return None
 
+def sanitize_debug_text(value):
+    """Mask phone-like digit runs before writing diagnostic page state to logs."""
+    return re.sub(r"\+?\d[\d\s().-]{7,}\d", "***", value)
+
+def page_debug_state(page):
+    try:
+        text = sanitize_debug_text(page.inner_text("body")[:1200])
+    except Exception as e:
+        text = f"<body read error: {e}>"
+
+    buttons = []
+    for i, el in enumerate(page.query_selector_all("button")[:8]):
+        try:
+            buttons.append({
+                "i": i,
+                "type": el.get_attribute("type"),
+                "text": sanitize_debug_text((el.inner_text() or "")[:80]),
+                "visible": el.is_visible(),
+                "enabled": el.is_enabled(),
+            })
+        except Exception as e:
+            buttons.append({"i": i, "error": str(e)})
+
+    inputs = []
+    for i, el in enumerate(page.query_selector_all("input")[:8]):
+        try:
+            inputs.append({
+                "i": i,
+                "type": el.get_attribute("type"),
+                "inputmode": el.get_attribute("inputmode"),
+                "placeholder": el.get_attribute("placeholder"),
+                "valueLen": len(el.input_value() or ""),
+                "visible": el.is_visible(),
+                "editable": el.is_editable(),
+            })
+        except Exception as e:
+            inputs.append({"i": i, "error": str(e)})
+
+    return {
+        "url": page.url,
+        "title": page.title(),
+        "body": text,
+        "inputs": inputs,
+        "buttons": buttons,
+    }
+
+def has_sms_code_page(page_text):
+    text = page_text.lower()
+    return any(h in text for h in ["код", "code", "sms", "enter sms", "verification"])
+
+def decode_jwt_payload(token):
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload.encode()).decode())
+    except Exception:
+        return {}
+
+def looks_like_access_token(token):
+    if not token or len(token) < 100 or token.count(".") != 2:
+        return False
+    payload = decode_jwt_payload(token)
+    return bool(payload.get("user") or payload.get("client_id") or payload.get("data"))
+
+def refresh_seller_token(authorizev3, cookie_string):
+    req = urllib.request.Request(
+        "https://seller.wildberries.ru/ns/suppliers-auth/suppliers-portal-core/auth/token",
+        data=json.dumps({"params": {}, "jsonrpc": "2.0", "id": "json-rpc_1"}).encode(),
+        headers={
+            "content-type": "application/json",
+            "authorizev3": authorizev3,
+            "cookie": cookie_string,
+            "origin": "https://seller.wildberries.ru",
+            "referer": "https://seller.wildberries.ru/",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as res:
+            data = json.loads(res.read().decode())
+    except Exception as e:
+        print("    Seller token refresh failed:", e)
+        return None
+
+    token = (((data.get("result") or {}).get("data") or {}).get("token")
+             or (data.get("result") or {}).get("token"))
+    if not token:
+        print("    Seller token refresh returned no token")
+        return None
+
+    payload = decode_jwt_payload(token)
+    supplier_data = payload.get("data") or {}
+    return {
+        "wbSellerLk": token,
+        "wbSellerLkExpires": payload.get("exp") or int(time.time()) + 300,
+        "supplierId": supplier_data.get("Z-Sfid") or supplier_data.get("Z-Soid") or "",
+        "supplierUuid": supplier_data.get("Z-Sid") or "",
+    }
+
+def capture_authorizev3(page):
+    captured = {"token": ""}
+
+    def on_request(request):
+        try:
+            headers = request.headers
+            token = headers.get("authorizev3") or headers.get("Authorizev3") or headers.get("AuthorizeV3") or ""
+            if looks_like_access_token(token):
+                captured["token"] = token
+        except Exception:
+            pass
+
+    page.on("request", on_request)
+
+    targets = [
+        "https://seller.wildberries.ru/feedbacks-questions/feedbacks",
+        "https://seller.wildberries.ru/analytics/orders-stats",
+        "https://seller.wildberries.ru/",
+    ]
+    for target in targets:
+        try:
+            page.goto(target, timeout=30000)
+        except Exception:
+            pass
+        page.wait_for_timeout(5000)
+        if captured["token"]:
+            print("    Auth from request header len=", len(captured["token"]))
+            return captured["token"]
+
+    try:
+        token = page.evaluate("""
+            () => {
+              for (const storage of [localStorage, sessionStorage]) {
+                for (let i = 0; i < storage.length; i++) {
+                  const key = storage.key(i);
+                  const val = storage.getItem(key) || "";
+                  if (val.startsWith("eyJ") && val.length > 100 && val.split(".").length === 3) return val;
+                }
+              }
+              return "";
+            }
+        """)
+        if looks_like_access_token(token):
+            print("    Auth from browser storage len=", len(token))
+            return token
+    except Exception as e:
+        print("    Storage token read failed:", e)
+
+    return ""
+
+def normalize_supplier_name(value):
+    value = re.sub(r"\s+", " ", value or "").strip()
+    value = value.replace("Индивидуальный предприниматель", "ИП")
+    return value
+
+def supplier_names_from_text(value):
+    value = normalize_supplier_name(value)
+    names = []
+
+    for match in re.finditer(r"\bИП\s+[А-ЯЁ][а-яё-]+(?:\s+[А-ЯЁ]\.\s*[А-ЯЁ]\.?)?", value):
+        names.append(normalize_supplier_name(match.group(0)))
+
+    for match in re.finditer(r"\bООО\s+[«\"]?[^,\n]{2,60}", value):
+        names.append(normalize_supplier_name(match.group(0).strip(" .")))
+
+    result = []
+    seen = set()
+    for name in names:
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(name)
+    return result
+
+def collect_supplier_elements(page, header_only=False):
+    items = []
+    seen = set()
+    for el in page.query_selector_all("*"):
+        try:
+            if not el.is_visible():
+                continue
+            names = supplier_names_from_text(el.inner_text())
+            if not names:
+                continue
+            box = el.bounding_box()
+            if not box:
+                continue
+            if header_only and not (box["x"] > 900 and box["y"] < 90):
+                continue
+            for name in names:
+                key = name.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                items.append({"name": name, "x": box["x"], "y": box["y"], "el": el})
+        except Exception:
+            pass
+    return items
+
+def click_supplier_header(page, current_supplier):
+    for item in collect_supplier_elements(page, header_only=True):
+        try:
+            if item["name"] == current_supplier:
+                item["el"].click()
+                page.wait_for_timeout(2500)
+                return True
+        except Exception:
+            pass
+    return False
+
+def click_supplier_choice(page, choice):
+    wanted = normalize_supplier_name(choice)
+    for item in collect_supplier_elements(page, header_only=False):
+        try:
+            if item["name"] == wanted and item["y"] > 45:
+                item["el"].click()
+                page.wait_for_timeout(8000)
+                print("    Switched to:", wanted)
+                return True
+        except Exception:
+            pass
+    return False
+
 cleanup()
 print("Starting WB SELLER auth...")
 
@@ -144,33 +401,48 @@ with sync_playwright() as p:
         btn.click()
     else:
         page.keyboard.press("Enter")
-    page.wait_for_timeout(5000)
 
     # === Step 4: Check page state after submit ===
-    page_text = page.inner_text("body")[:1500]
+    page_text = ""
+    has_code_page = False
+    for _ in range(25):
+        page.wait_for_timeout(1000)
+        page_text = page.inner_text("body")[:1500]
 
-    # Check rate limit
-    remaining = extract_rate_limit_remaining(page_text)
-    if remaining:
-        status("blocked", message="WB заблокировал отправку SMS. Повтор через " + remaining)
-        browser.close()
-        sys.exit(0)
+        has_code_page = has_sms_code_page(page_text)
+        if has_code_page:
+            break
 
-    if "request a new code" in page_text.lower() or "запрос кода возможен" in page_text.lower():
-        status("blocked", message="WB заблокировал отправку SMS. Попробуйте позже.")
-        browser.close()
-        sys.exit(0)
-
-    # Check if code page appeared
-    has_code_page = any(h in page_text.lower() for h in ["код", "code", "sms", "enter sms"])
-    if not has_code_page:
-        # Phone might not be registered
-        if "sign in" in page_text.lower() or "войти" in page_text.lower():
-            status("failed", message="Номер не зарегистрирован в WB Partners или SMS не отправлен.")
+        remaining = extract_rate_limit_remaining(page_text)
+        if remaining:
+            status("blocked", message="WB заблокировал отправку SMS. Повтор через " + remaining, debug=page_debug_state(page))
             browser.close()
             sys.exit(0)
 
-    status("sms_sent", phone=PHONE)
+        if "request a new code" in page_text.lower() or "запрос кода возможен" in page_text.lower():
+            status("blocked", message="WB заблокировал отправку SMS. Попробуйте позже.", debug=page_debug_state(page))
+            browser.close()
+            sys.exit(0)
+
+    # Check rate limit
+    # Check if code page appeared
+    if not has_code_page:
+        remaining = extract_rate_limit_remaining(page_text)
+        if remaining:
+            status("blocked", message="WB заблокировал отправку SMS. Повтор через " + remaining, debug=page_debug_state(page))
+            browser.close()
+            sys.exit(0)
+
+        if "request a new code" in page_text.lower() or "запрос кода возможен" in page_text.lower():
+            status("blocked", message="WB заблокировал отправку SMS. Попробуйте позже.", debug=page_debug_state(page))
+            browser.close()
+            sys.exit(0)
+
+        status("failed", message="WB не показал экран ввода SMS после отправки номера.", debug=page_debug_state(page))
+        browser.close()
+        sys.exit(0)
+
+    status("sms_sent", phone=PHONE, resendAfter=extract_rate_limit_remaining(page_text), debug=page_debug_state(page))
 
     # === Step 5: Wait for SMS code ===
     while True:
@@ -227,7 +499,7 @@ with sync_playwright() as p:
             continue  # Wait for new code
 
         # Check for expired code
-        expired_markers = ["код истёк", "code expired", "истёк", "expired", "request a new code"]
+        expired_markers = ["код истёк", "code expired", "истёк", "expired"]
         if any(m in new_page_text.lower() for m in expired_markers):
             status("code_expired", message="SMS-код истёк. Запросите новый код.")
             browser.close()
@@ -271,141 +543,90 @@ with sync_playwright() as p:
     # === Step 7: Check for multiple suppliers ===
     print("[7] Checking suppliers in header...")
 
-    # Find ИП/ООО elements in the top-right area
-    ip_elements = []
-    for el in page.query_selector_all("*"):
-        try:
-            if not el.is_visible():
-                continue
-            txt = el.inner_text().strip()
-            if ("ИП" in txt or "ООО" in txt) and len(txt) < 80 and "\n" not in txt:
-                box = el.bounding_box()
-                if box and box["x"] > 1000 and box["y"] < 60:
-                    ip_elements.append({"name": txt, "x": box["x"], "y": box["y"]})
-        except:
-            pass
-
-    # Get unique supplier names from header
-    seen_names = set()
-    unique_suppliers = []
-    for ip in ip_elements:
-        if ip["name"] not in seen_names:
-            seen_names.add(ip["name"])
-            unique_suppliers.append(ip["name"])
-
-    current_supplier = unique_suppliers[0] if unique_suppliers else "Неизвестно"
+    header_suppliers = collect_supplier_elements(page, header_only=True)
+    current_supplier = header_suppliers[0]["name"] if header_suppliers else "Неизвестно"
     print("    Current supplier:", current_supplier)
 
     # Try clicking to see if dropdown opens with more suppliers
-    if ip_elements:
-        # Click the supplier name in header
-        for el in page.query_selector_all("*"):
-            try:
-                if el.is_visible() and el.inner_text().strip() == current_supplier:
-                    box = el.bounding_box()
-                    if box and box["x"] > 1000 and box["y"] < 60:
-                        el.click()
-                        page.wait_for_timeout(2000)
-                        break
-            except:
-                pass
+    all_suppliers = [{"name": current_supplier}] if current_supplier != "Неизвестно" else []
+    if current_supplier != "Неизвестно" and click_supplier_header(page, current_supplier):
+        dropdown_items = collect_supplier_elements(page, header_only=False)
+        dropdown_names = []
+        seen_names = set()
+        for item in dropdown_items:
+            key = item["name"].lower()
+            if key in seen_names:
+                continue
+            seen_names.add(key)
+            dropdown_names.append({"name": item["name"]})
 
-        # Check if dropdown appeared with OTHER supplier names
-        dropdown_suppliers = []
-        for el in page.query_selector_all("*"):
-            try:
-                if not el.is_visible():
-                    continue
-                txt = el.inner_text().strip()
-                if ("ИП" in txt or "ООО" in txt) and len(txt) < 80 and "\n" not in txt:
-                    box = el.bounding_box()
-                    # Dropdown items are usually below the header (y > 50)
-                    if box and box["y"] > 50 and box["y"] < 400:
-                        if txt not in [s["name"] for s in dropdown_suppliers]:
-                            dropdown_suppliers.append({"name": txt, "x": box["x"], "y": box["y"]})
-            except:
-                pass
+        if len(dropdown_names) > len(all_suppliers):
+            all_suppliers = dropdown_names
+        print("    Supplier candidates:", [s["name"] for s in all_suppliers])
+    else:
+        print("    Supplier dropdown not opened")
 
-        if dropdown_suppliers:
-            print("    Dropdown suppliers:", [s["name"] for s in dropdown_suppliers])
-            all_suppliers = dropdown_suppliers
-            # Close dropdown by pressing Escape
-            page.keyboard.press("Escape")
-            page.wait_for_timeout(500)
-        else:
-            all_suppliers = [{"name": current_supplier}]
+    if len(all_suppliers) > 1:
+        supplier_list = [s["name"] for s in all_suppliers]
+        status("supplier_select", suppliers=supplier_list, current=current_supplier)
 
-        if len(all_suppliers) > 1:
-            # Multiple suppliers — ask user to choose
-            supplier_list = [s["name"] for s in all_suppliers]
-            status("supplier_select", suppliers=supplier_list, current=current_supplier)
+        choice = wait_for_file(SUPPLIER_CHOICE_PATH, timeout=180)
+        if not choice:
+            status("failed", message="Таймаут: юрлицо не выбрано за 3 минуты.")
+            browser.close()
+            sys.exit(0)
 
-            # Wait for user choice
-            choice = wait_for_file(SUPPLIER_CHOICE_PATH, timeout=120)
-            if not choice:
-                status("failed", message="Таймаут: юрлицо не выбрано за 2 минуты.")
+        choice = normalize_supplier_name(choice)
+        print("    User chose:", choice)
+
+        if choice not in supplier_list:
+            status("failed", message=f"Выбранное юрлицо не найдено в списке: {choice}")
+            browser.close()
+            sys.exit(0)
+
+        if choice != current_supplier:
+            if not click_supplier_header(page, current_supplier):
+                status("failed", message="Не удалось открыть список юрлиц для переключения.")
                 browser.close()
                 sys.exit(0)
-
-            print("    User chose:", choice)
-
-            if choice != current_supplier:
-                # Click header to open dropdown again
-                for el in page.query_selector_all("*"):
-                    try:
-                        if el.is_visible() and el.inner_text().strip() == current_supplier:
-                            box = el.bounding_box()
-                            if box and box["x"] > 1000 and box["y"] < 60:
-                                el.click()
-                                page.wait_for_timeout(2000)
-                                break
-                    except:
-                        pass
-
-                # Click the chosen supplier
-                for el in page.query_selector_all("*"):
-                    try:
-                        if el.is_visible() and el.inner_text().strip() == choice:
-                            box = el.bounding_box()
-                            if box and box["y"] > 50:
-                                el.click()
-                                page.wait_for_timeout(8000)
-                                print("    Switched to:", choice)
-                                break
-                    except:
-                        pass
+            if not click_supplier_choice(page, choice):
+                status("failed", message=f"Не удалось выбрать юрлицо: {choice}")
+                browser.close()
+                sys.exit(0)
+            current_supplier = choice
+    elif current_supplier == "Неизвестно":
+        status("failed", message="Не удалось определить текущее юрлицо после авторизации.")
+        browser.close()
+        sys.exit(0)
 
     # === Step 8: Collect cookies and save tokens ===
     all_cookies = ctx.cookies()
     cookies_dict = {c["name"]: c["value"] for c in all_cookies}
 
-    # Find auth token — JWT in cookies
-    auth_token = None
-    for c in all_cookies:
-        if len(c["value"]) > 200 and c["value"].count(".") == 2:
-            auth_token = c["value"]
-            print("    Auth from cookie:", c["name"], "len=", len(c["value"]))
-            break
+    auth_token = capture_authorizev3(page)
     if not auth_token:
-        for name in ["WILDAUTHNEW_V3", "WBTokenV3", "WBToken", "wbx-refresh"]:
-            if cookies_dict.get(name):
-                auth_token = cookies_dict[name]
-                print("    Auth from cookie:", name)
+        for name in ["WILDAUTHNEW_V3", "WBTokenV3", "WBToken"]:
+            token = cookies_dict.get(name)
+            if looks_like_access_token(token):
+                auth_token = token
+                print("    Auth from cookie:", name, "len=", len(token))
                 break
 
     cookie_string = "; ".join(c["name"] + "=" + c["value"] for c in all_cookies)
 
     if auth_token:
+        refreshed = refresh_seller_token(auth_token, cookie_string) or {}
         tokens = {
             "authorizev3": auth_token,
-            "wbSellerLk": "",
-            "wbSellerLkExpires": 0,
-            "supplierId": "",
-            "supplierUuid": "",
+            "wbSellerLk": refreshed.get("wbSellerLk", ""),
+            "wbSellerLkExpires": refreshed.get("wbSellerLkExpires", 0),
+            "supplierId": refreshed.get("supplierId", ""),
+            "supplierUuid": refreshed.get("supplierUuid", ""),
             "cookies": cookie_string,
             "savedAt": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
         }
         write_secret_json(TOKENS_PATH, tokens)
+        sync_review_account_tokens(tokens, cookies_dict)
         print("Tokens saved to", TOKENS_PATH)
         status("success", message="Авторизация успешна!", supplier=current_supplier)
     else:

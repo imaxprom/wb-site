@@ -16,6 +16,7 @@ const fs = require("fs");
 const PROJECT_DIR = path.join(__dirname, "..");
 const DB_PATH = path.join(PROJECT_DIR, "data", "finance.db");
 const LOG_PATH = path.join(PROJECT_DIR, "data", "reviews-complaints.log");
+const CODEX_GATEWAY_ENV_PATH = path.join(PROJECT_DIR, "data", "codex-gateway.env");
 
 const WB_COMPLAINTS_URL =
   "https://seller-reviews.wildberries.ru/ns/fa-seller-api/reviews-ext-seller-portal/api/v1/feedbacks/complaints";
@@ -26,6 +27,34 @@ function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`;
   console.log(line);
   try { fs.appendFileSync(LOG_PATH, line + "\n"); } catch {}
+}
+
+function loadEnvFile(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return {};
+    const env = {};
+    for (const line of fs.readFileSync(filePath, "utf-8").split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+      const index = trimmed.indexOf("=");
+      const key = trimmed.slice(0, index).trim();
+      const value = trimmed.slice(index + 1).trim().replace(/^['"]|['"]$/g, "");
+      if (key) env[key] = value;
+    }
+    return env;
+  } catch {
+    return {};
+  }
+}
+
+function getCodexGatewayConfig() {
+  const fileEnv = loadEnvFile(CODEX_GATEWAY_ENV_PATH);
+  return {
+    url: (process.env.CODEX_GATEWAY_URL || fileEnv.CODEX_GATEWAY_URL || "http://192.168.55.106:8080").replace(/\/+$/, ""),
+    token: process.env.CODEX_GATEWAY_TOKEN || fileEnv.CODEX_GATEWAY_TOKEN || "",
+    model: process.env.CODEX_GATEWAY_MODEL || fileEnv.CODEX_GATEWAY_MODEL || "gpt-5.5",
+    timeoutMs: Number(process.env.CODEX_GATEWAY_TIMEOUT_MS || fileEnv.CODEX_GATEWAY_TIMEOUT_MS || 180000),
+  };
 }
 
 // ─── DB helpers ─────────────────────────────────────────────
@@ -113,13 +142,16 @@ function getTodayCount(db, accountId) {
   return row.cnt;
 }
 
-// ─── AI text generation via Claude Code CLI ────────────────
+// ─── AI text generation via Codex gateway ───────────────────
 
 const COMPLAINT_REASONS = {
   11: "Отзыв не относится к товару",
   12: "Отзыв оставили конкуренты",
   13: "Спам-реклама в тексте",
+  14: "Спам-реклама на фото",
+  15: "Непристойный контент на фото",
   16: "Нецензурная лексика",
+  17: "Фото не относится к товару",
   18: "Отзыв с политическим контекстом",
   20: "Угрозы, оскорбления",
   19: "Другое",
@@ -129,7 +161,7 @@ const DEFAULT_SYSTEM_PROMPT = (
   "Ты — сотрудник бренда IMSI (женское нижнее бельё) на Wildberries. " +
   "Составляешь обращения к модератору по необъективным отзывам. " +
   "Пиши как живой человек, без шаблонов и канцелярита. " +
-  "Длина обращения — СТРОГО от 1000 до 1500 символов. " +
+  "Длина обращения — 600-1000 символов. " +
   "Предпочитай причину 11 («Отзыв не относится к товару») если отзыв: пустой, про доставку, " +
   "про упаковку, про размер без реального дефекта, содержит эмоции без конкретики. " +
   "Причина 19 («Другое») — только когда ни одна из специфических не подходит. " +
@@ -157,15 +189,15 @@ const DEFAULT_USER_PROMPT = `Составь обращение к модерат
 7. Только если ни одна из выше не подходит → reason_id=19
 
 Требования к тексту обращения:
-- ОБЯЗАТЕЛЬНО 1000–1500 символов (меньше — отклонят, больше — потеряют суть)
+- ОБЯЗАТЕЛЬНО 600–1000 символов
 - Упомяни артикул товара
-- 7–9 предложений
+- 4–7 предложений
 - НЕ используй фразы: «голословный», «добросовестный продавец», «просим модератора рассмотреть», «принять решение об удалении», «вводит в заблуждение», «наносит ущерб репутации», «на всех этапах», «бездоказательный», «потенциальных покупателей», «репутационный ущерб»
 - Не используй длинные тире
 - Реагируй на конкретное содержание отзыва, а не по шаблону
 
 Ответ — строго JSON одной строкой:
-{"reason_id": <число>, "explanation": "<текст 1000-1500 символов>"}`;
+{"reason_id": <число>, "explanation": "<текст 600-1000 символов>"}`;
 
 function buildPrompt(template, review, allowedReasons) {
   const reviewText = [
@@ -186,64 +218,71 @@ function buildPrompt(template, review, allowedReasons) {
     .replace(/\{reasons_list\}/g, reasonsList);
 }
 
-function generateComplaint(review, allowedReasons, config, manager, previousText) {
-  return new Promise((resolve) => {
-    const sysPrompt = (config && config.system_prompt) || DEFAULT_SYSTEM_PROMPT;
-    const userTemplate = (config && config.user_prompt) || DEFAULT_USER_PROMPT;
-    let prompt = buildPrompt(userTemplate, review, allowedReasons);
+function normalizeExplanation(value) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= 1000) return text;
+  return text.slice(0, 1000).replace(/\s+\S*$/, "").trim();
+}
 
-    if (manager && manager.style) {
-      prompt += `\n\n---\nПиши в стиле менеджера ${manager.name}: ${manager.style}`;
-      if (previousText) {
-        prompt += `\n\nТвоё предыдущее обращение (НЕ повторяй структуру, формулировки и порядок аргументов):\n"${previousText.slice(0, 500)}"`;
-      }
+function defaultReasonId(reasonIds) {
+  return reasonIds.includes(19) ? 19 : reasonIds[0];
+}
+
+async function generateComplaint(review, allowedReasons, config, manager, previousText) {
+  const sysPrompt = (config && config.system_prompt) || DEFAULT_SYSTEM_PROMPT;
+  const userTemplate = (config && config.user_prompt) || DEFAULT_USER_PROMPT;
+  let prompt = buildPrompt(userTemplate, review, allowedReasons);
+  prompt += "\n\nТехническое ограничение WB: поле explanation должно быть обычным текстом 600-1000 символов. Не используй поле text.";
+
+  if (manager && manager.style) {
+    prompt += `\n\n---\nПиши в стиле менеджера ${manager.name}: ${manager.style}`;
+    if (previousText) {
+      prompt += `\n\nТвоё предыдущее обращение (НЕ повторяй структуру, формулировки и порядок аргументов):\n"${previousText.slice(0, 500)}"`;
+    }
+  }
+
+  const gateway = getCodexGatewayConfig();
+  if (!gateway.token) {
+    log("  AI generation failed: CODEX_GATEWAY_TOKEN is not configured");
+    return null;
+  }
+
+  try {
+    const res = await fetch(`${gateway.url}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${gateway.token}`,
+      },
+      body: JSON.stringify({
+        model: gateway.model,
+        messages: [
+          { role: "system", content: sysPrompt },
+          { role: "user", content: prompt },
+        ],
+      }),
+      signal: AbortSignal.timeout(gateway.timeoutMs),
+    });
+    const body = await res.text();
+    if (!res.ok) {
+      log(`  AI generation failed: Codex gateway HTTP ${res.status}: ${body.slice(0, 300)}`);
+      return null;
     }
 
-    const { spawn } = require("child_process");
-    // Claude CLI на wb-site недоступен (RU IP блокируется Anthropic).
-    // Идём через SSH на claude-cli VM (.106), где настроен tinyproxy через Germany.
-    // Скрипт ~/claude-proxy.sh принимает prompt из stdin + system prompt как $1.
-    const esc = (s) => "'" + s.replace(/'/g, "'\\''") + "'";
-    const proc = spawn("ssh", [
-      "-o", "BatchMode=yes",
-      "-o", "ConnectTimeout=10",
-      "-o", "UserKnownHostsFile=/home/makson/.ssh/known_hosts",
-      "-o", "StrictHostKeyChecking=accept-new",
-      "-i", "/home/makson/.ssh/id_ed25519",
-      "makson@192.168.55.106",
-      `bash /home/makson/claude-proxy.sh ${esc(sysPrompt)}`,
-    ], {
-      timeout: 120000,
-    });
-
-    let stdout = "";
-    let stderr = "";
-    proc.stdout.on("data", (d) => { stdout += d.toString(); });
-    proc.stderr.on("data", (d) => { stderr += d.toString(); });
-    proc.stdin.write(prompt);
-    proc.stdin.end();
-
-    proc.on("close", (code) => {
-      if (code !== 0) {
-        log(`  AI generation failed: ${stderr || `exit code ${code}`}`);
-        resolve(null);
-        return;
-      }
-      try {
-        const text = stdout.trim();
-        const jsonMatch = text.match(/\{[\s\S]*"reason_id"[\s\S]*"explanation"[\s\S]*\}/);
-        if (!jsonMatch) { log(`  AI no JSON found in output`); resolve(null); return; }
-        const parsed = JSON.parse(jsonMatch[0]);
-        if (!allowedReasons.includes(parsed.reason_id)) {
-          parsed.reason_id = allowedReasons[0];
-        }
-        resolve(parsed);
-      } catch (e) {
-        log(`  AI JSON parse failed: ${e.message}`);
-        resolve(null);
-      }
-    });
-  });
+    const completion = JSON.parse(body);
+    const text = String(completion?.choices?.[0]?.message?.content || "").trim();
+    const jsonMatch = text.match(/\{[\s\S]*"reason_id"[\s\S]*"explanation"[\s\S]*\}/);
+    if (!jsonMatch) { log("  AI no JSON found in output"); return null; }
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (!allowedReasons.includes(parsed.reason_id)) {
+      parsed.reason_id = defaultReasonId(allowedReasons);
+    }
+    parsed.explanation = normalizeExplanation(parsed.explanation);
+    return parsed;
+  } catch (e) {
+    log(`  AI JSON/gateway failed: ${e.message}`);
+    return null;
+  }
 }
 
 // ─── WB API ─────────────────────────────────────────────────
@@ -251,13 +290,30 @@ function generateComplaint(review, allowedReasons, config, manager, previousText
 function buildHeaders(account) {
   const headers = {
     "Content-Type": "application/json",
+    "Accept": "application/json",
     "Origin": "https://seller.wildberries.ru",
+    "Referer": "https://seller.wildberries.ru/",
   };
-  if (account.wb_authorize_v3) headers["Authorizev3"] = account.wb_authorize_v3;
+  if (account.wb_authorize_v3) headers["authorizev3"] = account.wb_authorize_v3;
+  if (account.wb_seller_lk) headers["wb-seller-lk"] = account.wb_seller_lk;
   if (account.wb_validation_key) {
-    headers["Cookie"] = `wbx-validation-key=${account.wb_validation_key}; x-supplier-id-external=e0334427-4f82-4bc3-a0ab-43394e58b6ac`;
+    const cookieParts = [`wbx-validation-key=${account.wb_validation_key}`];
+    if (account.supplier_id) cookieParts.push(`x-supplier-id=${account.supplier_id}`);
+    const supplierUuid = getSupplierUuid(account);
+    if (supplierUuid) cookieParts.push(`x-supplier-id-external=${supplierUuid}`);
+    headers["Cookie"] = cookieParts.join("; ");
   }
   return headers;
+}
+
+function getSupplierUuid(account) {
+  if (!account.wb_seller_lk) return "";
+  try {
+    const payload = JSON.parse(Buffer.from((account.wb_seller_lk.split(".")[1] || ""), "base64url").toString("utf-8"));
+    return String(payload?.data?.["Z-Sid"] || "");
+  } catch {
+    return "";
+  }
 }
 
 async function submitComplaint(account, wbReviewId, reasonId, explanation) {
@@ -287,6 +343,53 @@ async function submitComplaint(account, wbReviewId, reasonId, explanation) {
   }
 
   return { ok: wbOk, status: res.status, body: text };
+}
+
+async function fetchAvailableComplaintReasons(account, wbReviewId) {
+  const res = await fetch(`${WB_COMPLAINTS_URL}/${encodeURIComponent(wbReviewId)}`, {
+    method: "GET",
+    headers: buildHeaders(account),
+    signal: AbortSignal.timeout(15000),
+  });
+  const body = await res.text().catch(() => "");
+  let reasons = [];
+  let ok = res.ok;
+
+  if (body) {
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed.error === true) ok = false;
+      const rawReasons = parsed?.data?.feedbackComplaints;
+      if (Array.isArray(rawReasons)) {
+        reasons = rawReasons
+          .map(item => ({
+            id: Number(item.id),
+            label: String(item.label || COMPLAINT_REASONS[Number(item.id)] || ""),
+            explanationRequired: Boolean(item.explanationRequired),
+          }))
+          .filter(item => Number.isFinite(item.id));
+      }
+    } catch {
+      ok = false;
+    }
+  }
+
+  return { ok, status: res.status, body, reasons };
+}
+
+function getTextComplaintReasons(availableReasons, preferredReasonIds) {
+  const withText = availableReasons.filter(reason => reason.explanationRequired);
+  const byId = new Map(withText.map(reason => [reason.id, reason]));
+  const preferred = preferredReasonIds.map(id => byId.get(id)).filter(Boolean);
+  return preferred.length ? preferred : withText;
+}
+
+function reasonErrorMessage(wbReviewId, availableReasons, preferredReasonIds) {
+  if (availableReasons.length === 0) {
+    return `WB не вернул доступные причины жалобы для отзыва ${wbReviewId}`;
+  }
+  const available = availableReasons.map(reason => `${reason.id}:${reason.label || "без названия"}${reason.explanationRequired ? "" : " (без текста)"}`).join(", ");
+  return `Для отзыва ${wbReviewId} WB не принимает текстовое пояснение по настроенным причинам [${preferredReasonIds.join(", ")}]. Доступно: ${available}`;
 }
 
 // ─── Sync complaint statuses from WB ────────────────────────
@@ -422,18 +525,34 @@ async function main() {
     let errors = 0;
 
     for (const review of toSubmit) {
+      const available = await fetchAvailableComplaintReasons(account, review.wb_review_id);
+      const textReasons = available.ok ? getTextComplaintReasons(available.reasons, config.allowed_reasons) : [];
+      if (!available.ok || textReasons.length === 0) {
+        const result = stmtInsert.run(review.id, account.id, review.wb_review_id, 0, "", "");
+        const errMsg = available.ok
+          ? reasonErrorMessage(review.wb_review_id, available.reasons, config.allowed_reasons)
+          : `WB reasons HTTP ${available.status}: ${available.body.slice(0, 200)}`;
+        stmtError.run(errMsg, result.lastInsertRowid);
+        stmtReviewStatus.run("error", review.id);
+        errors++;
+        log(`  ERROR on review ${review.wb_review_id}: ${errMsg}`);
+        continue;
+      }
+      const reasonIds = textReasons.map(reason => reason.id);
+
       // Pick random manager
       const managers = config.managers && config.managers.length > 0 ? config.managers : [{ name: "Default", style: "" }];
       const manager = managers[Math.floor(Math.random() * managers.length)];
       const previousText = db.prepare("SELECT explanation FROM review_complaints WHERE account_id = ? AND manager_name = ? AND explanation IS NOT NULL ORDER BY id DESC LIMIT 1").get(account.id, manager.name);
 
       // AI selects reason + generates complaint text
-      const ai = await generateComplaint(review, config.allowed_reasons, config, manager, previousText?.explanation || null);
+      const ai = await generateComplaint(review, reasonIds, config, manager, previousText?.explanation || null);
       if (!ai) {
         log(`  AI failed for ${review.wb_review_id}, skipping`);
         continue;
       }
-      const { reason_id: reasonId, explanation } = ai;
+      let { reason_id: reasonId, explanation } = ai;
+      if (!reasonIds.includes(reasonId)) reasonId = defaultReasonId(reasonIds);
       log(`  [${manager.name}] ${review.wb_review_id}: reason=${reasonId}, text="${(explanation || "").slice(0, 80)}..."`);
 
       const result = stmtInsert.run(review.id, account.id, review.wb_review_id, reasonId, explanation, manager.name);

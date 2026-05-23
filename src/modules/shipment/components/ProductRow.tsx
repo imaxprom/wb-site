@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useData } from "@/components/DataProvider";
 import { sortShipmentRows } from "@/modules/shipment/lib/engine";
 import { formatNumber } from "@/lib/utils";
-import { getWbImageUrl } from "@/lib/wb-image";
+import { getWbImageUrlCandidates } from "@/lib/wb-image";
 import type { Product, StockItem } from "@/types";
 import Link from "next/link";
 
@@ -135,9 +135,10 @@ export const ProductRow = React.memo(function ProductRow({
                             <td className="num">
                               <input
                                 type="number"
-                                value={s.perBox}
+                                value={s.perBox > 0 ? s.perBox : ""}
                                 onChange={(e) => handlePerBoxChange(s.barcode, Number(e.target.value))}
                                 onClick={(e) => e.stopPropagation()}
+                                placeholder="—"
                                 className="w-16 bg-[var(--bg)] border border-[var(--border)] rounded px-2 py-1 text-center text-sm focus:outline-none focus:border-[var(--accent)]"
                                 min="1"
                               />
@@ -232,10 +233,15 @@ export const ProductRow = React.memo(function ProductRow({
 });
 
 function ProductThumb({ nmId }: { nmId: string }) {
-  const [failed, setFailed] = useState(false);
-  const url = getWbImageUrl(nmId, "small");
+  const urls = useMemo(() => getWbImageUrlCandidates(nmId, "small"), [nmId]);
+  const [urlIndex, setUrlIndex] = useState(0);
+  const url = urls[urlIndex];
 
-  if (!url || failed) {
+  useEffect(() => {
+    setUrlIndex(0);
+  }, [nmId]);
+
+  if (!url) {
     return (
       <div className="w-8 h-8 rounded bg-[var(--border)] flex-shrink-0" />
     );
@@ -248,7 +254,7 @@ function ProductThumb({ nmId }: { nmId: string }) {
       width={32}
       height={32}
       className="w-8 h-8 rounded object-cover flex-shrink-0"
-      onError={() => setFailed(true)}
+      onError={() => setUrlIndex((current) => current + 1)}
     />
   );
 }

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
+import fs from "fs";
+import path from "path";
 import {
   getReviewAccountById,
   getReviewAccounts,
@@ -21,6 +23,7 @@ export const maxDuration = 300;
 
 const WB_COMPLAINTS_URL =
   "https://seller-reviews.wildberries.ru/ns/fa-seller-api/reviews-ext-seller-portal/api/v1/feedbacks/complaints";
+const CODEX_GATEWAY_ENV_PATH = path.join(process.cwd(), "data", "codex-gateway.env");
 
 interface Manager {
   name: string;
@@ -41,6 +44,34 @@ interface ComplaintsConfig {
 
 function randomDelay(minMin: number, maxMin: number): number {
   return (minMin + Math.random() * (maxMin - minMin)) * 60 * 1000;
+}
+
+function loadEnvFile(filePath: string): Record<string, string> {
+  try {
+    if (!fs.existsSync(filePath)) return {};
+    const env: Record<string, string> = {};
+    for (const line of fs.readFileSync(filePath, "utf-8").split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+      const index = trimmed.indexOf("=");
+      const key = trimmed.slice(0, index).trim();
+      const value = trimmed.slice(index + 1).trim().replace(/^['"]|['"]$/g, "");
+      if (key) env[key] = value;
+    }
+    return env;
+  } catch {
+    return {};
+  }
+}
+
+function getCodexGatewayConfig() {
+  const fileEnv = loadEnvFile(CODEX_GATEWAY_ENV_PATH);
+  return {
+    url: (process.env.CODEX_GATEWAY_URL || fileEnv.CODEX_GATEWAY_URL || "http://192.168.55.106:8080").replace(/\/+$/, ""),
+    token: process.env.CODEX_GATEWAY_TOKEN || fileEnv.CODEX_GATEWAY_TOKEN || "",
+    model: process.env.CODEX_GATEWAY_MODEL || fileEnv.CODEX_GATEWAY_MODEL || "gpt-5.5",
+    timeoutMs: Number(process.env.CODEX_GATEWAY_TIMEOUT_MS || fileEnv.CODEX_GATEWAY_TIMEOUT_MS || 180000),
+  };
 }
 
 function getComplaintsConfig(account: ReviewAccount): ComplaintsConfig {
@@ -67,7 +98,10 @@ const COMPLAINT_REASONS: Record<number, string> = {
   11: "Отзыв не относится к товару",
   12: "Отзыв оставили конкуренты",
   13: "Спам-реклама в тексте",
+  14: "Спам-реклама на фото",
+  15: "Непристойный контент на фото",
   16: "Нецензурная лексика",
+  17: "Фото не относится к товару",
   18: "Отзыв с политическим контекстом",
   20: "Угрозы, оскорбления",
   19: "Другое",
@@ -78,11 +112,17 @@ interface AiComplaintResult {
   explanation: string;
 }
 
+interface AvailableComplaintReason {
+  id: number;
+  label: string;
+  explanationRequired: boolean;
+}
+
 const DEFAULT_SYSTEM_PROMPT = (
   "Ты — сотрудник бренда IMSI (женское нижнее бельё) на Wildberries. " +
   "Составляешь обращения к модератору по необъективным отзывам. " +
   "Пиши как живой человек, без шаблонов и канцелярита. " +
-  "Длина обращения — СТРОГО от 1000 до 1500 символов. " +
+  "Длина обращения — 600-1000 символов. " +
   "Предпочитай причину 11 («Отзыв не относится к товару») если отзыв: пустой, про доставку, " +
   "про упаковку, про размер без реального дефекта, содержит эмоции без конкретики. " +
   "Причина 19 («Другое») — только когда ни одна из специфических не подходит. " +
@@ -110,15 +150,15 @@ const DEFAULT_USER_PROMPT = `Составь обращение к модерат
 7. Только если ни одна из выше не подходит → reason_id=19
 
 Требования к тексту обращения:
-- ОБЯЗАТЕЛЬНО 1000–1500 символов (меньше — отклонят, больше — потеряют суть)
+- ОБЯЗАТЕЛЬНО 600–1000 символов
 - Упомяни артикул товара
-- 7–9 предложений
+- 4–7 предложений
 - НЕ используй фразы: «голословный», «добросовестный продавец», «просим модератора рассмотреть», «принять решение об удалении», «вводит в заблуждение», «наносит ущерб репутации», «на всех этапах», «бездоказательный», «потенциальных покупателей», «репутационный ущерб»
 - Не используй длинные тире
 - Реагируй на конкретное содержание отзыва, а не по шаблону
 
 Ответ — строго JSON одной строкой:
-{"reason_id": <число>, "explanation": "<текст 1000-1500 символов>"}`;
+{"reason_id": <число>, "explanation": "<текст 600-1000 символов>"}`;
 
 function buildPrompt(
   template: string,
@@ -143,6 +183,16 @@ function buildPrompt(
     .replace(/\{reasons_list\}/g, reasonsList);
 }
 
+function normalizeExplanation(value: unknown): string {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= 1000) return text;
+  return text.slice(0, 1000).replace(/\s+\S*$/, "").trim();
+}
+
+function defaultReasonId(reasonIds: number[]): number {
+  return reasonIds.includes(19) ? 19 : reasonIds[0];
+}
+
 interface GenerateOptions {
   system_prompt?: string;
   user_prompt?: string;
@@ -158,6 +208,7 @@ async function generateComplaint(
   const sysPrompt = options?.system_prompt || DEFAULT_SYSTEM_PROMPT;
   const userTemplate = options?.user_prompt || DEFAULT_USER_PROMPT;
   let prompt = buildPrompt(userTemplate, review, allowedReasons);
+  prompt += "\n\nТехническое ограничение WB: поле explanation должно быть обычным текстом 600-1000 символов. Не используй поле text.";
 
   // Add manager personality + previous text
   if (options?.manager) {
@@ -167,69 +218,77 @@ async function generateComplaint(
     }
   }
 
-  const { spawn } = await import("child_process");
-  return new Promise((resolve) => {
-    // Claude CLI на wb-site недоступен (RU IP). Идём через SSH на .106 (tinyproxy Germany).
-    // ВАЖНО: SSH склеивает remote-аргументы в shell-команду. sysPrompt может содержать
-    // скобки, кавычки — экранируем в одинарные кавычки.
-    const esc = (s: string) => "'" + s.replace(/'/g, "'\\''") + "'";
-    const proc = spawn("ssh", [
-      "-o", "BatchMode=yes",
-      "-o", "ConnectTimeout=10",
-      "-o", "UserKnownHostsFile=/home/makson/.ssh/known_hosts",
-      "-o", "StrictHostKeyChecking=accept-new",
-      "-i", "/home/makson/.ssh/id_ed25519",
-      "makson@192.168.55.106",
-      `bash /home/makson/claude-proxy.sh ${esc(sysPrompt)}`,
-    ], {
-      timeout: 120000,
-    });
+  const gateway = getCodexGatewayConfig();
+  if (!gateway.token) {
+    console.error("AI generation failed: CODEX_GATEWAY_TOKEN is not configured");
+    return null;
+  }
 
-    let stdout = "";
-    let stderr = "";
-    proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
-    proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
-    proc.on("error", (err: Error) => {
-      console.error("AI spawn error:", err.message);
-      resolve(null);
+  try {
+    const res = await fetch(`${gateway.url}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${gateway.token}`,
+      },
+      body: JSON.stringify({
+        model: gateway.model,
+        messages: [
+          { role: "system", content: sysPrompt },
+          { role: "user", content: prompt },
+        ],
+      }),
+      signal: AbortSignal.timeout(gateway.timeoutMs),
     });
+    const body = await res.text();
+    if (!res.ok) {
+      console.error("AI gateway HTTP error:", res.status, body.slice(0, 300));
+      return null;
+    }
 
-    proc.stdin.write(prompt);
-    proc.stdin.end();
-
-    proc.on("close", (code: number) => {
-      if (code !== 0) {
-        console.error("AI exit code:", code, stderr);
-        resolve(null);
-        return;
-      }
-      try {
-        const text = stdout.trim();
-        const jsonMatch = text.match(/\{[\s\S]*"reason_id"[\s\S]*"explanation"[\s\S]*\}/);
-        if (!jsonMatch) { console.error("AI no JSON found in:", text); resolve(null); return; }
-        const parsed = JSON.parse(jsonMatch[0]) as AiComplaintResult;
-        if (!allowedReasons.includes(parsed.reason_id)) {
-          parsed.reason_id = allowedReasons[0];
-        }
-        resolve(parsed);
-      } catch {
-        console.error("AI JSON parse failed:", stdout);
-        resolve(null);
-      }
-    });
-  });
+    const completion = JSON.parse(body);
+    const text = String(completion?.choices?.[0]?.message?.content || "").trim();
+    const jsonMatch = text.match(/\{[\s\S]*"reason_id"[\s\S]*"explanation"[\s\S]*\}/);
+    if (!jsonMatch) { console.error("AI no JSON found in:", text); return null; }
+    const parsed = JSON.parse(jsonMatch[0]) as AiComplaintResult;
+    if (!allowedReasons.includes(parsed.reason_id)) {
+      parsed.reason_id = defaultReasonId(allowedReasons);
+    }
+    parsed.explanation = normalizeExplanation(parsed.explanation);
+    return parsed;
+  } catch (err) {
+    console.error("AI gateway/JSON error:", err);
+    return null;
+  }
 }
 
 function buildHeaders(account: ReviewAccount): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    "Accept": "application/json",
     "Origin": "https://seller.wildberries.ru",
+    "Referer": "https://seller.wildberries.ru/",
   };
-  if (account.wb_authorize_v3) headers["Authorizev3"] = account.wb_authorize_v3;
+  if (account.wb_authorize_v3) headers["authorizev3"] = account.wb_authorize_v3;
+  if (account.wb_seller_lk) headers["wb-seller-lk"] = account.wb_seller_lk;
   if (account.wb_validation_key) {
-    headers["Cookie"] = `wbx-validation-key=${account.wb_validation_key}; x-supplier-id-external=e0334427-4f82-4bc3-a0ab-43394e58b6ac`;
+    const cookieParts = [`wbx-validation-key=${account.wb_validation_key}`];
+    if (account.supplier_id) cookieParts.push(`x-supplier-id=${account.supplier_id}`);
+    const supplierUuid = getSupplierUuid(account);
+    if (supplierUuid) cookieParts.push(`x-supplier-id-external=${supplierUuid}`);
+    headers["Cookie"] = cookieParts.join("; ");
   }
   return headers;
+}
+
+function getSupplierUuid(account: ReviewAccount): string {
+  if (!account.wb_seller_lk) return "";
+  try {
+    const payload = JSON.parse(Buffer.from(account.wb_seller_lk.split(".")[1] || "", "base64url").toString("utf-8"));
+    return String(payload?.data?.["Z-Sid"] || "");
+  } catch {
+    return "";
+  }
 }
 
 async function submitComplaintToWB(
@@ -269,6 +328,65 @@ async function submitComplaintToWB(
   return { ok: wbOk, status: res.status, body: text };
 }
 
+async function fetchAvailableComplaintReasons(
+  account: ReviewAccount,
+  wbReviewId: string,
+): Promise<{ ok: boolean; status: number; body: string; reasons: AvailableComplaintReason[] }> {
+  const res = await fetch(`${WB_COMPLAINTS_URL}/${encodeURIComponent(wbReviewId)}`, {
+    method: "GET",
+    headers: buildHeaders(account),
+    signal: AbortSignal.timeout(15000),
+  });
+  const body = await res.text().catch(() => "");
+  let reasons: AvailableComplaintReason[] = [];
+  let ok = res.ok;
+
+  if (body) {
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed.error === true) ok = false;
+      const rawReasons = parsed?.data?.feedbackComplaints;
+      if (Array.isArray(rawReasons)) {
+        reasons = rawReasons
+          .map((item: Record<string, unknown>) => ({
+            id: Number(item.id),
+            label: String(item.label || COMPLAINT_REASONS[Number(item.id)] || ""),
+            explanationRequired: Boolean(item.explanationRequired),
+          }))
+          .filter((item: AvailableComplaintReason) => Number.isFinite(item.id));
+      }
+    } catch {
+      ok = false;
+    }
+  }
+
+  return { ok, status: res.status, body, reasons };
+}
+
+function getTextComplaintReasons(
+  availableReasons: AvailableComplaintReason[],
+  preferredReasonIds: number[],
+): AvailableComplaintReason[] {
+  const withText = availableReasons.filter((reason) => reason.explanationRequired);
+  const byId = new Map(withText.map((reason) => [reason.id, reason]));
+  const preferred = preferredReasonIds
+    .map((id) => byId.get(id))
+    .filter((reason): reason is AvailableComplaintReason => Boolean(reason));
+  return preferred.length ? preferred : withText;
+}
+
+function reasonErrorMessage(
+  wbReviewId: string,
+  availableReasons: AvailableComplaintReason[],
+  preferredReasonIds: number[],
+): string {
+  if (availableReasons.length === 0) {
+    return `WB не вернул доступные причины жалобы для отзыва ${wbReviewId}`;
+  }
+  const available = availableReasons.map((reason) => `${reason.id}:${reason.label || "без названия"}${reason.explanationRequired ? "" : " (без текста)"}`).join(", ");
+  return `Для отзыва ${wbReviewId} WB не принимает текстовое пояснение по настроенным причинам [${preferredReasonIds.join(", ")}]. Доступно: ${available}`;
+}
+
 // ─── POST: Submit complaint(s) ─────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -300,19 +418,40 @@ export async function POST(req: NextRequest) {
       let errors = 0;
 
       for (const review of toSubmit) {
+        const available = await fetchAvailableComplaintReasons(account, review.wb_review_id!);
+        const textReasons = available.ok ? getTextComplaintReasons(available.reasons, config.allowed_reasons) : [];
+        if (!available.ok || textReasons.length === 0) {
+          const complaintId = createComplaint({
+            review_id: review.id,
+            account_id: account.id,
+            wb_review_id: review.wb_review_id!,
+            complaint_reason_id: 0,
+            explanation: "",
+            manager_name: "",
+          });
+          updateComplaintStatus(complaintId, "error", available.ok
+            ? reasonErrorMessage(review.wb_review_id!, available.reasons, config.allowed_reasons)
+            : `WB reasons HTTP ${available.status}: ${available.body}`);
+          updateReviewComplaintStatus(review.id, "error");
+          errors++;
+          continue;
+        }
+
         // Pick random manager
         const managers = config.managers?.length ? config.managers : [{ name: "Default", style: "" }];
         const manager = managers[Math.floor(Math.random() * managers.length)];
         const previousText = getLastComplaintByManager(account.id, manager.name);
+        const reasonIds = textReasons.map((reason) => reason.id);
 
-        const ai = await generateComplaint(review, config.allowed_reasons, {
+        const ai = await generateComplaint(review, reasonIds, {
           system_prompt: config.system_prompt,
           user_prompt: config.user_prompt,
           manager,
           previousText,
         });
         if (!ai) continue;
-        const { reason_id: reasonId, explanation } = ai;
+        let { reason_id: reasonId, explanation } = ai;
+        if (!reasonIds.includes(reasonId)) reasonId = defaultReasonId(reasonIds);
 
         const complaintId = createComplaint({
           review_id: review.id,
@@ -376,7 +515,16 @@ export async function POST(req: NextRequest) {
       // Dry-run остаётся синхронным — быстрый предпросмотр AI
       if (json.dry_run) {
         const config = getComplaintsConfig(account);
-        const reasons = json.reason_id ? [json.reason_id] : config.allowed_reasons;
+        const preferredReasons = json.reason_id ? [Number(json.reason_id)] : config.allowed_reasons;
+        const available = await fetchAvailableComplaintReasons(account, review.wb_review_id);
+        if (!available.ok) {
+          return NextResponse.json({ error: `WB reasons HTTP ${available.status}: ${available.body}` }, { status: 502 });
+        }
+        const textReasons = getTextComplaintReasons(available.reasons, preferredReasons);
+        if (textReasons.length === 0) {
+          return NextResponse.json({ error: reasonErrorMessage(review.wb_review_id, available.reasons, preferredReasons) }, { status: 400 });
+        }
+        const reasons = textReasons.map((reason) => reason.id);
         const managers = config.managers?.length ? config.managers : [{ name: "Default", style: "" }];
         const manager = managers[Math.floor(Math.random() * managers.length)];
         const previousText = getLastComplaintByManager(account.id, manager.name);
@@ -402,37 +550,48 @@ export async function POST(req: NextRequest) {
         });
       }
 
+      const config = getComplaintsConfig(account);
+      const preferredReasons = json.reason_id ? [Number(json.reason_id)] : config.allowed_reasons;
+      const available = await fetchAvailableComplaintReasons(account, review.wb_review_id);
+      if (!available.ok) {
+        return NextResponse.json({ error: `WB reasons HTTP ${available.status}: ${available.body}` }, { status: 502 });
+      }
+      const textReasons = getTextComplaintReasons(available.reasons, preferredReasons);
+      if (textReasons.length === 0) {
+        return NextResponse.json({ error: reasonErrorMessage(review.wb_review_id, available.reasons, preferredReasons) }, { status: 400 });
+      }
+      const reasonIds = textReasons.map((reason) => reason.id);
+
       // Создаём pending-запись сразу
       const complaintId = createComplaint({
         review_id: review.id,
         account_id: account.id,
         wb_review_id: review.wb_review_id,
-        complaint_reason_id: json.reason_id || 0,
+        complaint_reason_id: reasonIds.includes(Number(json.reason_id)) ? Number(json.reason_id) : defaultReasonId(reasonIds),
         explanation: json.explanation || "",
         manager_name: "",
       });
       updateReviewComplaintStatus(review.id, "pending");
 
       // Запускаем обработку на фоне (не await). Клиент сразу получает 202.
-      // Внутри — вызов Claude (с retry) + отправка на WB (с retry) + обновление БД.
+      // Внутри — вызов Codex gateway (с retry) + отправка на WB (с retry) + обновление БД.
       (async () => {
         const MAX_TRIES = 3;
         const RETRY_DELAY_MS = 15000;
         const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
         try {
-          const config = getComplaintsConfig(account);
-          let reasonId = json.reason_id;
+          let reasonId = reasonIds.includes(Number(json.reason_id)) ? Number(json.reason_id) : undefined;
           let explanation = json.explanation;
           let managerName = "";
 
           if (!reasonId || !explanation) {
-            const reasons = json.reason_id ? [json.reason_id] : config.allowed_reasons;
+            const reasons = reasonId ? [reasonId] : reasonIds;
             const managers = config.managers?.length ? config.managers : [{ name: "Default", style: "" }];
             const manager = managers[Math.floor(Math.random() * managers.length)];
             const previousText = getLastComplaintByManager(account.id, manager.name);
 
-            // Retry Claude generation: SSH до claude-cli VM бывает flaky
+            // Retry AI generation: Codex gateway can be slow while spawning codex exec.
             let ai = null;
             let lastError = "";
             for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
@@ -444,7 +603,7 @@ export async function POST(req: NextRequest) {
               });
               if (ai) break;
               lastError = `attempt ${attempt}/${MAX_TRIES} failed`;
-              console.log(`[complaint ${complaintId}] Claude ${lastError}`);
+              console.log(`[complaint ${complaintId}] AI ${lastError}`);
               if (attempt < MAX_TRIES) await sleep(RETRY_DELAY_MS);
             }
             if (!ai) {
@@ -453,10 +612,12 @@ export async function POST(req: NextRequest) {
               return;
             }
             reasonId = reasonId || ai.reason_id;
+            if (!reasonIds.includes(reasonId)) reasonId = defaultReasonId(reasonIds);
             explanation = explanation || ai.explanation;
             managerName = manager.name;
             updateComplaintContent(complaintId, reasonId, explanation, managerName);
           }
+          if (!reasonId) reasonId = defaultReasonId(reasonIds);
 
           // Retry WB submit: API может вернуть 5xx или timeout
           let wbResult: { ok: boolean; status: number; body: string } | null = null;

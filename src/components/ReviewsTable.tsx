@@ -79,7 +79,7 @@ function ComplaintCell({ reviewId, complaintStatus, complainingId, onComplaint }
     );
   }
 
-  if (complaintStatus) {
+  if (complaintStatus && complaintStatus !== "error") {
     const info = COMPLAINT_LABELS[complaintStatus];
     return (
       <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${info?.cls || "bg-[var(--border)] text-[var(--text-muted)]"}`}>
@@ -94,9 +94,13 @@ function ComplaintCell({ reviewId, complaintStatus, complainingId, onComplaint }
     <span className="relative inline-block">
       <button
         onClick={() => setShowConfirm(true)}
-        className="text-[10px] px-2 py-1 rounded border border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors whitespace-nowrap"
+        className={`text-[10px] px-2 py-1 rounded border transition-colors whitespace-nowrap ${
+          complaintStatus === "error"
+            ? "border-amber-500/50 text-amber-300 hover:border-amber-300 hover:text-amber-200"
+            : "border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
+        }`}
       >
-        Жалоба
+        {complaintStatus === "error" ? "Повторить" : "Жалоба"}
       </button>
       {showConfirm && (
         <>

@@ -80,7 +80,7 @@ export function exportShipmentExcel(
     "Всего на нашем складе",
   ];
   for (const region of regions) {
-    const whName = region.warehouses[0] || region.shortName;
+    const whName = region.selectedWarehouse || region.warehouses[0] || region.shortName;
     const short = whName.includes("(") ? whName.split("(")[0].trim() : whName;
     headers.push(short, "Штук");
   }

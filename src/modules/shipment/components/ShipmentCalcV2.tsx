@@ -13,8 +13,9 @@ import { WarehouseBreakdown } from "./WarehouseBreakdown";
 import type { TrendResult } from "@/modules/shipment/lib/trend-engine";
 import { InfoTip } from "@/components/Tooltip";
 import { packItems, unitVolumeLiters, type PackingItem, type BoxConfig } from "@/lib/packing-engine";
-import { PackingSummaryTable, aggregatePackingByRegion, type SummaryArticle } from "./PackingSummaryTable";
+import { PackingSummaryTable, aggregatePackingByRegion, type PackingSummaryEditableValues, type SummaryArticle } from "./PackingSummaryTable";
 import { ArticleMultiSelect } from "./ArticleMultiSelect";
+import { buildWarehouseStockByBarcode } from "@/modules/shipment/lib/warehouse-ready-stock";
 
 const V2_BOX_ROUNDING_OPTIONS = Array.from({ length: 10 }, (_, i) => Math.round((i + 1) * 10) / 100);
 
@@ -130,7 +131,7 @@ function WeeklyChart({ trend }: { trend: TrendResult }) {
 // ─── Main Component ─────────────────────────────────────────
 
 export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "v1" | "v2" }) {
-  const { stock, orderAggregates, products, settings, overrides, updateSettings, isLoaded } = useData();
+  const { stock, orderAggregates, products, warehouseReadyStock, settings, overrides, updateSettings, isLoaded } = useData();
   const effectiveRegions = useEffectiveRegions();
   const getBuyout = useEffectiveBuyout();
   const [selectedArticles, setSelectedArticles] = useState<Set<string>>(new Set());
@@ -142,6 +143,11 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
   const [v2BoxRounding, setV2BoxRounding] = useState<number>(settings.v2RoundTo ?? 1);
   const [v2UnitRounding, setV2UnitRounding] = useState<number>(settings.v2UnitRounding ?? 1);
   const [v2ViewMode, setV2ViewMode] = useState<"units" | "boxes">((settings.v2ViewMode as "units" | "boxes") ?? "units");
+  const [v2EditableValues, setV2EditableValues] = useState<PackingSummaryEditableValues>({
+    stockByBarcode: {},
+    shipmentByKey: {},
+    sampleByKey: {},
+  });
 
   React.useEffect(() => {
     if (settings.v2RoundTo !== undefined) setV2BoxRounding(settings.v2RoundTo);
@@ -232,33 +238,6 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
     }
     return { effectiveRows: [], effectiveRowsV1: [], effectiveTrend: null, effectiveRegionConfigs: effectiveRegions };
   }, [isAllMode, allCalculations, singleCalc, effectiveRegions]);
-
-  if (!isLoaded) {
-    return (
-      <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-12 text-center">
-        <div className="flex items-center justify-center gap-3 mb-4">
-          <svg className="animate-spin h-8 w-8 text-[var(--accent)]" viewBox="0 0 24 24" fill="none">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
-        </div>
-        <p className="text-xl font-medium">Загрузка данных...</p>
-        <p className="text-base text-[var(--text-muted)] mt-2">Подождите, идёт загрузка остатков и заказов</p>
-      </div>
-    );
-  }
-
-  if (stock.length === 0 || sortedProducts.length === 0) {
-    return (
-      <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-12 text-center">
-        <p className="text-4xl mb-4">📦</p>
-        <p className="text-xl font-medium">Нет данных для расчёта</p>
-        <p className="text-base text-[var(--text-muted)] mt-2">
-          Загрузите Excel файл на странице &quot;Загрузка данных&quot;
-        </p>
-      </div>
-    );
-  }
 
   const rows = mode === "v2" ? effectiveRows : effectiveRowsV1;
   const trend = effectiveTrend;
@@ -407,6 +386,24 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
   const v2Articles = v2ViewMode === "boxes" ? v2ArticlesBoxes : v2ArticlesUnits;
   const v2SummaryRegions = effectiveRegionConfigs.map(r => ({ id: r.id, shortName: r.shortName }));
 
+  const v2WarehouseStock = useMemo(() => buildWarehouseStockByBarcode(
+    warehouseReadyStock,
+    v2Articles.flatMap((article) => article.sizes.map((sizeRow) => ({
+      articleWB: article.articleWB,
+      size: sizeRow.item.size,
+      barcode: sizeRow.item.barcode,
+      perBox: sizeRow.item.perBox,
+    }))),
+    v2ViewMode === "boxes" ? "boxes" : "units",
+  ), [warehouseReadyStock, v2Articles, v2ViewMode]);
+
+  React.useEffect(() => {
+    setV2EditableValues((prev) => ({
+      ...prev,
+      stockByBarcode: { ...prev.stockByBarcode, ...v2WarehouseStock.values },
+    }));
+  }, [v2WarehouseStock.syncKey]);
+
   const v2RowMeta = useMemo(() => {
     const map: Record<string, { plan: number; fact: number; need: number }> = {};
     for (const row of effectiveRows) {
@@ -426,8 +423,36 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
       viewMode: v2ViewMode,
       rowMeta: v2RowMeta,
       boxRounding: v2BoxRounding,
+      editableValues: v2EditableValues,
     });
-  }, [allCalculations, v2Articles, v2SummaryRegions, v2ViewMode, v2RowMeta, v2BoxRounding]);
+  }, [allCalculations, v2Articles, v2SummaryRegions, v2ViewMode, v2RowMeta, v2BoxRounding, v2EditableValues]);
+
+  if (!isLoaded) {
+    return (
+      <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-12 text-center">
+        <div className="flex items-center justify-center gap-3 mb-4">
+          <svg className="animate-spin h-8 w-8 text-[var(--accent)]" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+        </div>
+        <p className="text-xl font-medium">Загрузка данных...</p>
+        <p className="text-base text-[var(--text-muted)] mt-2">Подождите, идёт загрузка остатков и заказов</p>
+      </div>
+    );
+  }
+
+  if (stock.length === 0 || sortedProducts.length === 0) {
+    return (
+      <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-12 text-center">
+        <p className="text-4xl mb-4">📦</p>
+        <p className="text-xl font-medium">Нет данных для расчёта</p>
+        <p className="text-base text-[var(--text-muted)] mt-2">
+          Загрузите Excel файл на странице &quot;Загрузка данных&quot;
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -438,6 +463,7 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
           selected={selectedArticles}
           onChange={setSelectedArticles}
           orderCounts={orderTotals}
+          overrides={overrides}
         />
 
         <div className="flex items-center gap-2 text-sm text-[var(--text-muted)]">
@@ -552,7 +578,16 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
               {v2ViewMode === "boxes" ? "📦 Кораба" : "🔢 Штуки"} — сводная по артикулам
             </h3>
           </div>
-          <PackingSummaryTable articles={v2Articles} regions={v2SummaryRegions} viewMode={v2ViewMode} rowMeta={v2RowMeta} boxRounding={v2BoxRounding} />
+          <PackingSummaryTable
+            articles={v2Articles}
+            regions={v2SummaryRegions}
+            viewMode={v2ViewMode}
+            rowMeta={v2RowMeta}
+            boxRounding={v2BoxRounding}
+            editableValues={v2EditableValues}
+            onEditableValuesChange={setV2EditableValues}
+            stockStatusByBarcode={v2WarehouseStock.statuses}
+          />
         </div>
       )}
 

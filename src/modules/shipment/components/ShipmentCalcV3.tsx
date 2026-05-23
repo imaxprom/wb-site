@@ -12,6 +12,7 @@ import { InfoTip } from "@/components/Tooltip";
 import { calculateTrend, type TrendResult } from "@/modules/shipment/lib/trend-engine";
 import type { ShipmentRowExtended } from "@/types";
 import { ArticleMultiSelect } from "./ArticleMultiSelect";
+import { buildWarehouseStockByBarcode } from "@/modules/shipment/lib/warehouse-ready-stock";
 
 // ─── Packing Visualization ──────────────────────────────────
 
@@ -452,7 +453,7 @@ function TrendBadge({ trend, v2Need, v3Total }: { trend: TrendResult; v2Need?: n
 // ─── Main Component ─────────────────────────────────────────
 
 export default function ShipmentCalcV3() {
-  const { stock, orderAggregates, products, settings, overrides, updateSettings, isLoaded } = useData();
+  const { stock, orderAggregates, products, warehouseReadyStock, settings, overrides, updateSettings, isLoaded } = useData();
   const effectiveRegions = useEffectiveRegions();
   const getBuyout = useEffectiveBuyout();
   const [selectedArticles, setSelectedArticles] = useState<Set<string>>(new Set());
@@ -465,6 +466,7 @@ export default function ShipmentCalcV3() {
   const [shipmentsPerMonth, setShipmentsPerMonth] = useState(settings.shipmentsPerMonth ?? 4);
   const [minUnits, setMinUnits] = useState(settings.minUnits ?? 10);
   const [roundTo, setRoundTo] = useState(settings.roundTo ?? 5);
+  const [stockByBarcode, setStockByBarcode] = useState<Record<string, string>>({});
 
   // Sync local state when settings load from API
   React.useEffect(() => {
@@ -565,6 +567,21 @@ export default function ShipmentCalcV3() {
     return { rows: [] as ShipmentRowExtended[], trend: null, regionConfigs: effectiveRegions };
   }, [isAllMode, allCalcs, singleCalc, effectiveRegions, activeProducts]);
 
+  const warehouseStock = useMemo(() => buildWarehouseStockByBarcode(
+    warehouseReadyStock,
+    rows.map((row) => ({
+      articleWB: row.articleWB,
+      size: row.size,
+      barcode: row.barcode,
+      perBox: row.perBox,
+    })),
+    "boxes",
+  ), [warehouseReadyStock, rows]);
+
+  React.useEffect(() => {
+    setStockByBarcode((prev) => ({ ...prev, ...warehouseStock.values }));
+  }, [warehouseStock.syncKey]);
+
   // Threshold only uses minUnits — frequency is informational only
 
   // Pack items for each region (all products or single)
@@ -623,8 +640,8 @@ export default function ShipmentCalcV3() {
   // Export handler
   const handleExport = useCallback(() => {
     if (allCalcs.length === 0) return;
-    exportShipmentExcelV2(allCalcs, overrides);
-  }, [allCalcs, overrides]);
+    exportShipmentExcelV2(allCalcs, overrides, "ИП Беликова А.Л", stockByBarcode);
+  }, [allCalcs, overrides, stockByBarcode]);
 
   // Per-position surplus/deficit (must be before early return — React hooks rule)
   const { totalSurplus, totalDeficit: totalDeficitQty } = useMemo(() => {
@@ -686,6 +703,7 @@ export default function ShipmentCalcV3() {
           selected={selectedArticles}
           onChange={setSelectedArticles}
           orderCounts={orderTotals}
+          overrides={overrides}
         />
 
         <label className="flex items-center gap-2 text-sm text-[var(--text-muted)] cursor-pointer select-none">
@@ -901,6 +919,7 @@ export default function ShipmentCalcV3() {
               <th className="num">Шт/кор</th>
               <th className="num">Объём 1 шт (л)</th>
               <th className="num">На ВБ</th>
+              <th className="num">Всего на складе</th>
               <th className="num">V2 план</th>
               {regionConfigs.map((r) => (
                 <th key={r.id} className="num border-l border-[var(--border)]">{r.shortName} нужно</th>
@@ -912,6 +931,8 @@ export default function ShipmentCalcV3() {
               const currArticle = row.articleWB;
               const prevArticle = idx > 0 ? rows[idx - 1].articleWB : null;
               const isFirstOfArticle = !prevArticle || prevArticle !== currArticle;
+              const stockStatus = warehouseStock.statuses[row.barcode];
+              const isStockWarning = stockStatus?.status === "warning" || stockStatus?.status === "missing";
               return (
               <tr key={row.barcode} className={isAllMode && isFirstOfArticle && idx > 0 ? "border-t-2 border-[var(--accent)]/30" : ""}>
                 {isAllMode && <td className="font-mono">{isFirstOfArticle ? currArticle || "—" : ""}</td>}
@@ -921,6 +942,19 @@ export default function ShipmentCalcV3() {
                 <td className="num">{row.perBox}</td>
                 <td className="num">{unitVolumeLiters(boxConfig, row.perBox).toFixed(2)}</td>
                 <td className="num">{formatNumber(row.totalOnWB)}</td>
+                <td
+                  className="num !p-0"
+                  title={stockStatus?.reason}
+                  style={{ background: isStockWarning ? "rgba(248,113,113,0.12)" : undefined }}
+                >
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={stockByBarcode[row.barcode] ?? ""}
+                    onChange={(e) => setStockByBarcode((prev) => ({ ...prev, [row.barcode]: e.target.value }))}
+                    className={`w-full bg-transparent px-2 py-1.5 text-center text-xs focus:outline-none focus:bg-[var(--bg)] ${isStockWarning ? "border border-[#f87171] text-[#fca5a5]" : ""}`}
+                  />
+                </td>
                 <td className="num font-medium" style={{ color: trend?.direction === "up" ? "var(--success)" : trend?.direction === "down" ? "var(--danger)" : "var(--text)" }}>
                   {formatNumber(row.totalOrders30d, 1)}
                 </td>

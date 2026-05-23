@@ -650,6 +650,27 @@ export default function ShipmentSettings() {
 
                 {/* Warehouses — read-only, auto-populated from WB Tariffs */}
                 <div className="mt-3">
+                  <div className="mb-3 rounded-lg border border-[var(--accent)]/20 bg-[var(--accent)]/5 px-3 py-2">
+                    <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-[var(--accent)]">
+                      Склад отгрузки
+                    </label>
+                    <select
+                      value={group.selectedWarehouse || ""}
+                      onChange={(e) => updateGroup(group.id, { selectedWarehouse: e.target.value || undefined })}
+                      className="w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text)] focus:border-[var(--accent)] focus:outline-none"
+                    >
+                      <option value="">Авто: {group.districts.map(shortDistrict).join("+") || group.shortName}</option>
+                      {group.selectedWarehouse && !group.warehouses.includes(group.selectedWarehouse) && (
+                        <option value={group.selectedWarehouse}>{group.selectedWarehouse}</option>
+                      )}
+                      {group.warehouses.map((wh) => (
+                        <option key={wh} value={wh}>{wh}</option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-[10px] leading-4 text-[var(--text-muted)]">
+                      Это название пойдёт в таблицу отгрузки вместо подписи ФО. Расчёт процента и остатка продолжает использовать все склады группы.
+                    </p>
+                  </div>
                   <p className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wide mb-1.5">
                     Склады ({group.warehouses.length})
                   </p>

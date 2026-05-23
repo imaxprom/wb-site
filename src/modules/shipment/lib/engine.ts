@@ -141,7 +141,8 @@ export function toRegionConfigs(
     return groups.map((g) => ({
       id: g.id,
       name: g.name,
-      shortName: g.shortName,
+      shortName: g.selectedWarehouse || g.shortName,
+      selectedWarehouse: g.selectedWarehouse,
       percentage: g.manualPercentage,
       warehouses: g.warehouses,
     }));
@@ -182,7 +183,8 @@ export function toRegionConfigs(
     return {
       id: g.id,
       name: g.name,
-      shortName: dynName || g.shortName,
+      shortName: g.selectedWarehouse || dynName || g.shortName,
+      selectedWarehouse: g.selectedWarehouse,
       percentage: total > 0 ? groupOrders / total : g.manualPercentage,
       warehouses: g.warehouses,
     };
@@ -234,7 +236,7 @@ function calculateBoxes(
   perBox: number
 ): { boxes: number; pieces: number } {
   const deficit = plan - fact;
-  if (deficit <= 0) return { boxes: 0, pieces: 0 };
+  if (deficit <= 0 || perBox <= 0) return { boxes: 0, pieces: 0 };
 
   const rawBoxes = deficit / perBox;
   const boxes = Math.ceil(rawBoxes / 0.5) * 0.5;

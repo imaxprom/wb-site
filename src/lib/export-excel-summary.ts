@@ -3,7 +3,7 @@
  * Нейтральная палитра, чёрные рамки, чередование бело-зелёного, вшитые формулы.
  */
 import XLSX from "xlsx-js-style";
-import type { SummaryArticle } from "@/modules/shipment/components/PackingSummaryTable";
+import type { PackingSummaryEditableValues, SummaryArticle } from "@/modules/shipment/components/PackingSummaryTable";
 
 interface ExportInput {
   articles: SummaryArticle[];
@@ -11,6 +11,7 @@ interface ExportInput {
   viewMode: "units" | "boxes";
   rowMeta?: Record<string, { plan: number; fact: number; need: number }>;
   boxRounding?: number;
+  editableValues?: PackingSummaryEditableValues;
 }
 
 // ─── Styles ────────────────────────────────────────────────
@@ -65,8 +66,21 @@ function roundUnits(units: number): number {
   return Math.round(units);
 }
 
+function parseEditableNumber(value: string | undefined, allowDecimal = false): number | null {
+  if (value === undefined || value.trim() === "") return null;
+  const normalized = allowDecimal ? value.replace(",", ".") : value;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseStockNumber(value: string | undefined): number | null {
+  if (value === undefined || value.trim() === "") return 0;
+  const parsed = Number(value.trim().replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 // ─── Main ──────────────────────────────────────────────────
-export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMeta, boxRounding = 0.5 }: ExportInput) {
+export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMeta, boxRounding = 0.5, editableValues }: ExportInput) {
   if (articles.length === 0) return;
   const isBoxes = viewMode === "boxes";
 
@@ -185,8 +199,8 @@ export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMet
       // Формула MAX(0,Plan-Fact) была бы неверной — она схлопывает регионы в одну сумму
       // и излишки в одном регионе искусственно компенсируют дефицит в другом.
       setV(ws, r, 6, meta ? Math.round(meta.need) : null, bold);
-      // Stock — user input (empty grey)
-      setV(ws, r, 7, null, gray);
+      const stock = parseStockNumber(editableValues?.stockByBarcode[sr.item.barcode]);
+      setV(ws, r, 7, stock, gray);
 
       // Regions with thick side borders
       let computedShipBoxes = 0;
@@ -194,8 +208,10 @@ export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMet
       for (let i = 0; i < N; i++) {
         const region = regions[i];
         const qty = sr.qtyByRegion[region.id] || 0;
+        const editableKey = `${sr.item.barcode}-${region.id}`;
+        const editableShipment = parseEditableNumber(editableValues?.shipmentByKey[editableKey], isBoxes);
         if (isBoxes) {
-          const boxes = perBox > 0 ? roundBoxes(qty / perBox, boxRounding) : 0;
+          const boxes = editableShipment ?? (perBox > 0 ? roundBoxes(qty / perBox, boxRounding) : 0);
           const boxesCol = 8 + i * 2;
           const unitsCol = boxesCol + 1;
           const units = roundUnits(boxes * perBox);
@@ -205,7 +221,7 @@ export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMet
           computedShipUnits += units;
         } else {
           const col = 8 + i;
-          const units = roundUnits(qty);
+          const units = roundUnits(editableShipment ?? qty);
           setV(ws, r, col, units > 0 ? units : null, { ...(units > 0 ? bold : muted), border: { ...baseBorder, left: BORDER_THICK, right: BORDER_THICK } });
           computedShipUnits += units;
         }
@@ -227,7 +243,7 @@ export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMet
       const deltaBorder = { ...baseBorder, right: BORDER_THICK };
       const stockRef = ref(r, 7);
       const shipRefForSverka = isBoxes ? ref(r, SHIP_BOXES_C) : ref(r, SHIP_UNITS_C);
-      setF(ws, r, SVERKA_C, `=IF(${stockRef}="","",${stockRef}-${shipRefForSverka})`, 0, { ...bold, border: sverkaBorder });
+      setF(ws, r, SVERKA_C, `=${stockRef}-${shipRefForSverka}`, 0, { ...bold, border: sverkaBorder });
 
       setF(ws, r, DELTA_C, `=${ref(r, SHIP_UNITS_C)}-${ref(r, 6)}`, meta ? Math.round(computedShipUnits - meta.need) : 0, { ...bold, border: deltaBorder });
 
@@ -247,10 +263,12 @@ export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMet
     // Region cells empty-editable with thick side borders
     for (let i = 0; i < N; i++) {
       if (isBoxes) {
-        setV(ws, r, 8 + i * 2, null, { ...sampleStyle, border: { ...BORDER_ALL_THIN, left: BORDER_THICK } });
+        const sample = parseEditableNumber(editableValues?.sampleByKey[`${art.articleWB}-${regions[i].id}`], true);
+        setV(ws, r, 8 + i * 2, sample, { ...sampleStyle, border: { ...BORDER_ALL_THIN, left: BORDER_THICK } });
         setV(ws, r, 8 + i * 2 + 1, null, { ...sampleStyle, border: { ...BORDER_ALL_THIN, right: BORDER_THICK } });
       } else {
-        setV(ws, r, 8 + i, null, { ...sampleStyle, border: { ...BORDER_ALL_THIN, left: BORDER_THICK, right: BORDER_THICK } });
+        const sample = parseEditableNumber(editableValues?.sampleByKey[`${art.articleWB}-${regions[i].id}`]);
+        setV(ws, r, 8 + i, sample, { ...sampleStyle, border: { ...BORDER_ALL_THIN, left: BORDER_THICK, right: BORDER_THICK } });
       }
     }
     setV(ws, r, SVERKA_C, null, { ...sampleStyle, border: { ...BORDER_ALL_THIN, left: BORDER_THICK, right: BORDER_THICK } });

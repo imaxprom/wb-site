@@ -28,7 +28,8 @@ body {
 
 /* Table styles */
 .data-table-wrapper {
-  overflow-x: auto;
+  max-width: 100%;
+  overflow: auto;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -39,7 +40,7 @@ body {
   min-width: 600px;
 }
 
-.data-table th {
+.data-table > thead > tr > th {
   background: var(--bg-card);
   color: var(--text-muted);
   font-weight: 600;
@@ -54,19 +55,55 @@ body {
   z-index: 10;
 }
 
-.data-table td {
+.data-table > tbody > tr > td {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
 
-.data-table tr:hover td {
+.data-table > tbody > tr:hover > td {
   background: var(--bg-card-hover);
+}
+
+.data-table > tbody > tr > td.warehouse-expanded-cell {
+  padding: 0;
+  white-space: normal;
+  background: var(--bg);
+}
+
+.data-table > tbody > tr:hover > td.warehouse-expanded-cell {
+  background: var(--bg);
 }
 
 .data-table .num {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.data-table .text-center {
+  text-align: center;
+}
+
+.logistics-table th,
+.logistics-table td {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.logistics-table th:not(:first-child),
+.logistics-table td:not(:first-child) {
+  text-align: center;
+}
+
+.logistics-table thead th:first-child {
+  left: 0;
+  top: 0;
+  z-index: 40;
+}
+
+.logistics-table tbody td:first-child {
+  left: 0;
+  z-index: 20;
 }
 
 .cell-positive { color: var(--success); }
@@ -106,4 +143,19 @@ details summary:focus { outline: none; }
 }
 .animate-progress-indeterminate {
   animation: progress-indeterminate 1.5s ease-in-out infinite;
+}
+
+@keyframes finance-cogs-alert-blink {
+  0%, 100% {
+    border-color: var(--danger);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5);
+  }
+  50% {
+    border-color: #fca5a5;
+    box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.16);
+  }
+}
+
+.finance-cogs-alert {
+  animation: finance-cogs-alert-blink 1.15s ease-in-out infinite;
 }

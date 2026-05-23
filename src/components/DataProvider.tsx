@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useReducer, useEffect, useCallback } from "react";
-import type { StockItem, OrderRecord, OrderAggregates, Product, ProductOverrides } from "@/types";
+import type { StockItem, OrderRecord, OrderAggregates, Product, ProductOverrides, WarehouseReadyStockRow } from "@/types";
 import type { AppSettings } from "@/types";
 import { getDefaultRegions, getDefaultRegionGroups } from "@/modules/shipment/lib/engine";
 
@@ -12,6 +12,7 @@ interface DataState {
   orders: OrderRecord[];
   orderAggregates: OrderAggregates | null;
   products: Product[];
+  warehouseReadyStock: WarehouseReadyStockRow[];
   uploadDate: string | null;
   settings: AppSettings;
   overrides: ProductOverrides;
@@ -23,6 +24,7 @@ const INITIAL_STATE: DataState = {
   orders: [],
   orderAggregates: null,
   products: [],
+  warehouseReadyStock: [],
   uploadDate: null,
   settings: { buyoutRate: 0.75, regions: getDefaultRegions(), regionGroups: getDefaultRegionGroups(), buyoutMode: "auto", regionMode: "auto" },
   overrides: {},
@@ -33,7 +35,7 @@ const INITIAL_STATE: DataState = {
 
 type DataAction =
   | { type: "INIT"; data: Omit<DataState, "isLoaded"> }
-  | { type: "SET_DATA"; stock: StockItem[]; orders: OrderRecord[]; orderAggregates: OrderAggregates | null; products: Product[]; uploadDate: string }
+  | { type: "SET_DATA"; stock: StockItem[]; orders: OrderRecord[]; orderAggregates: OrderAggregates | null; products: Product[]; warehouseReadyStock: WarehouseReadyStockRow[]; uploadDate: string }
   | { type: "UPDATE_OVERRIDE"; articleWB: string; customName?: string; barcode?: string; perBox?: number; disabled?: boolean }
   | { type: "UPDATE_SETTINGS"; settings: Partial<AppSettings> }
   | { type: "CLEAR" };
@@ -50,6 +52,7 @@ function dataReducer(state: DataState, action: DataAction): DataState {
         orders: action.orders,
         orderAggregates: action.orderAggregates,
         products: action.products,
+        warehouseReadyStock: action.warehouseReadyStock,
         uploadDate: action.uploadDate,
       };
 
@@ -84,6 +87,7 @@ function dataReducer(state: DataState, action: DataAction): DataState {
         orders: [],
         orderAggregates: null,
         products: [],
+        warehouseReadyStock: [],
         uploadDate: null,
         // ВАЖНО: overrides НЕ сбрасываются!
       };
@@ -100,6 +104,7 @@ interface DataContextType {
   orders: OrderRecord[];
   orderAggregates: OrderAggregates | null;
   products: Product[];
+  warehouseReadyStock: WarehouseReadyStockRow[];
   uploadDate: string | null;
   settings: AppSettings;
   overrides: ProductOverrides;
@@ -137,17 +142,19 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    const [aggRes, stockRes, productsRes, metaRes] = await Promise.all([
+    const [aggRes, stockRes, productsRes, warehouseRes, metaRes] = await Promise.all([
       fetch(`/api/data/orders-aggregated?days=${days}`),
       fetch("/api/data/stock"),
       fetch("/api/data/products"),
+      fetch("/api/warehouse/stock"),
       fetch("/api/data/meta"),
     ]);
 
-    const [orderAggregates, stock, products, meta] = await Promise.all([
+    const [orderAggregates, stock, products, warehouse, meta] = await Promise.all([
       aggRes.ok ? (aggRes.json() as Promise<OrderAggregates>) : Promise.resolve(null),
       stockRes.ok ? (stockRes.json() as Promise<StockItem[]>) : Promise.resolve([]),
       productsRes.ok ? (productsRes.json() as Promise<Product[]>) : Promise.resolve([]),
+      warehouseRes.ok ? (warehouseRes.json() as Promise<{ rows?: WarehouseReadyStockRow[] }>) : Promise.resolve({ rows: [] }),
       metaRes.ok ? (metaRes.json() as Promise<{ uploadDate: string | null }>) : Promise.resolve({ uploadDate: null }),
     ]);
 
@@ -157,6 +164,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       orders: [],
       orderAggregates,
       products,
+      warehouseReadyStock: warehouse.rows || [],
       uploadDate: meta.uploadDate || new Date().toISOString(),
     });
   }, []);
@@ -257,19 +265,21 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       try {
         const days = [28, 35, 42, 49, 56].includes(uploadDays) ? uploadDays : 28;
 
-        const [aggRes, stockRes, productsRes, metaRes] = await Promise.all([
+        const [aggRes, stockRes, productsRes, warehouseRes, metaRes] = await Promise.all([
           fetch(`/api/data/orders-aggregated?days=${days}`),
           fetch("/api/data/stock"),
           fetch("/api/data/products"),
+          fetch("/api/warehouse/stock"),
           fetch("/api/data/meta"),
         ]);
 
         if (cancelled) return;
 
-        const [orderAggregates, stock, products, meta] = await Promise.all([
+        const [orderAggregates, stock, products, warehouse, meta] = await Promise.all([
           aggRes.ok ? (aggRes.json() as Promise<OrderAggregates>) : Promise.resolve(null),
           stockRes.ok ? (stockRes.json() as Promise<StockItem[]>) : Promise.resolve([]),
           productsRes.ok ? (productsRes.json() as Promise<Product[]>) : Promise.resolve([]),
+          warehouseRes.ok ? (warehouseRes.json() as Promise<{ rows?: WarehouseReadyStockRow[] }>) : Promise.resolve({ rows: [] }),
           metaRes.ok ? (metaRes.json() as Promise<{ uploadDate: string | null }>) : Promise.resolve({ uploadDate: null }),
         ]);
 
@@ -283,6 +293,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
             orders: [],
             orderAggregates,
             products,
+            warehouseReadyStock: warehouse.rows || [],
             uploadDate: meta.uploadDate || "",
             settings,
             overrides,
@@ -297,6 +308,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
             orders: [],
             orderAggregates: null,
             products: [],
+            warehouseReadyStock: [],
             uploadDate: null,
             settings,
             overrides,
@@ -373,6 +385,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         orders: state.orders,
         orderAggregates: state.orderAggregates,
         products: state.products,
+        warehouseReadyStock: state.warehouseReadyStock,
         uploadDate: state.uploadDate,
         settings: state.settings,
         overrides: state.overrides,

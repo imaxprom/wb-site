@@ -3,6 +3,9 @@ export interface Product {
   articleWB: string;
   brand: string;
   category: string;
+  lengthCm?: number;
+  widthCm?: number;
+  heightCm?: number;
   sizes: SizeConfig[];
 }
 
@@ -24,6 +27,7 @@ export interface RegionConfig {
   id: string;
   name: string;
   shortName: string;
+  selectedWarehouse?: string;
   percentage: number;
   warehouses: string[];
 }
@@ -34,6 +38,7 @@ export interface RegionGroup {
   shortName: string;
   districts: string[]; // названия ФО: ['Центральный федеральный округ', ...]
   warehouses: string[];
+  selectedWarehouse?: string; // основной склад для отображения/формирования отгрузки
   manualPercentage: number; // ручной %
 }
 
@@ -49,6 +54,26 @@ export interface StockItem {
   inTransitReturns: number;
   totalOnWarehouses: number;
   warehouseStock: Record<string, number>;
+}
+
+export interface WarehouseReadyStockRow {
+  article_wb: string;
+  sheet_name: string;
+  size_label: string;
+  size_range: string;
+  barcode?: string | null;
+  barcode_match_status?: "matched" | "warning" | "missing";
+  barcode_match_reason?: string;
+  target_sales_45d?: number;
+  wb_stock_qty?: number;
+  warehouse_required_units?: number;
+  plan_pack_units?: number;
+  plan_pack_boxes?: number | null;
+  per_box: number | null;
+  filled_cells: number;
+  units_qty: number;
+  boxes_qty: number | null;
+  synced_at: string;
 }
 
 export interface OrderRecord {
@@ -177,6 +202,10 @@ export interface AppSettings {
   boxWidthCm?: number;
   boxHeightCm?: number;
   uploadDays?: number;
+  warehousePackingDays?: number;
+  warehousePackingMultiplier?: number;
+  logisticsSelectedWarehouseNames?: string[];
+  logisticsWarehouseLimit?: number;
   maxArticlesPerBox?: number;
   shipmentsPerMonth?: number;
   minUnits?: number;

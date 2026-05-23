@@ -44,3 +44,19 @@ export function getWbImageUrl(nmId: string | number, size: "small" | "medium" = 
 
   return `https://basket-${basket}.wbbasket.ru/vol${vol}/part${part}/${id}/images/${dimensions}/1.webp`;
 }
+
+export function getWbImageUrlCandidates(nmId: string | number, size: "small" | "medium" = "small"): string[] {
+  const id = typeof nmId === "string" ? parseInt(nmId, 10) : nmId;
+  if (isNaN(id) || id <= 0) return [];
+
+  const vol = Math.floor(id / 100000);
+  const part = Math.floor(id / 1000);
+  const basket = Number(getBasketNumber(vol));
+  const dimensions = size === "small" ? "c246x328" : "c516x688";
+  const baskets = [basket, basket + 1, basket - 1, basket + 2, basket - 2]
+    .filter((value) => value >= 1 && value <= 99);
+
+  return Array.from(new Set(baskets)).map((value) =>
+    `https://basket-${String(value).padStart(2, "0")}.wbbasket.ru/vol${vol}/part${part}/${id}/images/${dimensions}/1.webp`
+  );
+}

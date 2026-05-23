@@ -552,10 +552,12 @@
             "   → Разбиваем на недели по 7 дней",
             "   → Линейная регрессия → множитель (↗️ ×1.5 / ↘️ ×0.5)",
             "   → R² = точность прогноза (0-1)",
+            "   → Сводная таблица подтягивает готовый склад из /api/warehouse/stock в колонку «Всего на складе»: в режиме «Кораба» — короба, в режиме «Штуки» — штуки",
             "",
             "6. V3 — Умный (Smart Packing)",
             "   → V2 + укладка в физические короба",
             "   → Карточки: Smart коробов | На складе | Потребность | Баланс",
+            "   → Детализация по регионам подтягивает готовые короба склада в колонку «Всего на складе»",
             "   → Настройки: позиций/кор, отгрузок/мес, мін.штук, вид А/Б/В"
           ]
         },
@@ -565,6 +567,7 @@
           "items": [
             "Расчёт — переключатель V1 Стандарт / V2 Динамика / V3 Умный (по умолчанию V3)",
             "Товары — список артикулов, размеров, perBox. Можно редактировать имена и количество",
+            "perBox не подставляется автоматически по размеру: новые карточки WB импортируются с perBox=0, а реальное «шт/кор» берётся только из ручных product_overrides",
             "Загрузка данных — кнопка «Загрузить всё из WB» + селект периода + диапазон дат + статус",
             "Настройки отгрузки — % выкупа (авто/ручной), регионы (авто/ручной), размер короба"
           ]
@@ -576,6 +579,7 @@
             "Заказы → SQLite shipment_orders (накопительно, ON CONFLICT DO UPDATE — обновляет is_cancel)",
             "Остатки → SQLite shipment_stock (перезаписываются при каждой загрузке)",
             "Карточки → SQLite shipment_products (UPSERT)",
+            "Готовые короба склада → SQLite warehouse_ready_stock, читается через /api/warehouse/stock",
             "Настройки (выкуп, регионы, короб) → SQLite user_settings через /api/settings",
             "Overrides (имена, perBox, отключённые) → SQLite product_overrides через /api/overrides",
             "API-ключ WB → data/wb-api-key.txt через /api/settings/apikey",
@@ -590,12 +594,114 @@
             "% по регионам считается по ВСЕМ заказам (включая отмены)",
             "Заказы без ФО (СНГ: Беларусь, Казахстан, Армения ~4%) распределяются по складу отправления",
             "4 группы с динамическим shortName: \"ЦФО 26.4% + СЗФО 8.6%\" вместо статического \"ЦФО+СЗФО\"",
+            "В настройках каждой группы можно выбрать «Склад отгрузки»: это меняет подпись группы в таблице и Excel-отгрузке, но не меняет расчёт процентов и остатков по всем складам группы",
             "Итого всегда 100%"
           ]
         },
         {
           "type": "text",
           "content": "⚠️ Данные на сервере (SQLite), не в кеше браузера. Error Boundary: src/app/shipment/error.tsx."
+        }
+      ]
+    },
+    {
+      "id": "logistics",
+      "icon": "🚚",
+      "title": "Расчёт логистики",
+      "blocks": [
+        {
+          "type": "text",
+          "content": "Раздел /logistics считает складские тарифы и показатели локальности по товарам WB. Новейшие правки формулы ИЛ/ИРП и sidebar от 2026-05-22/23 выкачены на production 2026-05-23: production build и health-check прошли."
+        },
+        {
+          "type": "list",
+          "title": "API и данные",
+          "items": [
+            "GET /api/logistics/products — таблица товаров, объёмы, замеры, локальность, ИЛ/ИРП",
+            "GET /api/logistics/tariffs — WB acceptance coefficients, boxTypeID=2 для коробов и boxTypeID=5 для паллет",
+            "GET /api/logistics/alerts — критичные замеры для badge sidebar",
+            "shipment_orders — база заказов для складской и региональной структуры",
+            "warehouse_remains_volume — объём из отчёта остатков WB",
+            "warehouse_measurements — замеры WB по товарам"
+          ]
+        },
+        {
+          "type": "list",
+          "title": "Локальность и индексы",
+          "items": [
+            "Отчётная локальность считается по всем регионам/странам и сверяется с WB «Поставки по регионам»",
+            "Тарифные ИЛ/ИРП считаются отдельно по RF-only заказам",
+            "Период для тарифных индексов — 13 полных завершённых недель, текущая неделя исключается",
+            "Формулу Wildberries не подгонять под целевое число; менять можно только состав заказов/исключения, если это подтверждается данными WB",
+            "Верхний ИЛ форматируется как 1,00; отдельная карточка показывает «Локальность отчёта WB»"
+          ]
+        },
+        {
+          "type": "list",
+          "title": "UI",
+          "items": [
+            "Таблица агрегируется по уникальному WB артикулу, не по размеру/баркоду",
+            "По каждому артикулу показываются ИЛ/ИРП, RF locality и report locality",
+            "Главный объём расчёта — объём карточки length × width × height / 1000; paid_storage.volume остаётся fallback",
+            "Последние 3 замера WB показываются в строке товара; превышение замера над карточкой подсвечивается красным",
+            "Выбор складов и лимит колонок сохраняются в user_settings через /api/settings, не в localStorage",
+            "Sidebar по локальной правке сворачивается по умолчанию, раскрывается по hover и фиксируется pin-кнопкой"
+          ]
+        },
+        {
+          "type": "list",
+          "title": "Автосинк",
+          "items": [
+            "scripts/logistics-volume-sync.js --source remains — 06:00, 09:00, 12:00, 15:00, 18:00, 21:00 МСК",
+            "scripts/logistics-volume-sync.js --source measurements — 06:10, 09:10, 12:10, 15:10, 18:10, 21:10 МСК",
+            "Первый ночной production sync после rollout прошёл: 2026-05-23 01:00/01:10 UTC"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "warehouse",
+      "icon": "🏬",
+      "title": "Склад",
+      "blocks": [
+        {
+          "type": "text",
+          "content": "Раздел /warehouse добавлен локально как рабочая зона складского учёта. На первом этапе реализован импорт готовых коробов из Google Sheets в локальную SQLite. Основной синк читает таблицу без записи обратно; отдельный сервисный скрипт используется только для аккуратного обновления формул в самой Google-таблице."
+        },
+        {
+          "type": "list",
+          "title": "План подключения",
+          "items": [
+            "Google Sheets остаётся источником ручного складского учёта на переходный период",
+            "Service Account получает доступ только к нужной таблице",
+            "scripts/warehouse-google-inspect.js проверяет структуру листов и печатает расчёт в консоль",
+            "scripts/warehouse-google-sync.js читает все листы и сохраняет готовые короба в SQLite",
+            "scripts/warehouse-google-formulas.js обновляет формулы правого блока «Короб склад»: SUM(остатки по размеру) / штук в коробке",
+            "GET /api/warehouse/stock отдаёт агрегированные данные для страницы /warehouse",
+            "GET /api/warehouse/stock обогащает складские строки баркодом из локальной shipment_products.sizes_json по article_wb + размер; Google-таблица не является источником баркода",
+            "scripts/warehouse-google-sync.js сохраняет все размерные колонки из складской Google-таблицы, включая нулевые остатки; артикулы/размеры не добавляются из карточной базы",
+            "GET /api/warehouse/stock считает план упаковки по фиксированной базе 30 дней: все заказы за 30 дней, включая отмены и корректировку последних 7 дней, × эффективный % выкупа × артикульный trend.multiplier из V2/V3 × warehousePackingMultiplier − остаток WB − уже готово на складе; отрицательная дельта показывается как 0",
+            "POST /api/warehouse/sync запускает ручной импорт Google Sheets → SQLite из кнопки «Обновить» на странице /warehouse",
+            "MpHub подставляет эти значения в расчёт отгрузки V2/V3 по article_wb + размер"
+          ]
+        },
+        {
+          "type": "list",
+          "title": "Текущий статус",
+          "items": [
+            "Пункт «Склад» добавлен в левое меню",
+            "Страница /warehouse показывает карточки итогов и рабочий вид «слева/справа»: слева список артикулов и тренд каждого артикула, справа размерная таблица выбранного артикула с итоговой строкой по фактическим штукам, коробам и общему плану упаковки; верхняя карточка «Общий тренд» показывает общий trend.multiplier по всем складским артикулам",
+            "В раскрытии артикула показывается колонка «Баркод» из локальной базы MpHub, а не из складской Google-таблицы",
+            "Карточка «Настройка плана упаковки» сохраняет warehousePackingMultiplier в user_settings; база всегда 30 дней расчёта, доступны множители ×1,00/×1,25/×1,50/×2,00",
+            "В размерной таблице показывается колонка «План упаковки»: сколько штук/коробов нужно допаковать на складе по формуле расчёта отгрузки с учётом остатка WB и готового склада",
+            "Тестовая страница /warehouse/test показывает 5 вариантов нижней таблицы склада на актуальных локальных данных: слева/справа, карточки, раскрытие, вкладки, группы по объёму",
+            "В карточке «Последний импорт» есть кнопка «Обновить»: запускает scripts/warehouse-google-sync.js и перечитывает данные",
+            "Локальная SQLite содержит warehouse_sync_runs и warehouse_ready_stock",
+            "Актуальный локальный импорт после снятия фильтра нулевых остатков: 19 листов, 127 размерных строк, 20 344 шт, 242,07 коробов",
+            "Формулы «Короб склад» заменены во всех 19 листах; BERFIN обработан отдельным правилом из-за сдвига правого блока",
+            "На листе «Стринги в рубчик 5шт 5цв» пустые нормы коробов в A5/B5/C5/E5/F5/G5 — формулы стоят, но для будущего расчёта эти нормы нужно заполнить",
+            "Расчёт отгрузки V2/V3 синхронизирует колонку «Всего на складе» со складом; сомнительные сопоставления размера подсвечиваются красным"
+          ]
         }
       ]
     },
@@ -614,7 +720,7 @@
           "lines": [
             "WB Feedbacks API (отзывы)",
             "   ↓",
-            "scripts/reviews-sync.js (production cron, каждые 10 мин)",
+            "scripts/reviews-sync.js (production cron, каждый час на минуте 17)",
             "   ↓",
             "SQLite: reviews, review_accounts, review_complaints",
             "   ↓",
@@ -625,7 +731,7 @@
             "Автожалобы:",
             "scripts/reviews-complaints.js (production cron, каждые 30 мин)",
             "   ↓",
-            "Claude CLI / Opus → генерация текста от имени менеджера",
+            "Codex gateway → генерация текста от имени менеджера",
             "   ↓",
             "WB Cabinet complaints API → review_complaints status"
           ]
@@ -645,7 +751,7 @@
           "type": "list",
           "title": "Синхронизация отзывов",
           "items": [
-            "scripts/reviews-sync.js — production cron, каждые 10 минут",
+            "scripts/reviews-sync.js — production cron, каждый час на минуте 17 из-за WB 429",
             "Инкрементальная — все неотвеченные + последние 500 отвеченных",
             "Полная — все отзывы (кнопка в настройках аккаунта)",
             "Обогащение — Orders API (30 дней, реалтайм) + Statistics API (90 дней, задержка 7-10 дн)",
@@ -659,7 +765,7 @@
           "items": [
             "scripts/reviews-complaints.js — production cron, каждые 30 минут",
             "Отбор отзывов — по оценке (настраиваемо, по умолчанию 1-2★), исключения по артикулам",
-            "Генерация текста — Opus 4.6 через claude -p --model opus --effort max",
+            "Генерация текста — через Codex gateway, не через Claude CLI",
             "Персонажи — 10 виртуальных менеджеров с разным стилем (Анна, Дмитрий, Елена и др.)",
             "Ротация — рандомный выбор персонажа + предыдущий текст этого персонажа в промпт",
             "Причина жалобы — ИИ выбирает из допустимых причин на основе содержания отзыва",
@@ -723,7 +829,7 @@
           "type": "list",
           "title": "Фоновые скрипты (production cron)",
           "items": [
-            "reviews-sync.js — каждые 10 мин, синхронизация отзывов + обогащение",
+            "reviews-sync.js — каждый час на минуте 17, синхронизация отзывов + обогащение",
             "reviews-complaints.js — каждые 30 мин, автожалобы + синхронизация статусов"
           ]
         },
@@ -737,7 +843,7 @@
             "   ↓",
             "Рандомный выбор персонажа (Анна/Дмитрий/Елена/...)",
             "   ↓",
-            "Opus 4.6 → JSON { reason_id, explanation }",
+            "Codex gateway → JSON { reason_id, explanation }",
             "   ↓",
             "Запись в review_complaints (status: pending)",
             "   ↓",
@@ -820,11 +926,13 @@
             "daily-sync         — scripts/daily-sync.js, каждый час",
             "weekly-sync        — scripts/sync-weekly-report.js, Пн-Ср 10-23 МСК",
             "shipment-sync      — scripts/shipment-sync.sh, каждый час, days=28",
-            "reviews-sync       — scripts/reviews-sync.js, каждые 10 мин",
+            "reviews-sync       — scripts/reviews-sync.js, каждый час на минуте 17",
             "reviews-complaints — scripts/reviews-complaints.js, каждые 30 мин",
             "mphub-watchdog     — scripts/vps-watchdog.py, каждые 5 мин",
             "auth-check         — scripts/auth-check.js, ежедневно 22:00 МСК",
             "paid-storage-sync  — scripts/paid-storage-sync.js, ежедневно ночью",
+            "warehouse-remains-sync — scripts/logistics-volume-sync.js --source remains, 06:00/09:00/12:00/15:00/18:00/21:00 МСК",
+            "warehouse-measurements-sync — scripts/logistics-volume-sync.js --source measurements, 06:10/09:10/12:10/15:10/18:10/21:10 МСК",
             "data-health-cron   — scripts/data-health-cron.sh, каждый час"
           ]
         },
@@ -1712,12 +1820,14 @@
             "daily-sync.js        → cron: каждый час",
             "sync-weekly-report.js → cron: Пн-Ср 10:00-23:00 МСК",
             "shipment-sync.sh     → cron: каждый час, days=28, lock от дублей",
-            "reviews-sync.js      → cron: каждые 10 минут",
+            "reviews-sync.js      → cron: каждый час на минуте 17",
             "reviews-complaints.js → cron: каждые 30 минут",
             "vps-watchdog.py      → cron: каждые 5 минут",
             "data-health-cron.sh  → cron: каждый час",
             "auth-check.js        → cron: ежедневно 22:00 МСК",
-            "paid-storage-sync.js → cron: ежедневно ночью"
+            "paid-storage-sync.js → cron: ежедневно ночью",
+            "logistics-volume-sync.js --source remains → cron: 06:00/09:00/12:00/15:00/18:00/21:00 МСК",
+            "logistics-volume-sync.js --source measurements → cron: 06:10/09:10/12:10/15:10/18:10/21:10 МСК"
           ]
         },
         {
@@ -1753,7 +1863,7 @@
           "type": "list",
           "title": "2. reviews-sync.js — Синхронизация отзывов",
           "items": [
-            "Расписание — каждые 10 минут по production crontab",
+            "Расписание — каждый час на минуте 17 по production crontab",
             "Задача — загружает новые отзывы + обогащает ценой и регионом",
             "WB API — feedbacks-api и statistics/orders API",
             "Секреты аккаунтов — хранятся в review_accounts, наружу API отдаёт только has_* флаги",
@@ -1853,12 +1963,14 @@
             "0 * * * * daily-sync.js",
             "0 7-20 * * 1-3 sync-weekly-report.js",
             "0 * * * * shipment-sync.sh",
-            "*/10 * * * * reviews-sync.js",
+            "17 * * * * reviews-sync.js",
             "*/30 * * * * reviews-complaints.js",
             "*/5 * * * * vps-watchdog.py",
             "0 * * * * data-health-cron.sh",
             "0 19 * * * auth-check.js",
-            "0 2 * * * paid-storage-sync.js"
+            "0 2 * * * paid-storage-sync.js",
+            "0 3,6,9,12,15,18 * * * logistics-volume-sync.js --source remains",
+            "10 3,6,9,12,15,18 * * * logistics-volume-sync.js --source measurements"
           ]
         },
         {
@@ -1944,7 +2056,7 @@
             "daily-sync.js — каждый час, тянет реализацию, рекламу, заказы, хранение из WB API",
             "sync-weekly-report.js — Пн-Ср 10:00-23:00 МСК, Excel-отчёты из ЛК WB",
             "shipment-sync.sh — каждый час, POST /api/data/sync с days=28; lock защищает от параллельного запуска",
-            "reviews-sync.js — каждые 10 минут, отзывы + обогащение",
+            "reviews-sync.js — каждый час на минуте 17, отзывы + обогащение",
             "reviews-complaints.js — каждые 30 минут, автожалобы + статусы",
             "vps-watchdog.py — каждые 5 минут, PM2/cron/HTTP проверки и Telegram-алерты",
             "data-health-cron.sh — каждый час, снимок здоровья данных для мониторинга",
@@ -2176,7 +2288,7 @@
           "items": [
             "src/modules/shipment/components/ShipmentCalcV2.tsx — расчёт V2",
             "src/modules/shipment/components/ShipmentCalcV3.tsx — расчёт V3",
-            "src/modules/shipment/components/ShipmentSettings.tsx — настройки (выкуп из realization, регионы, короба)",
+            "src/modules/shipment/components/ShipmentSettings.tsx — настройки (выкуп из realization, регионы, склад отгрузки для группы, короба)",
             "src/modules/shipment/components/WarehousePicker.tsx — выбор склада",
             "src/modules/shipment/components/WarehouseBreakdown.tsx — разбивка по складам",
             "src/modules/shipment/components/ProductsTab.tsx — товары",
@@ -2228,7 +2340,7 @@
             "daily-sync.js — каждый час: реализация, реклама, заказы, платное хранение → finance.db",
             "sync-weekly-report.js — Пн-Ср 10:00-23:00 МСК: Excel-отчёты ЛК WB → weekly_reports.db + buyout_rates",
             "shipment-sync.sh — каждый час: POST /api/data/sync, days=28 по умолчанию, lock от дублей",
-            "reviews-sync.js — каждые 10 мин: отзывы + обогащение ценой/ПВЗ",
+            "reviews-sync.js — каждый час на минуте 17: отзывы + обогащение ценой/ПВЗ",
             "reviews-complaints.js — каждые 30 мин: автожалобы + синхронизация статусов",
             "paid-storage-sync.js — ежедневный догон paid_storage за последние дни",
             "auth-check.js — ежедневная проверка WB API/auth и Telegram-алерт при проблемах"
@@ -2253,6 +2365,7 @@
             "test-api.sh — smoke/API проверки",
             "e2e-test.js — архивный E2E через Puppeteer; не входит в актуальный production-хвост",
             "screenshot.js — скриншот страницы",
+            "save-session-state.js — генерирует SESSION_STATE.md из local/prod SQLite, PM2 JSON/cron/health, rsync dry-run и scripts/session-state-notes.json",
             "wb-seller-login.py — вспомогательная авторизация WB Seller",
             "wb-auth-sniffer.py / wb-sniff.mjs — диагностика WB auth/API через браузер/CDP",
             "docs-audit-checklist.md — чеклист актуализации базы знаний"
@@ -2331,7 +2444,7 @@
         },
         {
           "type": "code",
-          "title": "complaints/route.ts — API автожалоб: генерация текста через Opus 4.6, персонажи, подача в WB, синхронизация статусов",
+          "title": "complaints/route.ts — API автожалоб: генерация текста через AI gateway, персонажи, подача в WB, синхронизация статусов",
           "file": "src/app/api/reviews/complaints/route.ts",
           "code": "import { NextRequest, NextResponse } from \"next/server\";\nimport { requireAdmin } from \"@/lib/api-auth\";\nimport {\n  getReviewAccountById,\n  getReviewAccounts,\n  getReviewById,\n  getReviewsForAutoComplaint,\n  createComplaint,\n  updateComplaintStatus,\n  updateComplaintContent,\n  updateReviewComplaintStatus,\n  getComplaintsByAccount,\n  getComplaintByReviewId,\n  getTodayComplaintsCount,\n  getLastComplaintByManager,\n  shouldPauseByRecentRejections,\n  type ReviewAccount,\n} from \"@/lib/reviews-db\";\n\nexport const maxDuration = 300;\n\nconst WB_COMPLAINTS_URL =\n  \"https://seller-reviews.wildberries.ru/ns/fa-seller-api/reviews-ext-seller-portal/api/v1/feedbacks/complaints\";\n\ninterface Manager {\n  name: string;\n  style: string;\n}\n\ninterface ComplaintsConfig {\n  ratings: number[];\n  allowed_reasons: number[];\n  excluded_articles: string;\n  daily_limit: number;\n  delay_min_minutes: number;\n  delay_max_minutes: number;\n  system_prompt: string;\n  user_prompt: string;\n  managers: Manager[];\n}\n\nfunction randomDelay(minMin: number, maxMin: number): number {\n  return (minMin + Math.random() * (maxMin - minMin)) * 60 * 1000;\n}\n\nfunction getComplaintsConfig(account: ReviewAccount): ComplaintsConfig {\n  const defaults: ComplaintsConfig = {\n    ratings: [1, 2],\n    allowed_reasons: [11, 16, 13, 12, 20, 18, 19],\n    excluded_articles: \"\",\n    daily_limit: 50,\n    delay_min_minutes: 1,\n    delay_max_minutes: 10,\n    system_prompt: \"\",\n    user_prompt: \"\",\n    managers: [],\n  };\n  try {\n    const settings = account.settings_json ? JSON.parse(account.settings_json) : {};\n    return { ...defaults, ...settings.auto_complaints_config };\n  } catch {\n    return defaults;\n  }\n}\n\nconst COMPLAINT_REASONS: Record<number, string> = {\n  11: \"Отзыв не относится к товару\",\n  12: \"Отзыв оставили конкуренты\",\n  13: \"Спам-реклама в тексте\",\n  16: \"Нецензурная лексика\",\n  18: \"Отзыв с политическим контекстом\",\n  20: \"Угрозы, оскорбления\",\n  19: \"Другое\",\n};\n\ninterface AiComplaintResult {\n  reason_id: number;\n  explanation: string;\n}\n\nconst DEFAULT_SYSTEM_PROMPT = (\n  \"Ты — сотрудник бренда IMSI (женское нижнее бельё) на Wildberries. \" +\n  \"Составляешь обращения к модератору по необъективным отзывам. \" +\n  \"Пиши как живой человек, без шаблонов и канцелярита. \" +\n  \"Длина обращения — СТРОГО от 1000 до 1500 символов. \" +\n  \"Предпочитай причину 11 («Отзыв не относится к товару») если отзыв: пустой, про доставку, \" +\n  \"про упаковку, про размер без реального дефекта, содержит эмоции без конкретики. \" +\n  \"Причина 19 («Другое») — только когда ни одна из специфических не подходит. \" +\n  \"Отвечай СТРОГО JSON.\"\n);\n\nconst DEFAULT_USER_PROMPT = `Составь обращение к модератору Wildberries по отзыву покупателя.\n\nОтзыв:\n- Товар: {product_name} (арт. {product_article})\n- Оценка: {rating}/5\n- Текст: {review_text}\n- Фото/видео от покупателя: нет\n\nКатегории обращения (выбирай по порядку приоритета; первая подходящая — твой выбор):\n{reasons_list}\n\nПриоритет ПРИЧИН (строго соблюдать):\n1. Отзыв пустой/без фото/про доставку/упаковку/про несоответствие размера без дефекта → reason_id=11\n2. Реклама/спам/URL в тексте → reason_id=13\n3. Нецензурная лексика → reason_id=16\n4. Угрозы/оскорбления → reason_id=20\n5. Политический контекст → reason_id=18\n6. Явно конкурентный отзыв → reason_id=12\n7. Только если ни одна из выше не подходит → reason_id=19\n\nТребования к тексту обращения:\n- ОБЯЗАТЕЛЬНО 1000–1500 символов (меньше — отклонят, больше — потеряют суть)\n- Упомяни артикул товара\n- 7–9 предложений\n- НЕ используй фразы: «голословный», «добросовестный продавец», «просим модератора рассмотреть», «принять решение об удалении», «вводит в заблуждение», «наносит ущерб репутации», «на всех этапах», «бездоказательный», «потенциальных покупателей», «репутационный ущерб»\n- Не используй длинные тире\n- Реагируй на конкретное содержание отзыва, а не по шаблону\n\nОтвет — строго JSON одной строкой:\n{\"reason_id\": <число>, \"explanation\": \"<текст 1000-1500 символов>\"}`;\n\nfunction buildPrompt(\n  template: string,\n  review: { review_text?: string | null; pros?: string | null; cons?: string | null; product_name?: string | null; product_article?: string | null; rating?: number },\n  allowedReasons: number[],\n): string {\n  const reviewText = [\n    review.review_text,\n    review.pros ? `Достоинства: ${review.pros}` : \"\",\n    review.cons ? `Недостатки: ${review.cons}` : \"\",\n  ].filter(Boolean).join(\"\\n\");\n\n  const reasonsList = allowedReasons\n    .map((id) => `  ${id} — ${COMPLAINT_REASONS[id] || \"Неизвестно\"}`)\n    .join(\"\\n\");\n\n  return template\n    .replace(/\\{product_name\\}/g, review.product_name || \"неизвестен\")\n    .replace(/\\{product_article\\}/g, review.product_article || \"?\")\n    .replace(/\\{rating\\}/g, String(review.rating || \"?\"))\n    .replace(/\\{review_text\\}/g, reviewText || \"(покупатель не оставил текст)\")\n    .replace(/\\{reasons_list\\}/g, reasonsList);\n}\n\ninterface GenerateOptions {\n  system_prompt?: string;\n  user_prompt?: string;\n  manager?: Manager;\n  previousText?: string | null;\n}\n\nasync function generateComplaint(\n  review: { review_text?: string | null; pros?: string | null; cons?: string | null; product_name?: string | null; product_article?: string | null; rating?: number },\n  allowedReasons: number[],\n  options?: GenerateOptions,\n): Promise<AiComplaintResult & { manager_name?: string } | null> {\n  const sysPrompt = options?.system_prompt || DEFAULT_SYSTEM_PROMPT;\n  const userTemplate = options?.user_prompt || DEFAULT_USER_PROMPT;\n  let prompt = buildPrompt(userTemplate, review, allowedReasons);\n\n  // Add manager personality + previous text\n  if (options?.manager) {\n    prompt += `\\n\\n---\\nПиши в стиле менеджера ${options.manager.name}: ${options.manager.style}`;\n    if (options.previousText) {\n      prompt += `\\n\\nТвоё предыдущее обращение (НЕ повторяй структуру, формулировки и порядок аргументов):\\n\"${options.previousText.slice(0, 500)}\"`;\n    }\n  }\n\n  const { spawn } = await import(\"child_process\");\n  return new Promise((resolve) => {\n    // Claude CLI на wb-site недоступен (RU IP). Идём через SSH на .106 (tinyproxy Germany).\n    // ВАЖНО: SSH склеивает remote-аргументы в shell-команду. sysPrompt может содержать\n    // скобки, кавычки — экранируем в одинарные кавычки.\n    const esc = (s: string) => \"'\" + s.replace(/'/g, \"'\\\\''\") + \"'\";\n    const proc = spawn(\"ssh\", [\n      \"-o\", \"BatchMode=yes\",\n      \"-o\", \"ConnectTimeout=10\",\n      \"-o\", \"UserKnownHostsFile=/home/makson/.ssh/known_hosts\",\n      \"-o\", \"StrictHostKeyChecking=accept-new\",\n      \"-i\", \"/home/makson/.ssh/id_ed25519\",\n      \"makson@192.168.55.106\",\n      `bash /home/makson/claude-proxy.sh ${esc(sysPrompt)}`,\n    ], {\n      timeout: 120000,\n    });\n\n    let stdout = \"\";\n    let stderr = \"\";\n    proc.stdout.on(\"data\", (d: Buffer) => { stdout += d.toString(); });\n    proc.stderr.on(\"data\", (d: Buffer) => { stderr += d.toString(); });\n    proc.on(\"error\", (err: Error) => {\n      console.error(\"AI spawn error:\", err.message);\n      resolve(null);\n    });\n\n    proc.stdin.write(prompt);\n    proc.stdin.end();\n\n    proc.on(\"close\", (code: number) => {\n      if (code !== 0) {\n        console.error(\"AI exit code:\", code, stderr);\n        resolve(null);\n        return;\n      }\n      try {\n        const text = stdout.trim();\n        const jsonMatch = text.match(/\\{[\\s\\S]*\"reason_id\"[\\s\\S]*\"explanation\"[\\s\\S]*\\}/);\n        if (!jsonMatch) { console.error(\"AI no JSON found in:\", text); resolve(null); return; }\n        const parsed = JSON.parse(jsonMatch[0]) as AiComplaintResult;\n        if (!allowedReasons.includes(parsed.reason_id)) {\n          parsed.reason_id = allowedReasons[0];\n        }\n        resolve(parsed);\n      } catch {\n        console.error(\"AI JSON parse failed:\", stdout);\n        resolve(null);\n      }\n    });\n  });\n}\n\nfunction buildHeaders(account: ReviewAccount): Record<string, string> {\n  const headers: Record<string, string> = {\n    \"Content-Type\": \"application/json\",\n    \"Origin\": \"https://seller.wildberries.ru\",\n  };\n  if (account.wb_authorize_v3) headers[\"Authorizev3\"] = account.wb_authorize_v3;\n  if (account.wb_validation_key) {\n    headers[\"Cookie\"] = `wbx-validation-key=${account.wb_validation_key}; x-supplier-id-external=e0334427-4f82-4bc3-a0ab-43394e58b6ac`;\n  }\n  return headers;\n}\n\nasync function submitComplaintToWB(\n  account: ReviewAccount,\n  wbReviewId: string,\n  reasonId: number,\n  explanation?: string,\n): Promise<{ ok: boolean; status: number; body: string }> {\n  const headers = buildHeaders(account);\n  const body: Record<string, unknown> = {\n    feedbackId: wbReviewId,\n    feedbackComplaint: {\n      id: reasonId,\n      ...(explanation ? { explanation } : {}),\n    },\n  };\n\n  const res = await fetch(WB_COMPLAINTS_URL, {\n    method: \"PATCH\",\n    headers,\n    body: JSON.stringify(body),\n  });\n\n  const text = await res.text().catch(() => \"\");\n\n  // WB returns 200 even on auth errors — check body for \"error\": true\n  let wbOk = res.ok;\n  if (wbOk && text) {\n    try {\n      const parsed = JSON.parse(text);\n      if (parsed.error === true) {\n        wbOk = false;\n      }\n    } catch { /* not JSON, treat as ok */ }\n  }\n\n  return { ok: wbOk, status: res.status, body: text };\n}\n\n// ─── POST: Submit complaint(s) ─────────────────────────────\n\nexport async function POST(req: NextRequest) {\n  const authError = requireAdmin(req);\n  if (authError) return authError;\n\n  try {\n    const json = await req.json();\n\n    // Mode 1: Auto-submit for an account\n    if (json.auto && json.account_id) {\n      const account = getReviewAccountById(json.account_id);\n      if (!account) return NextResponse.json({ error: \"Account not found\" }, { status: 404 });\n      if (!account.wb_authorize_v3) return NextResponse.json({ error: \"Cabinet tokens not configured\" }, { status: 400 });\n\n      const config = getComplaintsConfig(account);\n      const todayCount = getTodayComplaintsCount(account.id);\n      const remaining = Math.max(0, config.daily_limit - todayCount);\n      if (remaining === 0) return NextResponse.json({ submitted: 0, message: \"Daily limit reached\" });\n\n      const excludedArticles = config.excluded_articles\n        ? config.excluded_articles.split(/[,\\n]/).map((s: string) => s.trim()).filter(Boolean)\n        : [];\n\n      const reviews = getReviewsForAutoComplaint(account.id, config.ratings, excludedArticles);\n      const toSubmit = reviews.slice(0, remaining);\n\n      let submitted = 0;\n      let errors = 0;\n\n      for (const review of toSubmit) {\n        // Pick random manager\n        const managers = config.managers?.length ? config.managers : [{ name: \"Default\", style: \"\" }];\n        const manager = managers[Math.floor(Math.random() * managers.length)];\n        const previousText = getLastComplaintByManager(account.id, manager.name);\n\n        const ai = await generateComplaint(review, config.allowed_reasons, {\n          system_prompt: config.system_prompt,\n          user_prompt: config.user_prompt,\n          manager,\n          previousText,\n        });\n        if (!ai) continue;\n        const { reason_id: reasonId, explanation } = ai;\n\n        const complaintId = createComplaint({\n          review_id: review.id,\n          account_id: account.id,\n          wb_review_id: review.wb_review_id!,\n          complaint_reason_id: reasonId,\n          explanation,\n          manager_name: manager.name,\n        });\n\n        const result = await submitComplaintToWB(account, review.wb_review_id!, reasonId, explanation);\n\n        if (result.ok) {\n          updateComplaintStatus(complaintId, \"submitted\");\n          updateReviewComplaintStatus(review.id, \"submitted\");\n          submitted++;\n        } else {\n          updateComplaintStatus(complaintId, \"error\", `HTTP ${result.status}: ${result.body}`);\n          errors++;\n        }\n\n        if (toSubmit.indexOf(review) < toSubmit.length - 1) {\n          await new Promise(r => setTimeout(r, randomDelay(config.delay_min_minutes, config.delay_max_minutes)));\n        }\n      }\n\n      return NextResponse.json({ submitted, errors, total_eligible: reviews.length });\n    }\n\n    // Mode 2: Manual single complaint — АСИНХРОННЫЙ flow (202 Accepted + polling)\n    if (json.review_id) {\n      const reviewId = Number(json.review_id);\n      const existing = getComplaintByReviewId(reviewId);\n      if (existing && existing.status !== \"error\") {\n        return NextResponse.json({ error: \"Complaint already submitted\" }, { status: 400 });\n      }\n\n      const review = getReviewById(reviewId);\n      if (!review || !review.wb_review_id) {\n        return NextResponse.json({ error: \"Review not found\" }, { status: 404 });\n      }\n\n      const account = getReviewAccountById(review.account_id);\n      if (!account || !account.wb_authorize_v3) {\n        return NextResponse.json({ error: \"Cabinet tokens not configured for this account\" }, { status: 400 });\n      }\n\n      // Эффективность-чек: если последние 5 обработанных — все rejected,\n      // даём пользователю знать и не даём подать. Обходится ручной отменой или после нового approved.\n      if (!json.dry_run && !json.force) {\n        const eff = shouldPauseByRecentRejections(account.id, 5);\n        if (eff.pause) {\n          return NextResponse.json({\n            error: `Пауза: последние 5 жалоб все отклонены WB. Проверь настройки промпта/менеджеров. Передай force=true чтобы подать принудительно.`,\n            paused: true,\n            stats: eff,\n          }, { status: 429 });\n        }\n      }\n\n      // Dry-run остаётся синхронным — быстрый предпросмотр AI\n      if (json.dry_run) {\n        const config = getComplaintsConfig(account);\n        const reasons = json.reason_id ? [json.reason_id] : config.allowed_reasons;\n        const managers = config.managers?.length ? config.managers : [{ name: \"Default\", style: \"\" }];\n        const manager = managers[Math.floor(Math.random() * managers.length)];\n        const previousText = getLastComplaintByManager(account.id, manager.name);\n        const ai = await generateComplaint(review, reasons, {\n          system_prompt: config.system_prompt,\n          user_prompt: config.user_prompt,\n          manager,\n          previousText,\n        });\n        if (!ai) return NextResponse.json({ error: \"AI generation failed\" }, { status: 502 });\n        return NextResponse.json({\n          ok: true, dry_run: true,\n          reason_id: ai.reason_id,\n          reason_label: COMPLAINT_REASONS[ai.reason_id] || \"Неизвестно\",\n          explanation: ai.explanation,\n          review: {\n            wb_review_id: review.wb_review_id,\n            product_name: review.product_name,\n            product_article: review.product_article,\n            rating: review.rating,\n            review_text: review.review_text,\n          },\n        });\n      }\n\n      // Создаём pending-запись сразу\n      const complaintId = createComplaint({\n        review_id: review.id,\n        account_id: account.id,\n        wb_review_id: review.wb_review_id,\n        complaint_reason_id: json.reason_id || 0,\n        explanation: json.explanation || \"\",\n        manager_name: \"\",\n      });\n      updateReviewComplaintStatus(review.id, \"pending\");\n\n      // Запускаем обработку на фоне (не await). Клиент сразу получает 202.\n      // Внутри — вызов Claude (с retry) + отправка на WB (с retry) + обновление БД.\n      (async () => {\n        const MAX_TRIES = 3;\n        const RETRY_DELAY_MS = 15000;\n        const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));\n\n        try {\n          const config = getComplaintsConfig(account);\n          let reasonId = json.reason_id;\n          let explanation = json.explanation;\n          let managerName = \"\";\n\n          if (!reasonId || !explanation) {\n            const reasons = json.reason_id ? [json.reason_id] : config.allowed_reasons;\n            const managers = config.managers?.length ? config.managers : [{ name: \"Default\", style: \"\" }];\n            const manager = managers[Math.floor(Math.random() * managers.length)];\n            const previousText = getLastComplaintByManager(account.id, manager.name);\n\n            // Retry Claude generation: SSH до claude-cli VM бывает flaky\n            let ai = null;\n            let lastError = \"\";\n            for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {\n              ai = await generateComplaint(review, reasons, {\n                system_prompt: config.system_prompt,\n                user_prompt: config.user_prompt,\n                manager,\n                previousText,\n              });\n              if (ai) break;\n              lastError = `attempt ${attempt}/${MAX_TRIES} failed`;\n              console.log(`[complaint ${complaintId}] Claude ${lastError}`);\n              if (attempt < MAX_TRIES) await sleep(RETRY_DELAY_MS);\n            }\n            if (!ai) {\n              updateComplaintStatus(complaintId, \"error\", `AI generation failed after ${MAX_TRIES} attempts`);\n              updateReviewComplaintStatus(review.id, \"error\");\n              return;\n            }\n            reasonId = reasonId || ai.reason_id;\n            explanation = explanation || ai.explanation;\n            managerName = manager.name;\n            updateComplaintContent(complaintId, reasonId, explanation, managerName);\n          }\n\n          // Retry WB submit: API может вернуть 5xx или timeout\n          let wbResult: { ok: boolean; status: number; body: string } | null = null;\n          for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {\n            wbResult = await submitComplaintToWB(account, review.wb_review_id!, reasonId, explanation);\n            if (wbResult.ok) break;\n            // 4xx — клиентская ошибка, retry не поможет; 5xx / timeout — повторяем\n            if (wbResult.status >= 400 && wbResult.status < 500) break;\n            console.log(`[complaint ${complaintId}] WB attempt ${attempt}/${MAX_TRIES}: HTTP ${wbResult.status}`);\n            if (attempt < MAX_TRIES) await sleep(RETRY_DELAY_MS);\n          }\n\n          if (wbResult?.ok) {\n            updateComplaintStatus(complaintId, \"submitted\");\n            updateReviewComplaintStatus(review.id, \"submitted\");\n          } else {\n            updateComplaintStatus(complaintId, \"error\", `HTTP ${wbResult?.status}: ${wbResult?.body}`);\n            updateReviewComplaintStatus(review.id, \"error\");\n          }\n        } catch (err: unknown) {\n          updateComplaintStatus(complaintId, \"error\", (err as Error).message);\n          updateReviewComplaintStatus(review.id, \"error\");\n        }\n      })();\n\n      return NextResponse.json(\n        { ok: true, complaint_id: complaintId, status: \"pending\" },\n        { status: 202 }\n      );\n    }\n\n    return NextResponse.json({ error: \"Missing review_id or auto+account_id\" }, { status: 400 });\n  } catch (e: unknown) {\n    return NextResponse.json({ error: (e as Error).message }, { status: 500 });\n  }\n}\n\n// ─── Sync complaint statuses from WB ───────────────────────\n\nasync function syncComplaintStatuses(): Promise<number> {\n  const accounts = getReviewAccounts().filter(a => a.wb_authorize_v3);\n  let totalUpdated = 0;\n\n  for (const account of accounts) {\n    const pending = getComplaintsByAccount(account.id, \"submitted\");\n    if (pending.length === 0) continue;\n\n    const headers = buildHeaders(account);\n    const pendingMap = new Map(pending.map(p => [p.wb_review_id, p]));\n\n    // Paginate through feedbacks using pages.next cursor\n    let nextCursor = \"\";\n    for (let page = 0; page < 30 && pendingMap.size > 0; page++) {\n      const cursorParam = nextCursor ? `cursor=${encodeURIComponent(nextCursor)}` : \"cursor=\";\n      const url = `https://seller-reviews.wildberries.ru/ns/fa-seller-api/reviews-ext-seller-portal/api/v2/feedbacks?${cursorParam}&isAnswered=true&limit=100&sortOrder=dateDesc`;\n      const res = await fetch(url, { headers, signal: AbortSignal.timeout(15000) }).catch(() => null);\n      if (!res || !res.ok) break;\n\n      const data = await res.json().catch(() => null);\n      if (!data || data.error) break;\n      const feedbacks = data.data?.feedbacks || [];\n      if (feedbacks.length === 0) break;\n\n      for (const fb of feedbacks) {\n        if (!pendingMap.has(fb.id)) continue;\n        const status = fb.supplierComplaints?.feedbackComplaint?.status;\n        if (status === \"approved\" || status === \"rejected\") {\n          const complaint = pendingMap.get(fb.id)!;\n          updateComplaintStatus(complaint.id, status);\n          updateReviewComplaintStatus(complaint.review_id, status);\n          pendingMap.delete(fb.id);\n          totalUpdated++;\n        }\n      }\n\n      nextCursor = data.data?.pages?.next || \"\";\n      if (!nextCursor) break;\n    }\n  }\n\n  return totalUpdated;\n}\n\n// ─── GET: Complaints history + sync ────────────────────────\n\nexport async function GET(req: NextRequest) {\n  const authError = requireAdmin(req);\n  if (authError) return authError;\n\n  try {\n    const sp = req.nextUrl.searchParams;\n    const shouldSync = sp.get(\"sync\") === \"true\";\n    const accountId = sp.get(\"account_id\") ? Number(sp.get(\"account_id\")) : undefined;\n    const status = sp.get(\"status\") || undefined;\n\n    if (shouldSync) {\n      await syncComplaintStatuses();\n    }\n\n    const complaints = getComplaintsByAccount(accountId, status);\n    return NextResponse.json({ complaints });\n  } catch (e: unknown) {\n    return NextResponse.json({ error: (e as Error).message }, { status: 500 });\n  }\n}\n"
         },
@@ -2349,9 +2462,9 @@
         },
         {
           "type": "code",
-          "title": "reviews-sync.js — Production cron: синхронизация отзывов каждые 10 минут",
+          "title": "reviews-sync.js — Production cron: синхронизация отзывов каждый час на минуте 17",
           "file": "scripts/reviews-sync.js",
-          "code": "#!/usr/bin/env node\n/**\n * Reviews auto-sync script — runs every 10 minutes.\n * 1. Fetches new reviews (incremental: unanswered + last 500 answered)\n * 2. Enriches with price & region from Orders API\n *\n * Usage: node scripts/reviews-sync.js\n * Or via production cron every 10 minutes.\n */\n\nconst Database = require(\"better-sqlite3\");\nconst path = require(\"path\");\n\nconst PROJECT_DIR = path.join(__dirname, \"..\");\nconst DB_PATH = path.join(PROJECT_DIR, \"data\", \"finance.db\");\nconst LOG_PATH = path.join(PROJECT_DIR, \"data\", \"reviews-sync.log\");\nconst fs = require(\"fs\");\n\n// ─── Logging ────────────────────────────────────────────────\n\nfunction log(msg) {\n  const line = `[${new Date().toISOString()}] ${msg}`;\n  console.log(line);\n  try { fs.appendFileSync(LOG_PATH, line + \"\\n\"); } catch {}\n}\n\n// ─── DB helpers ─────────────────────────────────────────────\n\nfunction getDb() {\n  const db = new Database(DB_PATH, { readonly: false });\n  db.pragma(\"journal_mode = WAL\");\n  return db;\n}\n\nfunction getApiKey(db) {\n  const row = db.prepare(`SELECT api_key FROM review_accounts WHERE supplier_id = '1166225'`).get();\n  return row?.api_key || null;\n}\n\nfunction getAccountId(db) {\n  const row = db.prepare(`SELECT id FROM review_accounts WHERE supplier_id = '1166225'`).get();\n  return row?.id || null;\n}\n\n// ─── Fetch feedbacks ────────────────────────────────────────\n\nconst WB_FEEDBACKS_URL = \"https://feedbacks-api.wildberries.ru/api/v1/feedbacks\";\n\nasync function fetchFeedbacks(apiKey) {\n  const all = [];\n\n  // 1) Unanswered\n  for (let skip = 0; ; skip += 100) {\n    const res = await fetch(`${WB_FEEDBACKS_URL}?isAnswered=false&take=100&skip=${skip}`, {\n      headers: { Authorization: `Bearer ${apiKey}` },\n    });\n    if (!res.ok) break;\n    const data = await res.json();\n    const fbs = data.data?.feedbacks ?? [];\n    all.push(...fbs);\n    if (fbs.length < 100) break;\n    await new Promise(r => setTimeout(r, 350));\n  }\n\n  // 2) Last 500 answered\n  const res = await fetch(`${WB_FEEDBACKS_URL}?isAnswered=true&take=500&skip=0`, {\n    headers: { Authorization: `Bearer ${apiKey}` },\n  });\n  if (res.ok) {\n    const data = await res.json();\n    const fbs = data.data?.feedbacks ?? [];\n    all.push(...fbs);\n  }\n\n  return all;\n}\n\n// ─── Upsert reviews ────────────────────────────────────────\n\nfunction upsertReviews(db, accountId, feedbacks) {\n  const stmt = db.prepare(`\n    INSERT INTO reviews (account_id, wb_review_id, date, rating, product_name, product_article, brand, review_text, pros, cons, buyer_name, status, is_updated, purchase_type, shk_id, order_date, bables)\n    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n    ON CONFLICT(wb_review_id) DO UPDATE SET\n      review_text = excluded.review_text,\n      pros = excluded.pros,\n      cons = excluded.cons,\n      rating = excluded.rating,\n      purchase_type = excluded.purchase_type,\n      shk_id = excluded.shk_id,\n      order_date = excluded.order_date,\n      bables = excluded.bables,\n      is_updated = CASE WHEN reviews.review_text != excluded.review_text THEN 1 ELSE reviews.is_updated END\n  `);\n\n  let count = 0;\n  db.transaction(() => {\n    for (const fb of feedbacks) {\n      const status = fb.isAnswered ? \"replied\" : \"new\";\n      const purchaseType = fb.orderStatus === \"buyout\" ? \"buyout\"\n        : fb.orderStatus === \"rejected\" ? \"rejected\"\n        : fb.orderStatus === \"returned\" ? \"returned\"\n        : null;\n      stmt.run(\n        accountId,\n        fb.id,\n        fb.createdDate ? fb.createdDate.slice(0, 10) : new Date().toISOString().slice(0, 10),\n        fb.productValuation ?? 5,\n        fb.productDetails?.productName || null,\n        fb.productDetails?.nmId ? String(fb.productDetails.nmId) : fb.productDetails?.supplierArticle || null,\n        fb.productDetails?.brandName || null,\n        fb.text || null,\n        fb.pros || null,\n        fb.cons || null,\n        fb.userName || null,\n        status,\n        0,\n        purchaseType,\n        fb.lastOrderShkId || null,\n        fb.lastOrderCreatedAt ? fb.lastOrderCreatedAt.slice(0, 10) : null,\n        fb.bables && fb.bables.length > 0 ? JSON.stringify(fb.bables) : null,\n      );\n      count++;\n    }\n  })();\n  return count;\n}\n\n// ─── Enrich from Orders API ─────────────────────────────────\n\nasync function enrichFromOrders(db, apiKey, accountId) {\n  const reviews = db.prepare(`\n    SELECT id, shk_id FROM reviews\n    WHERE account_id = ? AND shk_id IS NOT NULL AND (price IS NULL OR pickup_point IS NULL)\n      AND order_date >= date('now', '-90 days')\n    LIMIT 50000\n  `).all(accountId);\n\n  if (reviews.length === 0) return 0;\n\n  const shkLookup = new Map();\n  for (const r of reviews) shkLookup.set(r.shk_id, r.id);\n\n  const dateFrom = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);\n  const res = await fetch(`https://statistics-api.wildberries.ru/api/v1/supplier/orders?dateFrom=${dateFrom}`, {\n    headers: { Authorization: apiKey },\n  });\n  if (!res.ok) return 0;\n\n  const orders = await res.json();\n  if (!Array.isArray(orders)) return 0;\n\n  const stmt = db.prepare(`UPDATE reviews SET price = ?, pickup_point = ? WHERE shk_id = ? AND (price IS NULL OR pickup_point IS NULL)`);\n  let enriched = 0;\n\n  db.transaction(() => {\n    for (const o of orders) {\n      const sticker = Number(o.sticker);\n      const price = Math.abs(o.finishedPrice || 0);\n      if (sticker && shkLookup.has(sticker) && price > 0) {\n        const res = stmt.run(price, o.regionName || \"\", sticker);\n        enriched += res.changes;\n        shkLookup.delete(sticker);\n      }\n    }\n  })();\n\n  return enriched;\n}\n\n// ─── Main ───────────────────────────────────────────────────\n\nasync function main() {\n  log(\"=== Reviews sync started ===\");\n\n  const db = getDb();\n  const apiKey = getApiKey(db);\n  if (!apiKey) {\n    log(\"ERROR: No API key found\");\n    db.close();\n    return;\n  }\n\n  const accountId = getAccountId(db);\n  if (!accountId) {\n    log(\"ERROR: No account found\");\n    db.close();\n    return;\n  }\n\n  // 1. Fetch & upsert reviews\n  const feedbacks = await fetchFeedbacks(apiKey);\n  log(`Fetched ${feedbacks.length} feedbacks from WB`);\n\n  if (feedbacks.length > 0) {\n    const before = db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE account_id = ?`).get(accountId).cnt;\n    const upserted = upsertReviews(db, accountId, feedbacks);\n    const after = db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE account_id = ?`).get(accountId).cnt;\n    const added = after - before;\n    log(`Upserted ${upserted}, new: ${added}, total: ${after}`);\n  }\n\n  // 2. Enrich from Orders API\n  const enriched = await enrichFromOrders(db, apiKey, accountId);\n  log(`Enriched ${enriched} reviews with price & region`);\n\n  // 3. Update sync status\n  const total = db.prepare(`SELECT COUNT(*) as cnt FROM reviews`).get().cnt;\n  const withPrice = db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE price > 0`).get().cnt;\n  db.prepare(`UPDATE sync_status SET status = 'done', loaded = ?, total = ?, message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1`)\n    .run(total, total, `В базе: ${total.toLocaleString(\"ru-RU\")} ✅ | Цена и ПВЗ: ${withPrice.toLocaleString(\"ru-RU\")}`);\n\n  log(`=== Done. Total: ${total}, with price: ${withPrice} ===`);\n  db.close();\n}\n\nmain().catch(e => {\n  log(`FATAL: ${e.message}`);\n  process.exit(1);\n});\n"
+          "code": "#!/usr/bin/env node\n/**\n * Reviews auto-sync script — production cron currently runs hourly at minute 17.\n * 1. Fetches new reviews (incremental: unanswered + last 500 answered)\n * 2. Enriches with price & region from Orders API\n *\n * Usage: node scripts/reviews-sync.js\n * Or via production cron hourly at minute 17.\n */\n\nconst Database = require(\"better-sqlite3\");\nconst path = require(\"path\");\n\nconst PROJECT_DIR = path.join(__dirname, \"..\");\nconst DB_PATH = path.join(PROJECT_DIR, \"data\", \"finance.db\");\nconst LOG_PATH = path.join(PROJECT_DIR, \"data\", \"reviews-sync.log\");\nconst fs = require(\"fs\");\n\n// ─── Logging ────────────────────────────────────────────────\n\nfunction log(msg) {\n  const line = `[${new Date().toISOString()}] ${msg}`;\n  console.log(line);\n  try { fs.appendFileSync(LOG_PATH, line + \"\\n\"); } catch {}\n}\n\n// ─── DB helpers ─────────────────────────────────────────────\n\nfunction getDb() {\n  const db = new Database(DB_PATH, { readonly: false });\n  db.pragma(\"journal_mode = WAL\");\n  return db;\n}\n\nfunction getApiKey(db) {\n  const row = db.prepare(`SELECT api_key FROM review_accounts WHERE supplier_id = '1166225'`).get();\n  return row?.api_key || null;\n}\n\nfunction getAccountId(db) {\n  const row = db.prepare(`SELECT id FROM review_accounts WHERE supplier_id = '1166225'`).get();\n  return row?.id || null;\n}\n\n// ─── Fetch feedbacks ────────────────────────────────────────\n\nconst WB_FEEDBACKS_URL = \"https://feedbacks-api.wildberries.ru/api/v1/feedbacks\";\n\nasync function fetchFeedbacks(apiKey) {\n  const all = [];\n\n  // 1) Unanswered\n  for (let skip = 0; ; skip += 100) {\n    const res = await fetch(`${WB_FEEDBACKS_URL}?isAnswered=false&take=100&skip=${skip}`, {\n      headers: { Authorization: `Bearer ${apiKey}` },\n    });\n    if (!res.ok) break;\n    const data = await res.json();\n    const fbs = data.data?.feedbacks ?? [];\n    all.push(...fbs);\n    if (fbs.length < 100) break;\n    await new Promise(r => setTimeout(r, 350));\n  }\n\n  // 2) Last 500 answered\n  const res = await fetch(`${WB_FEEDBACKS_URL}?isAnswered=true&take=500&skip=0`, {\n    headers: { Authorization: `Bearer ${apiKey}` },\n  });\n  if (res.ok) {\n    const data = await res.json();\n    const fbs = data.data?.feedbacks ?? [];\n    all.push(...fbs);\n  }\n\n  return all;\n}\n\n// ─── Upsert reviews ────────────────────────────────────────\n\nfunction upsertReviews(db, accountId, feedbacks) {\n  const stmt = db.prepare(`\n    INSERT INTO reviews (account_id, wb_review_id, date, rating, product_name, product_article, brand, review_text, pros, cons, buyer_name, status, is_updated, purchase_type, shk_id, order_date, bables)\n    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n    ON CONFLICT(wb_review_id) DO UPDATE SET\n      review_text = excluded.review_text,\n      pros = excluded.pros,\n      cons = excluded.cons,\n      rating = excluded.rating,\n      purchase_type = excluded.purchase_type,\n      shk_id = excluded.shk_id,\n      order_date = excluded.order_date,\n      bables = excluded.bables,\n      is_updated = CASE WHEN reviews.review_text != excluded.review_text THEN 1 ELSE reviews.is_updated END\n  `);\n\n  let count = 0;\n  db.transaction(() => {\n    for (const fb of feedbacks) {\n      const status = fb.isAnswered ? \"replied\" : \"new\";\n      const purchaseType = fb.orderStatus === \"buyout\" ? \"buyout\"\n        : fb.orderStatus === \"rejected\" ? \"rejected\"\n        : fb.orderStatus === \"returned\" ? \"returned\"\n        : null;\n      stmt.run(\n        accountId,\n        fb.id,\n        fb.createdDate ? fb.createdDate.slice(0, 10) : new Date().toISOString().slice(0, 10),\n        fb.productValuation ?? 5,\n        fb.productDetails?.productName || null,\n        fb.productDetails?.nmId ? String(fb.productDetails.nmId) : fb.productDetails?.supplierArticle || null,\n        fb.productDetails?.brandName || null,\n        fb.text || null,\n        fb.pros || null,\n        fb.cons || null,\n        fb.userName || null,\n        status,\n        0,\n        purchaseType,\n        fb.lastOrderShkId || null,\n        fb.lastOrderCreatedAt ? fb.lastOrderCreatedAt.slice(0, 10) : null,\n        fb.bables && fb.bables.length > 0 ? JSON.stringify(fb.bables) : null,\n      );\n      count++;\n    }\n  })();\n  return count;\n}\n\n// ─── Enrich from Orders API ─────────────────────────────────\n\nasync function enrichFromOrders(db, apiKey, accountId) {\n  const reviews = db.prepare(`\n    SELECT id, shk_id FROM reviews\n    WHERE account_id = ? AND shk_id IS NOT NULL AND (price IS NULL OR pickup_point IS NULL)\n      AND order_date >= date('now', '-90 days')\n    LIMIT 50000\n  `).all(accountId);\n\n  if (reviews.length === 0) return 0;\n\n  const shkLookup = new Map();\n  for (const r of reviews) shkLookup.set(r.shk_id, r.id);\n\n  const dateFrom = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);\n  const res = await fetch(`https://statistics-api.wildberries.ru/api/v1/supplier/orders?dateFrom=${dateFrom}`, {\n    headers: { Authorization: apiKey },\n  });\n  if (!res.ok) return 0;\n\n  const orders = await res.json();\n  if (!Array.isArray(orders)) return 0;\n\n  const stmt = db.prepare(`UPDATE reviews SET price = ?, pickup_point = ? WHERE shk_id = ? AND (price IS NULL OR pickup_point IS NULL)`);\n  let enriched = 0;\n\n  db.transaction(() => {\n    for (const o of orders) {\n      const sticker = Number(o.sticker);\n      const price = Math.abs(o.finishedPrice || 0);\n      if (sticker && shkLookup.has(sticker) && price > 0) {\n        const res = stmt.run(price, o.regionName || \"\", sticker);\n        enriched += res.changes;\n        shkLookup.delete(sticker);\n      }\n    }\n  })();\n\n  return enriched;\n}\n\n// ─── Main ───────────────────────────────────────────────────\n\nasync function main() {\n  log(\"=== Reviews sync started ===\");\n\n  const db = getDb();\n  const apiKey = getApiKey(db);\n  if (!apiKey) {\n    log(\"ERROR: No API key found\");\n    db.close();\n    return;\n  }\n\n  const accountId = getAccountId(db);\n  if (!accountId) {\n    log(\"ERROR: No account found\");\n    db.close();\n    return;\n  }\n\n  // 1. Fetch & upsert reviews\n  const feedbacks = await fetchFeedbacks(apiKey);\n  log(`Fetched ${feedbacks.length} feedbacks from WB`);\n\n  if (feedbacks.length > 0) {\n    const before = db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE account_id = ?`).get(accountId).cnt;\n    const upserted = upsertReviews(db, accountId, feedbacks);\n    const after = db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE account_id = ?`).get(accountId).cnt;\n    const added = after - before;\n    log(`Upserted ${upserted}, new: ${added}, total: ${after}`);\n  }\n\n  // 2. Enrich from Orders API\n  const enriched = await enrichFromOrders(db, apiKey, accountId);\n  log(`Enriched ${enriched} reviews with price & region`);\n\n  // 3. Update sync status\n  const total = db.prepare(`SELECT COUNT(*) as cnt FROM reviews`).get().cnt;\n  const withPrice = db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE price > 0`).get().cnt;\n  db.prepare(`UPDATE sync_status SET status = 'done', loaded = ?, total = ?, message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1`)\n    .run(total, total, `В базе: ${total.toLocaleString(\"ru-RU\")} ✅ | Цена и ПВЗ: ${withPrice.toLocaleString(\"ru-RU\")}`);\n\n  log(`=== Done. Total: ${total}, with price: ${withPrice} ===`);\n  db.close();\n}\n\nmain().catch(e => {\n  log(`FATAL: ${e.message}`);\n  process.exit(1);\n});\n"
         },
         {
           "type": "code",

@@ -131,9 +131,18 @@ export function initShipmentTables(): void {
       name TEXT,
       brand TEXT,
       category TEXT,
+      length_cm REAL DEFAULT 0,
+      width_cm REAL DEFAULT 0,
+      height_cm REAL DEFAULT 0,
       sizes_json TEXT
     )
   `);
+
+  const productCols = d.prepare("PRAGMA table_info(shipment_products)").all() as { name: string }[];
+  const productColNames = new Set(productCols.map((col) => col.name));
+  if (!productColNames.has("length_cm")) d.prepare("ALTER TABLE shipment_products ADD COLUMN length_cm REAL DEFAULT 0").run();
+  if (!productColNames.has("width_cm")) d.prepare("ALTER TABLE shipment_products ADD COLUMN width_cm REAL DEFAULT 0").run();
+  if (!productColNames.has("height_cm")) d.prepare("ALTER TABLE shipment_products ADD COLUMN height_cm REAL DEFAULT 0").run();
 
   d.exec(`
     CREATE TABLE IF NOT EXISTS shipment_meta (
@@ -256,14 +265,14 @@ export function saveStock(stock: StockItem[]): { total: number; written: number;
 export function saveProducts(products: Product[]): { total: number; written: number; skipped: number } {
   const d = getDb();
   // Снимок текущих записей для diff
-  const existingRows = d.prepare("SELECT article_wb, name, brand, category, sizes_json FROM shipment_products").all() as {
-    article_wb: string; name: string; brand: string; category: string; sizes_json: string;
+  const existingRows = d.prepare("SELECT article_wb, name, brand, category, length_cm, width_cm, height_cm, sizes_json FROM shipment_products").all() as {
+    article_wb: string; name: string; brand: string; category: string; length_cm: number; width_cm: number; height_cm: number; sizes_json: string;
   }[];
   const existing = new Map(existingRows.map(r => [r.article_wb, r]));
 
   const stmt = d.prepare(`
-    REPLACE INTO shipment_products (article_wb, name, brand, category, sizes_json)
-    VALUES (@articleWB, @name, @brand, @category, @sizesJson)
+    REPLACE INTO shipment_products (article_wb, name, brand, category, length_cm, width_cm, height_cm, sizes_json)
+    VALUES (@articleWB, @name, @brand, @category, @lengthCm, @widthCm, @heightCm, @sizesJson)
   `);
 
   let written = 0;
@@ -271,11 +280,17 @@ export function saveProducts(products: Product[]): { total: number; written: num
   const insert = d.transaction((rows: Product[]) => {
     for (const p of rows) {
       const sizesJson = JSON.stringify(p.sizes);
+      const lengthCm = Number(p.lengthCm) || 0;
+      const widthCm = Number(p.widthCm) || 0;
+      const heightCm = Number(p.heightCm) || 0;
       const old = existing.get(p.articleWB);
       if (old
         && old.name === p.name
         && old.brand === p.brand
         && old.category === p.category
+        && Number(old.length_cm || 0) === lengthCm
+        && Number(old.width_cm || 0) === widthCm
+        && Number(old.height_cm || 0) === heightCm
         && old.sizes_json === sizesJson) {
         skipped++;
         continue;
@@ -285,6 +300,9 @@ export function saveProducts(products: Product[]): { total: number; written: num
         name: p.name,
         brand: p.brand,
         category: p.category,
+        lengthCm,
+        widthCm,
+        heightCm,
         sizesJson,
       });
       written++;
@@ -410,7 +428,7 @@ export function getStock(): StockItem[] {
 export function getProducts(): Product[] {
   const d = getDb();
   const rows = d.prepare(`
-    SELECT article_wb, name, brand, category, sizes_json
+    SELECT article_wb, name, brand, category, length_cm, width_cm, height_cm, sizes_json
     FROM shipment_products
     ORDER BY article_wb
   `).all() as Record<string, unknown>[];
@@ -420,6 +438,9 @@ export function getProducts(): Product[] {
     name: r.name as string,
     brand: r.brand as string,
     category: r.category as string,
+    lengthCm: Number(r.length_cm) || 0,
+    widthCm: Number(r.width_cm) || 0,
+    heightCm: Number(r.height_cm) || 0,
     sizes: (() => {
       try {
         return JSON.parse(r.sizes_json as string);

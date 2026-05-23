@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
 import Link from "next/link";
+import { Calculator, Package, ReceiptText } from "lucide-react";
 import { StatCard } from "@/components/StatCard";
 import DateRangePicker from "@/components/DateRangePicker";
 import { formatNumber } from "@/lib/utils";
@@ -45,6 +46,10 @@ import {
 const RUB = (v: number) => formatNumber(v) + " ₽";
 const PCT = (v: number) => v.toFixed(1) + "%";
 const QTY = (v: number) => formatNumber(v) + " шт";
+
+interface FinanceBarcodeItem {
+  barcode: string;
+}
 
 
 function marginStatus(m: number) {
@@ -129,6 +134,7 @@ export default function FinancePage() {
   const [daily, setDaily] = useState<DailyRow[]>([]);
   const [articles, setArticles] = useState<ArticleRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [missingCogsCount, setMissingCogsCount] = useState<number | null>(null);
 
   // Period filter
   const [dateFrom, setDateFrom] = useState<string>("");
@@ -174,6 +180,42 @@ export default function FinancePage() {
   // ── Load tax settings once ──
   useEffect(() => {
     loadTaxSettings().then(setTaxSettings);
+  }, []);
+
+  // ── COGS alert for header button ──
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadMissingCogsCount() {
+      try {
+        const [cogsResp, barcodesResp] = await Promise.all([
+          fetch("/api/finance/cogs"),
+          fetch("/api/finance/barcodes"),
+        ]);
+        if (!cogsResp.ok || !barcodesResp.ok) return;
+
+        const cogsRows = await cogsResp.json() as { barcode: string; cost: number | null }[];
+        const barcodeRows = await barcodesResp.json() as FinanceBarcodeItem[];
+        const cogsByBarcode = new Map(
+          cogsRows.map((row) => [row.barcode, Number(row.cost || 0)])
+        );
+        const missingCount = barcodeRows.filter((row) => {
+          const barcode = String(row.barcode || "").trim();
+          if (!barcode) return false;
+          return (cogsByBarcode.get(barcode) || 0) <= 0;
+        }).length;
+
+        if (!cancelled) setMissingCogsCount(missingCount);
+      } catch {
+        if (!cancelled) setMissingCogsCount(null);
+      }
+    }
+
+    loadMissingCogsCount();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // ── Reload when period changes ──
@@ -327,21 +369,39 @@ export default function FinancePage() {
         <div className="flex items-center gap-2">
           <Link
             href="/finance/settings"
-            className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg border border-[var(--border)] bg-[var(--bg-card)] hover:bg-[var(--bg-card-hover)] text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+            className={
+              "relative flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg border transition-colors " +
+              (missingCogsCount && missingCogsCount > 0
+                ? "finance-cogs-alert border-[var(--danger)] bg-[var(--danger)]/10 text-white hover:bg-[var(--danger)]/20"
+                : "border-[var(--border)] bg-[var(--bg-card)] hover:bg-[var(--bg-card-hover)] text-[var(--text-muted)] hover:text-[var(--text)]")
+            }
+            title={
+              missingCogsCount && missingCogsCount > 0
+                ? `Не задана себестоимость: ${formatNumber(missingCogsCount)} баркодов`
+                : "Себестоимость"
+            }
           >
-            📦 Себестоимость
+            <Package size={16} aria-hidden="true" />
+            <span>Себестоимость</span>
+            {missingCogsCount !== null && missingCogsCount > 0 && (
+              <span className="ml-1 rounded-full bg-[var(--danger)] px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                {formatNumber(missingCogsCount)}
+              </span>
+            )}
           </Link>
           <Link
             href="/finance/taxes"
             className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg border border-[var(--border)] bg-[var(--bg-card)] hover:bg-[var(--bg-card-hover)] text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
           >
-            🧾 Налоги
+            <ReceiptText size={16} aria-hidden="true" />
+            <span>Налоги</span>
           </Link>
           <Link
             href="/finance/formulas"
             className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg border border-[var(--border)] bg-[var(--bg-card)] hover:bg-[var(--bg-card-hover)] text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
           >
-            📐 Формулы
+            <Calculator size={16} aria-hidden="true" />
+            <span>Формулы</span>
           </Link>
         </div>
       </div>

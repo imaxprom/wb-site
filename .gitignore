@@ -15,6 +15,7 @@ data/*.log
 data/wb-api-key.txt
 data/wb-tokens.json
 data/wb-cookies.json
+data/google-service-account.json
 data/cron-secret.txt
 data/telegram.env
 data/api-snapshots/

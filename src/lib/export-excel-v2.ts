@@ -85,7 +85,8 @@ function setDateCell(
 export function exportShipmentExcelV2(
   calculations: ShipmentCalculation[],
   overrides: ProductOverrides = {},
-  title: string = "ИП Беликова А.Л"
+  title: string = "ИП Беликова А.Л",
+  stockByBarcode: Record<string, string> = {}
 ) {
   const wb = XLSX.utils.book_new();
   const ws: XLSX.WorkSheet = {};
@@ -163,7 +164,7 @@ export function exportShipmentExcelV2(
   setCell(ws, 4, COL_E, "Всего на нашем складе", hdrStyle);
 
   for (let ri = 0; ri < regionCount; ri++) {
-    const whName = regions[ri].warehouses[0] || regions[ri].shortName;
+    const whName = regions[ri].selectedWarehouse || regions[ri].warehouses[0] || regions[ri].shortName;
     const short = whName.includes("(") ? whName.split("(")[0].trim() : whName;
     setCell(ws, 4, REGION_BOX_COLS[ri], short, hdrStyle);
     setCell(ws, 4, REGION_PIECE_COLS[ri], "Штук", hdrStyle);
@@ -226,8 +227,11 @@ export function exportShipmentExcelV2(
         border: { left: bMedium, top: borderTop, bottom: borderBottom },
       });
 
-      // E: empty (manual)
-      setCell(ws, row, COL_E, null, {
+      const manualStockRaw = stockByBarcode[sRow.barcode]?.trim();
+      const manualStock = manualStockRaw ? Number(manualStockRaw.replace(",", ".")) : 0;
+
+      // E: manual stock from the site
+      setCell(ws, row, COL_E, Number.isFinite(manualStock) ? manualStock : null, {
         font: F18, alignment: A_CENTER,
         border: { left: bMedium, right: bMedium, top: borderTop, bottom: borderBottom },
       });

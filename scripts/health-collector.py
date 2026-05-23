@@ -92,6 +92,15 @@ def parse_cron_pattern(pattern: str) -> dict:
 
     minute_p, hour_p, day_p, month_p, weekday_p = parts
 
+    def weekday_label(value: str) -> str:
+        wd_range = re.fullmatch(r"(\d+)-(\d+)", value)
+        if wd_range:
+            a, b = int(wd_range.group(1)), int(wd_range.group(2))
+            return f"{WEEKDAY_RU.get(a,'?')}-{WEEKDAY_RU.get(b,'?')}"
+        if value.isdigit():
+            return WEEKDAY_RU.get(int(value), value)
+        return value
+
     # Интервал: */N * * * *
     if minute_p.startswith("*/") and hour_p == "*" and day_p == "*" and weekday_p == "*":
         try:
@@ -99,6 +108,30 @@ def parse_cron_pattern(pattern: str) -> dict:
             return {"type": "interval", "intervalMin": imin, "description": f"каждые {imin} мин"}
         except ValueError:
             pass
+
+    # Ежечасно: 0 * * * *
+    if minute_p.isdigit() and hour_p == "*" and day_p == "*" and month_p == "*" and weekday_p == "*":
+        minute = int(minute_p)
+        desc = "каждый час" if minute == 0 else f"каждый час в :{minute:02d}"
+        return {"type": "interval", "intervalMin": 60, "description": desc}
+
+    # Один запуск в конкретное время: 0 1 * * * или 0 19 * * 1-5.
+    if minute_p.isdigit() and hour_p.isdigit() and day_p == "*" and month_p == "*":
+        hour_msk = (int(hour_p) + 3) % 24
+        minute = int(minute_p)
+        time_str = f"{hour_msk:02d}:{minute:02d}"
+        if weekday_p == "*":
+            desc = f"ежедневно в {time_str} МСК"
+        else:
+            desc = f"{weekday_label(weekday_p)}, в {time_str} МСК"
+        return {
+            "type": "calendar_range",
+            "hours": [hour_msk],
+            "minute": minute,
+            "description": desc,
+            "runsPerDay": 1,
+            **({} if weekday_p == "*" else {"days": weekday_label(weekday_p)}),
+        }
 
     # Диапазон часов: 0 3-20 * * * (возможно с weekday)
     hour_range = re.fullmatch(r"(\d+)-(\d+)", hour_p)
@@ -109,14 +142,7 @@ def parse_cron_pattern(pattern: str) -> dict:
         hours_msk = _utc_to_msk_hours(hours_utc)
         days_str = ""
         if weekday_p != "*":
-            wd_range = re.fullmatch(r"(\d+)-(\d+)", weekday_p)
-            if wd_range:
-                a, b = int(wd_range.group(1)), int(wd_range.group(2))
-                days_str = f"{WEEKDAY_RU.get(a,'?')}-{WEEKDAY_RU.get(b,'?')}"
-            elif weekday_p.isdigit():
-                days_str = WEEKDAY_RU.get(int(weekday_p), weekday_p)
-            else:
-                days_str = weekday_p
+            days_str = weekday_label(weekday_p)
         desc = f"{hours_msk[0]:02d}:00–{hours_msk[-1]:02d}:00 МСК"
         if days_str:
             desc = f"{days_str}, {desc}"
@@ -146,10 +172,6 @@ def parse_cron_pattern(pattern: str) -> dict:
             }
         except ValueError:
             pass
-
-    # Ежечасно: 0 * * * *
-    if minute_p.isdigit() and hour_p == "*" and day_p == "*" and weekday_p == "*":
-        return {"type": "interval", "intervalMin": 60, "description": f"каждый час в :{int(minute_p):02d}"}
 
     return {"type": "cron", "description": pattern}
 

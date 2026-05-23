@@ -16,24 +16,24 @@ export function ClientShell({ children, initialSidebarCollapsed = false }: { chi
 
   return (
     <DataProvider>
-      <ShellWithNav initialCollapsed={initialSidebarCollapsed}>{children}</ShellWithNav>
+      <ShellWithNav initialPinned={!initialSidebarCollapsed}>{children}</ShellWithNav>
     </DataProvider>
   );
 }
 
-function ShellWithNav({ children, initialCollapsed }: { children: React.ReactNode; initialCollapsed: boolean }) {
-  const [collapsed, setCollapsed] = React.useState<boolean>(initialCollapsed);
+function ShellWithNav({ children, initialPinned }: { children: React.ReactNode; initialPinned: boolean }) {
+  const [pinned, setPinned] = React.useState<boolean>(initialPinned);
 
   const toggle = () => {
-    const next = !collapsed;
-    setCollapsed(next);
-    document.cookie = `mphub-sidebar=${next ? "collapsed" : "expanded"}; path=/; max-age=${60 * 60 * 24 * 365}; samesite=lax`;
+    const next = !pinned;
+    setPinned(next);
+    document.cookie = `mphub-sidebar=${next ? "expanded" : "collapsed"}; path=/; max-age=${60 * 60 * 24 * 365}; samesite=lax`;
   };
 
   return (
-    <div className="flex min-h-screen">
-      <Sidebar collapsed={collapsed} onToggle={toggle} />
-      <main className={cn("flex-1 ml-0 p-4 md:p-6 transition-all duration-200", collapsed ? "md:ml-16" : "md:ml-60")}>
+    <div className="min-h-screen">
+      <Sidebar pinned={pinned} onTogglePinned={toggle} />
+      <main className={cn("min-w-0 flex-1 ml-0 p-4 md:p-6 transition-all duration-200", pinned ? "md:ml-60" : "md:ml-16")}>
         {children}
       </main>
     </div>

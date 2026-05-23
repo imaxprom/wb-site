@@ -4,7 +4,6 @@
 
 import type { Product, StockItem, OrderRecord, SizeConfig } from "@/types";
 import type { WBCard, WBStockItem, WBOrder } from "./wb-api";
-import { guessPerBox } from "./size-utils";
 
 /** Convert WB product cards to our Product[] */
 export function transformCards(cards: WBCard[]): Product[] {
@@ -12,7 +11,7 @@ export function transformCards(cards: WBCard[]): Product[] {
     const sizes: SizeConfig[] = card.sizes.map((s) => ({
       size: s.techSize,
       barcode: s.skus[0] || "",
-      perBox: guessPerBox(s.techSize),
+      perBox: 0,
     }));
 
     return {
@@ -20,6 +19,9 @@ export function transformCards(cards: WBCard[]): Product[] {
       articleWB: String(card.nmID),
       brand: card.brand || "",
       category: "",
+      lengthCm: card.dimensions?.length || 0,
+      widthCm: card.dimensions?.width || 0,
+      heightCm: card.dimensions?.height || 0,
       sizes,
     };
   });

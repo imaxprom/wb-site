@@ -33,11 +33,15 @@ docs/            — ТЗ и документация
 3. **Проверка:** минимум `npm run build` перед выкладкой.
 4. **Деплой:** `bash scripts/deploy.sh` (rsync → `scripts/prod-safe-build.sh` на VPS).
 5. **После деплоя:** проверять PM2, health-check и конкретный изменённый endpoint.
+- `npm run save-session-state` обновляет `SESSION_STATE.md` через `scripts/save-session-state.js`: читает local SQLite, production SQLite/runtime/crontab через `ssh wb-site`, делает `rsync --dry-run` и пишет короткую карту старта. Ручные пункты Current Focus / Continue From Here лежат в `scripts/session-state-notes.json`; PM2 парсится из `pm2 jlist` JSON, а генератор подсвечивает local/prod drift, runtime-проблемы и непустой deploy dry-run.
+- В Codex sandbox этот скрипт может требовать escalated permissions, потому что внутри вызывает `ssh` и `rsync`.
+- `KnowledgeBase.tsx` в репозитории сейчас отсутствует; база знаний сайта живёт в `src/app/docs/page.tsx` и `public/data/docs.json`.
 
 ## Инфраструктура
 - **VPS wb-site** (192.168.55.104): production, PM2, cron-задачи
-- **VM claude-cli** (192.168.55.106): Claude Code CLI через Германию (89.125.73.111)
-- **SSH:** `ssh wb-site`, `ssh claude-cli`
+- **VM codex-cli** (192.168.55.106): Codex gateway для генерации AI-текстов через прокси; старый alias `claude-cli` может существовать, но актуальный сервис — `codex-cli`
+- **Proxy CT 105** (`192.168.55.105`): внешний HTTPS-прокси; AI/регионально заблокированные сервисы ходят через прокси/Германию
+- **SSH:** `ssh wb-site`, `ssh codex-cli` (`ssh claude-cli` использовать только если нужно проверить старый alias)
 
 ## Production сеть
 - Публичный URL: `https://hub.imaxprom.site`
@@ -58,6 +62,59 @@ docs/            — ТЗ и документация
 - `prod-safe-build.sh` делает backup текущей `.next`, останавливает PM2 пользователя `makson`, запускает `npm run build`, перезапускает PM2 и проверяет `http://127.0.0.1:3000/login`.
 - Если build/start/health-check падает, скрипт восстанавливает предыдущую `.next` и перезапускает PM2.
 - Старый `scripts/rebuild-server.sh` относится к локальной/macOS схеме и не является production deploy.
+- В текущем dirty worktree полный `deploy.sh` уже был выполнен 2026-05-23 по просьбе пользователя, чтобы production соответствовал локалке. Для следующих узких задач всё равно предпочитать targeted `rsync` явно затронутых файлов с server-side backup, production build и `pm2 restart mphub`.
+
+## Отзывы WB и жалобы
+- Основной аккаунт отзывов на production: `ИП Белякова А. Л. / IMSI`, `supplier_id=1166225`.
+- Источник истины по данным отзывов: production SQLite `/home/makson/website/data/finance.db`, таблицы `review_accounts`, `reviews`, `review_complaints`, `sync_status`.
+- После 2026-05-17 sync отзывов должен читать не только `GET /api/v1/feedbacks`, но и `GET /api/v1/feedbacks/archive`: WB хранит там обработанные и rating-only отзывы. Без архива динамика после 2026-04-23 выглядит ложно заниженной.
+- `scripts/reviews-sync.js` поддерживает обычный sync и архивный backfill: `node scripts/reviews-sync.js --archive-only --archive-pages=N`.
+- `scripts/reviews-sync.js` имеет lock-файл `data/reviews-sync.lock` и backoff на WB `429`.
+- Production cron отзывов временно снижен до 1 раза в час (`17 * * * * ... scripts/reviews-sync.js`) из-за лимитов WB feedbacks API.
+- Watchdog для `reviews-sync` должен учитывать hourly cron: `max_age_min=60`. Старый порог 15 минут давал ложные WARNING около 19:55/20:55 МСК.
+- 2026-05-17 архивный backfill обработал 15000 архивных записей и добавил 3660 новых отзывов: всего стало 146670, `sync_status` содержит `Архив: +3 660`.
+- 2026-05-23 production snapshot: `reviews=147450`, `review_complaints=572`, `sync_status=done`, `В базе: 147 450 ✅ | Цена и ПВЗ: 17 334`, updated `2026-05-23 07:19:05` UTC.
+- Жалобы генерируются через Codex gateway (`data/codex-gateway.env`, default URL `http://192.168.55.106:8080`), не через Claude CLI.
+- Для WB жалоб текст должен отправляться в `feedbackComplaint.explanation`, не в `feedbackComplaint.text`. Перед отправкой нужно запрашивать доступные причины `/complaints/{feedbackId}` и выбирать только `explanationRequired=true`; для fallback предпочитать reason `19`.
+- `review_accounts.wb_seller_lk` хранит LK JWT для заголовка `wb-seller-lk`; публичный API не должен отдавать этот токен.
+- SMS-авторизация WB через `scripts/wb-seller-login.py` синхронизирует `authorizev3`, `wbx-validation-key`, `wb_seller_lk` в `review_accounts` по `supplier_id`. Если у номера несколько юрлиц, выбор должен запрашиваться у пользователя, не выбирается автоматически.
+
+## Расчёт отгрузки
+- 2026-05-19 точечно выкачены на production правки расчёта отгрузки:
+  - картинки товаров используют fallback-кандидаты WB CDN basket (`getWbImageUrlCandidates`), потому что новые nmID могут лежать в соседнем `basket`; проверенный пример `770762506`: старая ссылка `basket-35` давала 404, `basket-36` отдаёт 200;
+  - селектор артикулов в V2/V3 стал шире и показывает custom name из `product_overrides`/`overrides`, WB article и seller name;
+  - V2 Excel summary получает из UI ручные значения `Всего на складе`, ручные правки региональных ячеек и строки `образец`;
+  - V3 smart export получил ручное поле `Всего на складе` в детализации и передаёт его в `export-excel-v2.ts`.
+- Эти shipment-правки были задеплоены не общим `scripts/deploy.sh`, а точечным `rsync` файлов + `npm run build` + `pm2 restart mphub`, потому что пользователь явно просил выкатывать только конкретный участок.
+- Production shipment DB на 2026-05-23: `shipment_products=30`, `shipment_stock=5163`, `shipment_orders=165938`, max order date `2026-05-23T10:44:54`.
+
+## Расчёт логистики
+- Раздел `/logistics` и sidebar item `Расчёт логистики` выкачены на production 2026-05-21/22.
+- Новейшие правки формулы ИЛ/ИРП и sidebar от 2026-05-22/23 выкачены на production 2026-05-23 полным `bash scripts/deploy.sh`; production build и health-check прошли.
+- API: `/api/logistics/products`, `/api/logistics/tariffs`, `/api/logistics/alerts`.
+- `/api/logistics/tariffs` использует WB acceptance coefficients `https://common-api.wildberries.ru/api/tariffs/v1/acceptance/coefficients`, а не старые stock tariffs. Для коробов `boxTypeID=2`, для паллет `boxTypeID=5`.
+- Складские колонки сортируются по заказам/продажам за 90 дней из `shipment_orders`; ручной выбор складов сохраняется в browser localStorage `mphub-logistics-selected-warehouses`, лимит колонок — `mphub-logistics-warehouse-limit`.
+- Локальная формула `/api/logistics/products`: отчётная локальность считается по всем регионам/странам как в WB “Поставки по регионам”, а тарифные индексы `ИЛ/ИРП` считаются отдельно по RF-only базе за 13 полных завершённых недель без текущей недели и без WB exception categories.
+- Локальный UI `/logistics`: верхний `Индекс локализации` форматируется как `1,00`; отдельно показываются `Индекс распределения продаж` и `Локальность отчёта WB`; в таблице по артикулам разделены `ИЛ/ИРП`, RF-locality и report-locality.
+- Таблица логистики агрегируется по уникальному WB артикулу без размеров/баркодов.
+- Отображаемая логистика считается от объёма карточки: `length_cm * width_cm * height_cm / 1000`, fallback — `paid_storage.volume`.
+- Production `shipment_products` уже содержит `length_cm`, `width_cm`, `height_cm`.
+- Production logistics data на 2026-05-23: `shipment_stock=5163`, `shipment_orders=165938`, `paid_storage=48352` max date `2026-05-22`, `warehouse_remains_volume=132`, `warehouse_measurements=30`, `logistics_tariff_cache=3`.
+- UI показывает:
+  - `Объём из карточки`;
+  - `Объём из отчёта остатков`;
+  - последние 3 замера WB;
+  - складские тарифные колонки.
+- Видимый столбец `Объём из хранения` удалён из UI; данные `paid_storage.volume` остаются fallback/source в API.
+- Если последний замер WB больше объёма карточки, ячейка замеров подсвечивается красным.
+- Sidebar показывает красный треугольник на `Расчёт логистики` с числом критичных замеров. Сейчас production count = 1: article `178439058`, WB `3.059 л` против карточки `2.5 л`.
+- `/logistics` показывает плашку новых замеров WB за последние 7 дней и кнопку `Посмотреть новые`; свежие замеры получают синюю метку `NEW`. Последняя проверка production: новых замеров = 4.
+- Автосинк логистических объёмов:
+  - `scripts/logistics-volume-sync.js --source remains` — WB `GET /api/v1/warehouse_remains` + task download, cron `0 3,6,9,12,15,18 * * *` UTC (06:00/09:00/12:00/15:00/18:00/21:00 MSK);
+  - `scripts/logistics-volume-sync.js --source measurements` — WB `GET /api/analytics/v1/warehouse-measurements`, cron `10 3,6,9,12,15,18 * * *` UTC (06:10/09:10/12:10/15:10/18:10/21:10 MSK).
+- Monitoring registry и watchdog знают `warehouse-remains-sync` и `warehouse-measurements-sync`.
+- `scripts/health-collector.py` форматирует cron-часы человекочитаемо (`каждый час`, `каждые 5 мин`, `в 06:00, 09:00, 12:00, 15:00, 18:00, 21:00 МСК`).
+- Локальная правка sidebar: меню по умолчанию свернуто, раскрывается при hover, фиксируется pin-кнопкой сверху; нижняя стрелка снята; картинка логотипа заменена текстом `MPHub` (`MP` серым, `Hub` фиолетовым); в collapsed state текст скрыт, чтобы не было артефакта слева у pin.
 
 ## Разрешения
 - Читать файлы из Telegram tmp ТОЛЬКО по запросу пользователя

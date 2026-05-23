@@ -239,7 +239,7 @@ function calculateBoxes(
   perBox: number
 ): { boxes: number; pieces: number } {
   const deficit = plan - fact;
-  if (deficit <= 0) return { boxes: 0, pieces: 0 };
+  if (deficit <= 0 || perBox <= 0) return { boxes: 0, pieces: 0 };
 
   const rawBoxes = deficit / perBox;
   const boxes = Math.ceil(rawBoxes / 0.5) * 0.5;

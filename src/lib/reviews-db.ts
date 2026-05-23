@@ -36,19 +36,20 @@ export interface ReviewAccount {
   settings_json: string | null;
   wb_authorize_v3: string | null;
   wb_validation_key: string | null;
+  wb_seller_lk: string | null;
   wb_cookie_updated_at: string | null;
   created_at: string;
   updated_at: string;
 }
 
-export interface PublicReviewAccount extends Omit<ReviewAccount, "api_key" | "wb_authorize_v3" | "wb_validation_key"> {
+export interface PublicReviewAccount extends Omit<ReviewAccount, "api_key" | "wb_authorize_v3" | "wb_validation_key" | "wb_seller_lk"> {
   has_api_key: boolean;
   has_wb_authorize_v3: boolean;
   has_wb_validation_key: boolean;
 }
 
 export function toPublicReviewAccount(account: ReviewAccount): PublicReviewAccount {
-  const { api_key, wb_authorize_v3, wb_validation_key, ...rest } = account;
+  const { api_key, wb_authorize_v3, wb_validation_key, wb_seller_lk, ...rest } = account;
 
   return {
     ...rest,
@@ -303,7 +304,7 @@ export function updateReviewAccount(id: number, data: Partial<ReviewAccount>): v
     "name", "store_name", "inn", "supplier_id", "api_key",
     "cookie_status", "api_status", "auto_replies", "auto_dialogs",
     "auto_complaints", "use_auto_proxy", "settings_json",
-    "wb_authorize_v3", "wb_validation_key",
+    "wb_authorize_v3", "wb_validation_key", "wb_seller_lk",
   ] as const;
 
   for (const key of allowed) {

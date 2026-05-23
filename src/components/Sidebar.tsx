@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -9,11 +9,12 @@ import {
   DollarSign,
   Activity,
   Package,
+  Warehouse,
+  Truck,
   FileText,
   BookOpen,
   Settings as SettingsIcon,
-  ChevronLeft,
-  ChevronRight,
+  Pin,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -23,6 +24,8 @@ const NAV_GROUPS = [
     { href: "/reviews", label: "Отзывы", icon: MessageSquare },
     { href: "/finance", label: "Финансы", icon: DollarSign },
     { href: "/shipment", label: "Расчёт отгрузки", icon: Package },
+    { href: "/logistics", label: "Расчёт логистики", icon: Truck },
+    { href: "/warehouse", label: "Склад", icon: Warehouse },
   ],
   [
     { href: "/monitor", label: "Мониторинг", icon: Activity },
@@ -32,16 +35,37 @@ const NAV_GROUPS = [
   ],
 ];
 
-export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+export function Sidebar({ pinned, onTogglePinned }: { pinned: boolean; onTogglePinned: () => void }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [logisticsAlerts, setLogisticsAlerts] = useState(0);
+  const expanded = pinned || hovered || open;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch("/api/logistics/alerts", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data) return;
+        setLogisticsAlerts(Number(data.measurementOverCardCount) || 0);
+      })
+      .catch(() => {
+        if (!cancelled) setLogisticsAlerts(0);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <>
       {/* Mobile burger */}
       <button
         onClick={() => setOpen(!open)}
-        className="fixed top-4 left-4 z-30 md:hidden bg-[var(--bg-card)] border border-[var(--border)] rounded-lg p-2 text-xl"
+        className="fixed top-4 left-4 z-[70] md:hidden bg-[var(--bg-card)] border border-[var(--border)] rounded-lg p-2 text-xl"
       >
         {open ? "✕" : "☰"}
       </button>
@@ -49,25 +73,48 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
       {/* Backdrop on mobile */}
       {open && (
         <div
-          className="fixed inset-0 bg-black/50 z-20 md:hidden"
+          className="fixed inset-0 bg-black/50 z-[50] md:hidden"
           onClick={() => setOpen(false)}
         />
       )}
 
       {/* Sidebar */}
       <aside
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
         className={cn(
-          "fixed left-0 top-0 h-screen bg-[var(--bg-card)] border-r border-[var(--border)] flex flex-col z-20 transition-all duration-200",
-          collapsed ? "w-16" : "w-60",
+          "fixed left-0 top-0 h-screen bg-[var(--bg-card)] border-r border-[var(--border)] flex flex-col z-[60] transition-all duration-200",
+          expanded ? "w-60 shadow-xl shadow-black/10 md:shadow-none" : "w-16",
           open ? "translate-x-0 w-60" : "-translate-x-full md:translate-x-0"
         )}
       >
-        <div className={cn("border-b border-[var(--border)] transition-all", collapsed ? "p-2" : "p-4")}>
-          <img
-            src="/logo-mphub.jpg"
-            alt="MpHub"
-            className={cn("rounded-lg transition-all", collapsed ? "w-10 h-10 object-cover mx-auto" : "w-full h-auto")}
-          />
+        <div className={cn("relative border-b border-[var(--border)] transition-all", expanded ? "p-4" : "h-14 p-2")}>
+          {expanded && (
+            <Link
+              href="/analytics"
+              onClick={() => setOpen(false)}
+              className="flex h-10 items-center justify-start rounded-lg px-1 text-2xl font-bold tracking-normal transition-all"
+              aria-label="MPHub"
+            >
+              <span className="text-[var(--text-muted)]">MP</span>
+              <span className="text-[var(--accent)]">Hub</span>
+            </Link>
+          )}
+          <button
+            type="button"
+            onClick={onTogglePinned}
+            className={cn(
+              "absolute right-2 top-2 z-10 hidden h-8 w-8 items-center justify-center rounded-lg border transition-colors md:flex",
+              pinned
+                ? "border-[var(--accent)]/50 bg-[var(--accent)]/15 text-[var(--accent)]"
+                : "border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-muted)] hover:bg-[var(--bg-card-hover)] hover:text-[var(--text)]"
+            )}
+            title={pinned ? "Открепить меню" : "Закрепить меню"}
+            aria-label={pinned ? "Открепить меню" : "Закрепить меню"}
+            aria-pressed={pinned}
+          >
+            <Pin size={16} className={cn("transition-transform", pinned && "rotate-45")} aria-hidden="true" />
+          </button>
         </div>
 
         <nav className="flex-1 py-4 overflow-y-auto overflow-x-hidden">
@@ -77,7 +124,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
                 <div
                   className={cn(
                     "my-3 border-t border-[var(--border)]/80",
-                    collapsed ? "mx-4" : "mx-5"
+                    expanded ? "mx-5" : "mx-4"
                   )}
                 />
               )}
@@ -88,32 +135,48 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
                     key={item.href}
                     href={item.href}
                     onClick={() => setOpen(false)}
-                    title={collapsed ? item.label : undefined}
+                    title={expanded ? undefined : item.label}
                     className={cn(
                       "flex items-center text-base transition-colors",
-                      collapsed ? "justify-center px-3 py-3" : "px-5 py-3",
+                      expanded ? "px-5 py-3" : "justify-center px-3 py-3",
                       isActive
                         ? "bg-[var(--accent)]/10 text-[var(--accent)] border-r-2 border-[var(--accent)]"
                         : "text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--bg-card-hover)]"
                     )}
                   >
-                    <item.icon size={18} className={cn("shrink-0", !collapsed && "mr-2")} />
-                    {!collapsed && <span className="whitespace-nowrap">{item.label}</span>}
+                    <span className={cn("relative shrink-0", expanded && "mr-2")}>
+                      <item.icon size={18} className="shrink-0" />
+                      {item.href === "/logistics" && logisticsAlerts > 0 && !expanded && (
+                        <span
+                          className="absolute -right-2 -top-2 flex h-4 w-4 items-center justify-center bg-[var(--danger)] text-[9px] font-bold leading-none text-white"
+                          style={{ clipPath: "polygon(50% 0, 100% 100%, 0 100%)", paddingTop: 4 }}
+                          title={`Проблемные замеры WB: ${logisticsAlerts}`}
+                        >
+                          {logisticsAlerts}
+                        </span>
+                      )}
+                    </span>
+                    {expanded && (
+                      <span className="flex min-w-0 flex-1 items-center gap-2">
+                        <span className="whitespace-nowrap">{item.label}</span>
+                        {item.href === "/logistics" && logisticsAlerts > 0 && (
+                          <span
+                            className="flex h-5 w-5 items-center justify-center bg-[var(--danger)] text-[10px] font-bold leading-none text-white"
+                            style={{ clipPath: "polygon(50% 0, 100% 100%, 0 100%)", paddingTop: 5 }}
+                            title={`Проблемные замеры WB: ${logisticsAlerts}`}
+                            aria-label={`Проблемные замеры WB: ${logisticsAlerts}`}
+                          >
+                            {logisticsAlerts}
+                          </span>
+                        )}
+                      </span>
+                    )}
                   </Link>
                 );
               })}
             </div>
           ))}
         </nav>
-
-        {/* Collapse toggle — desktop only */}
-        <button
-          onClick={onToggle}
-          className="hidden md:flex items-center justify-center border-t border-[var(--border)] py-2 text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--bg-card-hover)] transition-colors"
-          title={collapsed ? "Развернуть меню" : "Свернуть меню"}
-        >
-          {collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
-        </button>
       </aside>
     </>
   );

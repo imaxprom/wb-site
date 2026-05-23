@@ -1,0 +1,15 @@
+{
+  "currentFocus": [
+    "Production code was full-synced from local on 2026-05-23; latest logistics/sidebar formula changes are deployed.",
+    "`/logistics` uses split report locality vs RF-only tariff indices.",
+    "Tariff `ИЛ/ИРП` use 13 full completed weeks excluding the current week and WB exception categories.",
+    "Sidebar auto-collapses by default, expands on hover, and can be pinned from the top button.",
+    "Reviews sync is intentionally hourly at minute 17 because WB feedbacks API rate-limits with `429`; watchdog threshold is `max_age_min=60`."
+  ],
+  "continueFromHere": [
+    "Visually verify production `/logistics` in browser: top cards, `1,00` formatting, per-article `ИЛ/ИРП`, sidebar hover/pin behavior, and table overlay.",
+    "Compare deployed calculation with WB values: `ИЛ=1,00`, `ИРП=0,09`.",
+    "Keep monitoring production `data/reviews-sync.log`; do not increase reviews sync frequency until WB `429` behavior is rechecked.",
+    "Review critical WB measurement article `178439058`: WB latest measurement `3.059 л` vs card volume `2.5 л`."
+  ]
+}

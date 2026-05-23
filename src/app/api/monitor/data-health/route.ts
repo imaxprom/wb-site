@@ -220,7 +220,53 @@ export async function GET(req: NextRequest) {
         });
       }
 
-      // 14. Daily sync status
+      // 14. Объём из отчёта остатков WB
+      {
+        const table = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'warehouse_remains_volume'").get() as { name: string } | undefined;
+        if (!table) {
+          checks.push({
+            id: "warehouse_remains_volume",
+            name: "Объём из отчёта остатков",
+            status: "error",
+            value: "Таблица отсутствует",
+          });
+        } else {
+          const row = db.prepare("SELECT COUNT(*) as cnt, MAX(synced_at) as synced_at FROM warehouse_remains_volume").get() as { cnt: number; synced_at: string | null };
+          const daysOld = row.synced_at ? Math.round((Date.now() - new Date(row.synced_at).getTime()) / 86400000) : 999;
+          checks.push({
+            id: "warehouse_remains_volume",
+            name: "Объём из отчёта остатков",
+            status: row.cnt > 0 && daysOld <= 2 ? "ok" : row.cnt > 0 && daysOld <= 7 ? "warn" : "error",
+            value: row.cnt > 0 ? `${row.cnt} строк` : "Нет данных",
+            detail: row.synced_at ? `Последний синк: ${row.synced_at}` : undefined,
+          });
+        }
+      }
+
+      // 15. Замеры склада WB
+      {
+        const table = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'warehouse_measurements'").get() as { name: string } | undefined;
+        if (!table) {
+          checks.push({
+            id: "warehouse_measurements",
+            name: "Замеры склада WB",
+            status: "error",
+            value: "Таблица отсутствует",
+          });
+        } else {
+          const row = db.prepare("SELECT COUNT(*) as cnt, MAX(synced_at) as synced_at, MAX(measured_at) as measured_at FROM warehouse_measurements").get() as { cnt: number; synced_at: string | null; measured_at: string | null };
+          const daysOld = row.synced_at ? Math.round((Date.now() - new Date(row.synced_at).getTime()) / 86400000) : 999;
+          checks.push({
+            id: "warehouse_measurements",
+            name: "Замеры склада WB",
+            status: row.cnt > 0 && daysOld <= 2 ? "ok" : row.cnt > 0 && daysOld <= 7 ? "warn" : "error",
+            value: row.cnt > 0 ? `${row.cnt} строк` : "Нет данных",
+            detail: row.synced_at ? `Последний синк: ${row.synced_at}; последний замер: ${row.measured_at || "нет"}` : undefined,
+          });
+        }
+      }
+
+      // 16. Daily sync status
       {
         let syncOk = false;
         let syncDetail = "Файл не найден";
@@ -254,7 +300,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 15-16: Крон-проверки (из файла, обновляется отдельным скриптом)
+    // 17+: Крон-проверки (из файла, обновляется отдельным скриптом)
     try {
       if (fs.existsSync(CRON_HEALTH_PATH)) {
         const cronData = JSON.parse(fs.readFileSync(CRON_HEALTH_PATH, "utf-8")) as { checks: Check[]; timestamp: string };

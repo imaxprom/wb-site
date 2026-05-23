@@ -26,13 +26,18 @@ NOTIFY_SH = PROJECT_DIR / "scripts" / "notify.sh"
 # Cron tasks and their expected intervals (minutes)
 CRON_TASKS = {
     "daily-sync": {"log": DATA_DIR / "daily-sync.log", "max_age_min": 120, "name": "Daily Sync"},
-    "reviews-sync": {"log": DATA_DIR / "reviews-sync.log", "max_age_min": 15, "name": "Reviews Sync"},
+    # Production reviews cron is intentionally hourly at minute 17 because WB feedbacks API is rate-limited.
+    # With watchdog running every 5 minutes, 60 min alerts on the first check after a missed hourly run.
+    "reviews-sync": {"log": DATA_DIR / "reviews-sync.log", "max_age_min": 60, "name": "Reviews Sync"},
     "reviews-complaints": {"log": DATA_DIR / "reviews-complaints.log", "max_age_min": 45, "name": "Reviews Complaints"},
     "shipment-sync": {"log": DATA_DIR / "shipment-sync.log", "max_age_min": 90, "name": "Shipment Sync"},
     # Weekly-sync запускается Пн-Ср 10-23 МСК. В остальные дни и часы проверка пропускается.
     "weekly-sync": {"log": DATA_DIR / "weekly-sync.log", "max_age_min": 90, "name": "Weekly Sync", "only_dow_msk": [1, 2, 3], "only_hours_msk": list(range(10, 24))},
     # Paid-storage-sync гоняется 02:00 МСК. Проверка — только в окне 03-23 МСК (после запуска).
     "paid-storage-sync": {"log": DATA_DIR / "paid-storage-sync.log", "max_age_min": 1440, "name": "Paid Storage Sync", "only_hours_msk": list(range(3, 24))},
+    # Логистические объёмы гоняются после paid-storage, раз в сутки.
+    "warehouse-remains-sync": {"log": DATA_DIR / "warehouse-remains-sync.log", "max_age_min": 1440, "name": "Warehouse Remains Sync", "only_hours_msk": list(range(5, 24))},
+    "warehouse-measurements-sync": {"log": DATA_DIR / "warehouse-measurements-sync.log", "max_age_min": 1440, "name": "Warehouse Measurements Sync", "only_hours_msk": list(range(5, 24))},
 }
 
 # ─── Logging ─────────────────────────────────────────────────

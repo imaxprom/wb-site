@@ -4,31 +4,6 @@
  */
 
 /**
- * Guess the number of items per box based on size name.
- * Larger sizes → fewer items per box.
- */
-export function guessPerBox(size: string): number {
-  const s = size.toLowerCase();
-  if (
-    s.includes("5xl") ||
-    s.includes("52-54") ||
-    s.includes("4xl") ||
-    s.includes("50-52")
-  ) {
-    return 70;
-  }
-  if (
-    s.includes("3xl") ||
-    s.includes("48-50") ||
-    s.includes("xxxl") ||
-    s.includes("46-48")
-  ) {
-    return 80;
-  }
-  return 90;
-}
-
-/**
  * Returns true if the size string contains letters (e.g. "40-42 (L)").
  * Returns false for purely numeric sizes (e.g. "101-103").
  */

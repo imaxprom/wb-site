@@ -18,6 +18,8 @@ import {
 
 const WB_FEEDBACKS_URL =
   "https://feedbacks-api.wildberries.ru/api/v1/feedbacks";
+const WB_FEEDBACKS_ARCHIVE_URL =
+  "https://feedbacks-api.wildberries.ru/api/v1/feedbacks/archive";
 
 // ─── Sync status (SQLite-backed) ────────────────────────────
 
@@ -40,6 +42,41 @@ function resolveApiKey(): string {
 
 const WB_ORDERS_URL = "https://statistics-api.wildberries.ru/api/v1/supplier/orders";
 const WB_STATISTICS_URL = "https://statistics-api.wildberries.ru/api/v5/supplier/reportDetailByPeriod";
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWbJson(url: string, apiKey: string): Promise<unknown> {
+  let lastBody = "";
+
+  const retryDelays = [10000, 30000, 60000, 120000, 180000, 300000, 300000, 300000];
+  for (let attempt = 1; attempt <= retryDelays.length; attempt++) {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    const text = await res.text().catch(() => "");
+    lastBody = text;
+
+    if (res.ok) {
+      return text ? JSON.parse(text) : {};
+    }
+
+    if (res.status === 429 || res.status >= 500) {
+      await sleep(retryDelays[attempt - 1]);
+      continue;
+    }
+
+    throw new Error(`WB feedbacks API ${res.status}: ${text}`);
+  }
+
+  throw new Error(`WB feedbacks API retry exhausted: ${lastBody}`);
+}
+
+function getFeedbacksFromResponse(data: unknown): WBFeedback[] {
+  const response = data as { data?: { feedbacks?: WBFeedback[] } };
+  return Array.isArray(response.data?.feedbacks) ? response.data.feedbacks : [];
+}
 
 /**
  * Enrich reviews with price & region from Orders API (realtime, sticker=shk_id),
@@ -139,8 +176,8 @@ async function enrichFromStatistics(apiKey: string, accountId: number): Promise<
 /**
  * Fetch feedbacks from WB Seller API and upsert into DB.
  * Writes to DB in batches (every 5000) to avoid memory issues and timeouts.
- * fullSync=true — load ALL reviews (first run or explicit full sync).
- * fullSync=false — incremental: only unanswered + last 500 answered.
+ * fullSync=true — load ALL regular and archived reviews.
+ * fullSync=false — incremental: unanswered + recent answered + recent archive pages.
  */
 async function syncFromWB(apiKey: string, accountId: number, fullSync: boolean): Promise<number> {
   setSyncStatusDb({ status: "syncing", loaded: 0, total: 0, message: "Загрузка неотвеченных отзывов..." });
@@ -167,15 +204,7 @@ async function syncFromWB(apiKey: string, accountId: number, fullSync: boolean):
   // 1) Fetch ALL unanswered (both full & incremental)
   for (let skip = 0; ; skip += 100) {
     const url = `${WB_FEEDBACKS_URL}?isAnswered=false&take=100&skip=${skip}`;
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`WB feedbacks API ${res.status}: ${text}`);
-    }
-    const data = await res.json();
-    const feedbacks: WBFeedback[] = data.data?.feedbacks ?? [];
+    const feedbacks = getFeedbacksFromResponse(await fetchWbJson(url, apiKey));
     addToBatch(feedbacks);
     setSyncStatusDb({
       loaded: totalFetched,
@@ -184,37 +213,52 @@ async function syncFromWB(apiKey: string, accountId: number, fullSync: boolean):
         : `Загружено: ${fmtN(totalFetched)} (неотвеченные)`,
     });
     if (feedbacks.length < 100) break;
-    await new Promise(r => setTimeout(r, 350));
+    await sleep(500);
   }
 
   // 2) Fetch answered
   if (isIncremental) {
     setSyncStatusDb({ message: `Инкрементальный sync | Загрузка последних 500 отвеченных...` });
     const url = `${WB_FEEDBACKS_URL}?isAnswered=true&take=500&skip=0`;
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      const feedbacks: WBFeedback[] = data.data?.feedbacks ?? [];
-      addToBatch(feedbacks);
-    }
+    addToBatch(getFeedbacksFromResponse(await fetchWbJson(url, apiKey)));
   } else {
     for (let skip = 0; ; skip += 5000) {
       const url = `${WB_FEEDBACKS_URL}?isAnswered=true&take=5000&skip=${skip}`;
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-      });
-      if (!res.ok) break;
-      const data = await res.json();
-      const feedbacks: WBFeedback[] = data.data?.feedbacks ?? [];
+      const feedbacks = getFeedbacksFromResponse(await fetchWbJson(url, apiKey));
       addToBatch(feedbacks);
       setSyncStatusDb({
         loaded: totalFetched,
-        message: `Загружено и сохранено: ${fmtN(totalFetched)}`,
+        message: `Загружено и сохранено: ${fmtN(totalFetched)} (обычные)`,
       });
       if (feedbacks.length < 5000) break;
-      await new Promise(r => setTimeout(r, 350));
+      await sleep(500);
+    }
+  }
+
+  // 3) Fetch archive. WB moved rating-only and processed reviews here.
+  const archivePageLimit = isIncremental ? 3 : Number.POSITIVE_INFINITY;
+  let archivePages = 0;
+  for (let skip = 0; ; skip += 5000) {
+    if (archivePages >= archivePageLimit) break;
+    const url = `${WB_FEEDBACKS_ARCHIVE_URL}?take=5000&skip=${skip}`;
+    const feedbacks = getFeedbacksFromResponse(await fetchWbJson(url, apiKey));
+    addToBatch(feedbacks);
+    archivePages++;
+    setSyncStatusDb({
+      loaded: totalFetched,
+      message: isIncremental
+        ? `Инкрементальный sync | Архив: стр. ${archivePages}, всего получено ${fmtN(totalFetched)}`
+        : `Загружено и сохранено: ${fmtN(totalFetched)} (с архивом)`,
+    });
+    if (feedbacks.length < 5000) break;
+    await sleep(500);
+    if (isIncremental) {
+      const oldestDate = feedbacks
+        .map((fb) => fb.createdDate?.slice(0, 10))
+        .filter(Boolean)
+        .sort()[0];
+      const cutoff = new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10);
+      if (oldestDate && oldestDate < cutoff) break;
     }
   }
 

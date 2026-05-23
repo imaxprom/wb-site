@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import type { PackingItem, PackingResult } from "@/lib/packing-engine";
+import type { WarehouseStockCellStatus } from "@/modules/shipment/lib/warehouse-ready-stock";
 
 const ARTICLE_PALETTE = [
   { bg: "rgba(129, 140, 248, 0.08)", accent: "#818cf8", text: "#a5b4fc" },
@@ -23,6 +24,12 @@ export interface SummaryArticle {
 }
 
 export type ViewMode = "units" | "boxes";
+
+export interface PackingSummaryEditableValues {
+  stockByBarcode: Record<string, string>;
+  shipmentByKey: Record<string, string>;
+  sampleByKey: Record<string, string>;
+}
 
 function roundBoxes(boxes: number, step: number): number {
   if (step <= 0) return boxes;
@@ -111,20 +118,51 @@ export function PackingSummaryTable({
   viewMode,
   rowMeta,
   boxRounding = 0.5,
+  editableValues,
+  onEditableValuesChange,
+  stockStatusByBarcode = {},
 }: {
   articles: SummaryArticle[];
   regions: Array<{ id: string; shortName: string }>;
   viewMode: ViewMode;
   rowMeta?: Record<string, { plan: number; fact: number; need: number }>;
   boxRounding?: number;
+  editableValues?: PackingSummaryEditableValues;
+  onEditableValuesChange?: React.Dispatch<React.SetStateAction<PackingSummaryEditableValues>>;
+  stockStatusByBarcode?: Record<string, WarehouseStockCellStatus>;
 }) {
-  const [stockByBarcode, setStockByBarcode] = useState<Record<string, string>>({});
-  const [sampleByKey, setSampleByKey] = useState<Record<string, string>>({});
-  const [boxesByKey, setBoxesByKey] = useState<Record<string, string>>({}); // override for boxes (boxes mode) or units (units mode)
+  const [internalEditableValues, setInternalEditableValues] = useState<PackingSummaryEditableValues>({
+    stockByBarcode: {},
+    shipmentByKey: {},
+    sampleByKey: {},
+  });
   const [deltaTooltipOpen, setDeltaTooltipOpen] = useState(false);
   const [sverkaTooltipOpen, setSverkaTooltipOpen] = useState(false);
 
+  const values = editableValues ?? internalEditableValues;
+  const setValues = onEditableValuesChange ?? setInternalEditableValues;
+  const stockByBarcode = values.stockByBarcode;
+  const boxesByKey = values.shipmentByKey; // override for boxes (boxes mode) or units (units mode)
+  const sampleByKey = values.sampleByKey;
+
+  const updateEditableValues = useCallback(
+    (patch: Partial<PackingSummaryEditableValues>) => {
+      setValues((prev) => ({
+        stockByBarcode: patch.stockByBarcode ?? prev.stockByBarcode,
+        shipmentByKey: patch.shipmentByKey ?? prev.shipmentByKey,
+        sampleByKey: patch.sampleByKey ?? prev.sampleByKey,
+      }));
+    },
+    [setValues]
+  );
+
   const isBoxes = viewMode === "boxes";
+  const parseStock = (value: string | undefined): number | null => {
+    const normalized = value?.trim().replace(",", ".") ?? "";
+    if (normalized === "") return 0;
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
 
   // Column count:
   // Article + Size + perBox + Barcode + Plan + Fact + Need + Stock = 8
@@ -189,7 +227,7 @@ export function PackingSummaryTable({
       totalShippedBoxes = normalizeBoxes(totalShippedBoxes + rowShippedBoxes);
       totalShippedUnits += rowShippedUnits;
       const stockStr = stockByBarcode[sr.item.barcode];
-      const stock = stockStr !== undefined && stockStr !== "" ? Number(stockStr) : null;
+      const stock = parseStock(stockStr);
       if (stock !== null && !isNaN(stock)) {
         totalStock += stock;
         totalSverka += stock - (isBoxes ? rowShippedBoxes : rowShippedUnits);
@@ -246,7 +284,7 @@ export function PackingSummaryTable({
           <col style={{ width: 60 }} />
           {isBoxes && <col style={{ width: 60 }} />}
           <col style={{ width: 60 }} />
-          <col style={{ width: 45 }} />
+          <col style={{ width: 76 }} />
         </colgroup>
         <thead>
           <tr>
@@ -310,7 +348,7 @@ export function PackingSummaryTable({
               <th style={{ ...headerBase, background: "var(--bg)", color: "var(--text-muted)", textTransform: "none", fontWeight: 500, fontSize: 10, borderBottom: "2px solid var(--accent)", minWidth: 60 }}>Штук</th>
             )}
             <th
-              style={{ ...headerBase, background: "var(--bg-card)", textTransform: "none", fontWeight: 600, fontSize: 11, borderBottom: "2px solid var(--accent)", minWidth: 40, cursor: "help", position: "relative" }}
+              style={{ ...headerBase, background: "var(--bg-card)", textTransform: "none", fontWeight: 600, fontSize: 11, borderBottom: "2px solid var(--accent)", minWidth: 72, cursor: "help", position: "relative" }}
               onMouseEnter={() => setDeltaTooltipOpen(true)}
               onMouseLeave={() => setDeltaTooltipOpen(false)}
             >
@@ -341,7 +379,9 @@ export function PackingSummaryTable({
                 {art.sizes.map((sr, sizeIdx) => {
                   const perBox = sr.item.perBox;
                   const stockStr = stockByBarcode[sr.item.barcode] ?? "";
-                  const stock = stockStr !== "" ? Number(stockStr) : null;
+                  const stock = parseStock(stockStr);
+                  const stockStatus = stockStatusByBarcode[sr.item.barcode];
+                  const isStockWarning = stockStatus?.status === "warning" || stockStatus?.status === "missing";
                   const meta = rowMeta?.[sr.item.barcode];
                   let rowShippedBoxes = 0;
                   let rowShippedUnits = 0;
@@ -361,7 +401,7 @@ export function PackingSummaryTable({
                       rowShippedUnits += units;
                       regionCells.push(
                         <td key={`${region.id}-b`} style={{ ...cellBase, padding: 0, background: isOverridden ? "rgba(129, 140, 248, 0.1)" : "transparent" }}>
-                          <input type="text" inputMode="numeric" value={overrideStr ?? (autoBoxes > 0 ? formatBoxes(autoBoxes) : "")} onChange={(e) => setBoxesByKey(prev => ({ ...prev, [key]: e.target.value }))} placeholder="—" style={{ width: "100%", padding: "6px 10px", background: "transparent", border: "none", outline: "none", textAlign: "center", color: isOverridden ? "var(--accent)" : "var(--text)", fontWeight: 600, fontVariantNumeric: "tabular-nums", fontSize: 12 }} />
+                          <input type="text" inputMode="numeric" value={overrideStr ?? (autoBoxes > 0 ? formatBoxes(autoBoxes) : "")} onChange={(e) => updateEditableValues({ shipmentByKey: { ...boxesByKey, [key]: e.target.value } })} placeholder="—" style={{ width: "100%", padding: "6px 10px", background: "transparent", border: "none", outline: "none", textAlign: "center", color: isOverridden ? "var(--accent)" : "var(--text)", fontWeight: 600, fontVariantNumeric: "tabular-nums", fontSize: 12 }} />
                         </td>,
                         <td key={`${region.id}-u`} style={{ ...cellBase, color: "var(--text-muted)", fontVariantNumeric: "tabular-nums", background: "rgba(255,255,255,0.02)" }}>
                           {units > 0 ? units : <span style={{ color: "var(--border)" }}>—</span>}
@@ -375,7 +415,7 @@ export function PackingSummaryTable({
                       rowShippedUnits += units;
                       regionCells.push(
                         <td key={`${region.id}-u`} style={{ ...cellBase, padding: 0, background: isOverridden ? "rgba(129, 140, 248, 0.1)" : "transparent" }}>
-                          <input type="text" inputMode="numeric" value={overrideStr ?? (qty > 0 ? String(qty) : "")} onChange={(e) => setBoxesByKey(prev => ({ ...prev, [key]: e.target.value }))} placeholder="—" style={{ width: "100%", padding: "6px 10px", background: "transparent", border: "none", outline: "none", textAlign: "center", color: isOverridden ? "var(--accent)" : "var(--text)", fontWeight: 600, fontVariantNumeric: "tabular-nums", fontSize: 12 }} />
+                          <input type="text" inputMode="numeric" value={overrideStr ?? (qty > 0 ? String(qty) : "")} onChange={(e) => updateEditableValues({ shipmentByKey: { ...boxesByKey, [key]: e.target.value } })} placeholder="—" style={{ width: "100%", padding: "6px 10px", background: "transparent", border: "none", outline: "none", textAlign: "center", color: isOverridden ? "var(--accent)" : "var(--text)", fontWeight: 600, fontVariantNumeric: "tabular-nums", fontSize: 12 }} />
                         </td>
                       );
                     }
@@ -405,8 +445,30 @@ export function PackingSummaryTable({
                       <td style={{ ...cellBase, fontVariantNumeric: "tabular-nums", color: "var(--text)", fontWeight: 600 }}>
                         {meta ? Math.round(meta.need) : <span style={{ color: "var(--border)" }}>—</span>}
                       </td>
-                      <td style={{ ...cellBase, padding: 0, background: "rgba(129, 140, 248, 0.04)" }}>
-                        <input type="text" value={stockStr} onChange={(e) => setStockByBarcode(prev => ({ ...prev, [sr.item.barcode]: e.target.value }))} style={{ width: "100%", padding: "6px 10px", background: "transparent", border: "none", outline: "none", textAlign: "center", color: "var(--text)", fontVariantNumeric: "tabular-nums", fontSize: 12 }} />
+                      <td
+                        title={stockStatus?.reason}
+                        style={{
+                          ...cellBase,
+                          padding: 0,
+                          background: isStockWarning ? "rgba(248,113,113,0.12)" : "rgba(129, 140, 248, 0.04)",
+                        }}
+                      >
+                        <input
+                          type="text"
+                          value={stockStr}
+                          onChange={(e) => updateEditableValues({ stockByBarcode: { ...stockByBarcode, [sr.item.barcode]: e.target.value } })}
+                          style={{
+                            width: "100%",
+                            padding: "6px 10px",
+                            background: "transparent",
+                            border: isStockWarning ? "1px solid #f87171" : "none",
+                            outline: "none",
+                            textAlign: "center",
+                            color: isStockWarning ? "#fca5a5" : "var(--text)",
+                            fontVariantNumeric: "tabular-nums",
+                            fontSize: 12,
+                          }}
+                        />
                       </td>
                       {regionCells}
                       <td style={{ ...cellBase, fontWeight: 700, color: sverkaColor, background: sverkaBg, fontVariantNumeric: "tabular-nums" }}>
@@ -446,14 +508,14 @@ export function PackingSummaryTable({
                     if (isBoxes) {
                       sampleCells.push(
                         <td key={`s-${region.id}-b`} style={{ ...cellBase, padding: 0, background: "rgba(129, 140, 248, 0.04)" }}>
-                          <input type="text" value={v} onChange={(e) => setSampleByKey(prev => ({ ...prev, [key]: e.target.value }))} style={{ width: "100%", padding: "6px 10px", background: "transparent", border: "none", outline: "none", textAlign: "center", color: "var(--text)", fontVariantNumeric: "tabular-nums", fontSize: 12 }} />
+                          <input type="text" value={v} onChange={(e) => updateEditableValues({ sampleByKey: { ...sampleByKey, [key]: e.target.value } })} style={{ width: "100%", padding: "6px 10px", background: "transparent", border: "none", outline: "none", textAlign: "center", color: "var(--text)", fontVariantNumeric: "tabular-nums", fontSize: 12 }} />
                         </td>,
                         <td key={`s-${region.id}-u`} style={{ ...cellBase, color: "var(--border)" }}>—</td>
                       );
                     } else {
                       sampleCells.push(
                         <td key={`s-${region.id}-u`} style={{ ...cellBase, padding: 0, background: "rgba(129, 140, 248, 0.04)" }}>
-                          <input type="text" value={v} onChange={(e) => setSampleByKey(prev => ({ ...prev, [key]: e.target.value }))} style={{ width: "100%", padding: "6px 10px", background: "transparent", border: "none", outline: "none", textAlign: "center", color: "var(--text)", fontVariantNumeric: "tabular-nums", fontSize: 12 }} />
+                          <input type="text" value={v} onChange={(e) => updateEditableValues({ sampleByKey: { ...sampleByKey, [key]: e.target.value } })} style={{ width: "100%", padding: "6px 10px", background: "transparent", border: "none", outline: "none", textAlign: "center", color: "var(--text)", fontVariantNumeric: "tabular-nums", fontSize: 12 }} />
                         </td>
                       );
                     }
@@ -489,7 +551,9 @@ export function PackingSummaryTable({
             <td style={{ ...cellBase, fontWeight: 700, background: "rgba(34, 197, 94, 0.08)", borderTop: "2px solid var(--success)", fontVariantNumeric: "tabular-nums" }}>{Math.round(totalPlan) || "—"}</td>
             <td style={{ ...cellBase, fontWeight: 700, background: "rgba(34, 197, 94, 0.08)", borderTop: "2px solid var(--success)", fontVariantNumeric: "tabular-nums" }}>{Math.round(totalFact) || "—"}</td>
             <td style={{ ...cellBase, fontWeight: 700, background: "rgba(34, 197, 94, 0.08)", borderTop: "2px solid var(--success)", fontVariantNumeric: "tabular-nums" }}>{Math.round(totalNeed) || "—"}</td>
-            <td style={{ ...cellBase, fontWeight: 700, background: "rgba(34, 197, 94, 0.08)", borderTop: "2px solid var(--success)", fontVariantNumeric: "tabular-nums" }}>{totalStock || "—"}</td>
+            <td style={{ ...cellBase, fontWeight: 700, background: "rgba(34, 197, 94, 0.08)", borderTop: "2px solid var(--success)", fontVariantNumeric: "tabular-nums" }}>
+              {totalStock ? (isBoxes ? formatBoxes(totalStock) : roundUnits(totalStock)) : "—"}
+            </td>
             {regions.map(r => (
               isBoxes ? (
                 <React.Fragment key={r.id}>

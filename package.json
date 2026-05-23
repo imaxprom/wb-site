@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "save-session-state": "node scripts/save-session-state.js",
     "start": "next start"
   },
   "dependencies": {
