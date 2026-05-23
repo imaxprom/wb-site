@@ -99,9 +99,9 @@ export const ProductRow = React.memo(function ProductRow({
   );
 
   const handleToggle = useCallback(() => {
-    anchorTopRef.current = rowRef.current?.getBoundingClientRect().top ?? null;
+    anchorTopRef.current = isExpanded ? null : rowRef.current?.getBoundingClientRect().top ?? null;
     onToggle();
-  }, [onToggle]);
+  }, [isExpanded, onToggle]);
 
   const saveName = useCallback(() => {
     const next = nameDraft.trim();
