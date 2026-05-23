@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useData } from "@/components/DataProvider";
 import { ProductRow } from "./ProductRow";
 import type { Product } from "@/types";
@@ -19,6 +19,36 @@ export function ProductsTable({
   className = "",
 }: ProductsTableProps) {
   const { stock, orderAggregates } = useData();
+  const [scrollBufferHeight, setScrollBufferHeight] = useState(0);
+
+  useEffect(() => {
+    if (scrollBufferHeight <= 0 || typeof window === "undefined") return;
+
+    let frame = 0;
+    const clearWhenSafe = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const doc = document.documentElement;
+        const maxScrollWithoutBuffer = Math.max(0, doc.scrollHeight - scrollBufferHeight - window.innerHeight);
+        if (window.scrollY <= maxScrollWithoutBuffer - 8) {
+          setScrollBufferHeight(0);
+        }
+      });
+    };
+
+    clearWhenSafe();
+    window.addEventListener("scroll", clearWhenSafe, { passive: true });
+    window.addEventListener("resize", clearWhenSafe);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", clearWhenSafe);
+      window.removeEventListener("resize", clearWhenSafe);
+    };
+  }, [scrollBufferHeight]);
+
+  const handleCollapseBuffer = useCallback((height: number) => {
+    setScrollBufferHeight(Math.max(0, Math.ceil(height)));
+  }, []);
 
   // articleWB → non-cancelled order count (из агрегатов, один проход)
   const orderCountsByArticleWB = React.useMemo(() => {
@@ -76,11 +106,18 @@ export function ProductsTable({
                 isExpanded={isExpanded}
                 productStock={productStock}
                 onToggle={() => onToggleExpand(product.articleWB)}
+                onCollapseBuffer={handleCollapseBuffer}
               />
             );
           })}
         </tbody>
       </table>
+      {scrollBufferHeight > 0 && (
+        <div
+          aria-hidden="true"
+          style={{ height: scrollBufferHeight }}
+        />
+      )}
     </div>
   );
 }

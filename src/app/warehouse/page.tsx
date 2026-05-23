@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, Boxes, Database, RefreshCw, Sheet, TrendingUp, Warehouse } from "lucide-react";
+import { AlertCircle, Boxes, Database, RefreshCw, Search, Sheet, TrendingUp, Warehouse } from "lucide-react";
 
 interface WarehouseSizeRow {
   article_wb: string;
@@ -206,6 +206,7 @@ export default function WarehousePage() {
   const [savingPackingMultiplier, setSavingPackingMultiplier] = useState(false);
   const [error, setError] = useState("");
   const [selectedArticle, setSelectedArticle] = useState("");
+  const [articleQuery, setArticleQuery] = useState("");
   const [packingMultiplier, setPackingMultiplier] = useState<number>(1);
 
   const loadWarehouse = useCallback((multiplier: number, cancelled?: () => boolean) => {
@@ -289,7 +290,15 @@ export default function WarehousePage() {
     }
   }, [loadWarehouse]);
 
-  const visibleArticles = useMemo(() => data?.articles || [], [data]);
+  const visibleArticles = useMemo(() => {
+    const articles = data?.articles || [];
+    const query = articleQuery.trim().toLowerCase();
+    if (!query) return articles;
+    return articles.filter((article) => (
+      article.articleWB.includes(query) ||
+      article.sheetName.toLowerCase().includes(query)
+    ));
+  }, [articleQuery, data]);
   const currentArticle = visibleArticles.find((article) => article.articleWB === selectedArticle) || visibleArticles[0];
   const meta = data?.meta;
 
@@ -399,11 +408,13 @@ export default function WarehousePage() {
         <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
           <h3 className="text-sm font-semibold text-white">Готовые короба по артикулам</h3>
           <span className="text-xs text-[var(--text-muted)]">
-            {formatNumber(data?.articles.length || 0)} артикулов
+            {articleQuery.trim()
+              ? `${formatNumber(visibleArticles.length)} из ${formatNumber(data?.articles.length || 0)} артикулов`
+              : `${formatNumber(data?.articles.length || 0)} артикулов`}
           </span>
         </div>
 
-        {!loading && visibleArticles.length === 0 ? (
+        {!loading && (data?.articles.length || 0) === 0 ? (
           <div className="flex min-h-[260px] flex-col items-center justify-center px-6 py-12 text-center">
             <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--bg)] text-[var(--accent)]">
               <Warehouse size={24} />
@@ -413,35 +424,61 @@ export default function WarehousePage() {
               Запусти локальный импорт `node scripts/warehouse-google-sync.js`, чтобы заполнить SQLite.
             </div>
           </div>
-        ) : currentArticle ? (
+        ) : (data?.articles.length || 0) > 0 ? (
           <div className="grid min-h-[520px] border-t border-[var(--border)] lg:grid-cols-[320px_1fr]">
-            <div className="max-h-[680px] overflow-auto border-b border-[var(--border)] lg:border-b-0 lg:border-r">
-              {visibleArticles.map((article) => {
-                const active = article.articleWB === currentArticle.articleWB;
-                const trend = articleTrend(article);
-                return (
-                  <button
-                    key={article.articleWB}
-                    type="button"
-                    onClick={() => setSelectedArticle(article.articleWB)}
-                    className={`block w-full border-b border-[var(--border)] px-4 py-3 text-left transition-colors ${active ? "bg-[var(--accent)]/15" : "hover:bg-[var(--bg-card-hover)]"}`}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="font-mono text-sm text-[var(--accent)]">{article.articleWB}</span>
-                      <span className="font-mono text-xs font-semibold tabular-nums text-[var(--accent)]" title={`Тренд: ${trendLabel(trend?.trend_direction)}`}>
-                        ×{formatNumber(trend?.trend_multiplier ?? 1, 2)}
-                      </span>
-                    </div>
-                    <div className="mt-1 line-clamp-2 text-xs text-[var(--text-muted)]">{article.sheetName}</div>
-                  </button>
-                );
-              })}
+            <div className="border-b border-[var(--border)] lg:border-b-0 lg:border-r">
+              <div className="border-b border-[var(--border)] p-3">
+                <div className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2">
+                  <Search size={16} className="text-[var(--text-muted)]" />
+                  <input
+                    value={articleQuery}
+                    onChange={(event) => setArticleQuery(event.target.value)}
+                    placeholder="Артикул или название"
+                    className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[var(--text-muted)]"
+                  />
+                </div>
+              </div>
+              <div className="max-h-[610px] overflow-auto">
+                {visibleArticles.map((article) => {
+                  const active = article.articleWB === currentArticle?.articleWB;
+                  const trend = articleTrend(article);
+                  return (
+                    <button
+                      key={article.articleWB}
+                      type="button"
+                      onClick={() => setSelectedArticle(article.articleWB)}
+                      className={`block w-full border-b border-[var(--border)] px-4 py-3 text-left transition-colors ${active ? "bg-[var(--accent)]/15" : "hover:bg-[var(--bg-card-hover)]"}`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-mono text-sm text-[var(--accent)]">{article.articleWB}</span>
+                        <span className="font-mono text-xs font-semibold tabular-nums text-[var(--accent)]" title={`Тренд: ${trendLabel(trend?.trend_direction)}`}>
+                          ×{formatNumber(trend?.trend_multiplier ?? 1, 2)}
+                        </span>
+                      </div>
+                      <div className="mt-1 line-clamp-2 text-xs text-[var(--text-muted)]">{article.sheetName}</div>
+                    </button>
+                  );
+                })}
+                {visibleArticles.length === 0 && (
+                  <div className="px-4 py-8 text-center text-sm text-[var(--text-muted)]">
+                    Поиск ничего не нашёл
+                  </div>
+                )}
+              </div>
             </div>
             <div className="p-4">
-              <div className="mb-3 text-sm font-medium text-white">{currentArticle.sheetName}</div>
-              <div className="overflow-auto">
-                <SizeTable sizes={currentArticle.sizes} />
-              </div>
+              {currentArticle ? (
+                <>
+                  <div className="mb-3 text-sm font-medium text-white">{currentArticle.sheetName}</div>
+                  <div className="overflow-auto">
+                    <SizeTable sizes={currentArticle.sizes} />
+                  </div>
+                </>
+              ) : (
+                <div className="flex min-h-[260px] items-center justify-center text-center text-sm text-[var(--text-muted)]">
+                  Поиск ничего не нашёл
+                </div>
+              )}
             </div>
           </div>
         ) : (

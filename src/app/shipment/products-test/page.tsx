@@ -2,10 +2,10 @@
 
 import ProductsSplitView from "@/modules/shipment/components/ProductsSplitView";
 
-export default function ProductsTab() {
+export default function ShipmentProductsTestPage() {
   return (
     <ProductsSplitView
-      title="Товары"
+      title="Товары: тестовый вид"
       description="Слева артикулы, справа размерная таблица выбранного артикула."
     />
   );

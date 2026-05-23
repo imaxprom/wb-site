@@ -16,6 +16,7 @@ interface ProductRowProps {
   isExpanded: boolean;
   productStock: StockItem[];
   onToggle: () => void;
+  onCollapseBuffer: (height: number) => void;
 }
 
 export const ProductRow = React.memo(function ProductRow({
@@ -25,15 +26,18 @@ export const ProductRow = React.memo(function ProductRow({
   isExpanded,
   productStock,
   onToggle,
+  onCollapseBuffer,
 }: ProductRowProps) {
   const { overrides, updateProductPerBox, updateCustomName, toggleSizeDisabled } = useData();
 
   const override = overrides[product.articleWB];
   const customName = override?.customName || "";
   const [isNameEditing, setIsNameEditing] = useState(false);
+  const [isWarehouseStockOpen, setIsWarehouseStockOpen] = useState(false);
   const [nameDraft, setNameDraft] = useState(customName);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const rowRef = useRef<HTMLTableRowElement>(null);
+  const expandedContentRef = useRef<HTMLDivElement>(null);
   const anchorTopRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -43,6 +47,10 @@ export const ProductRow = React.memo(function ProductRow({
   useEffect(() => {
     if (isNameEditing) nameInputRef.current?.focus();
   }, [isNameEditing]);
+
+  useEffect(() => {
+    if (!isExpanded) setIsWarehouseStockOpen(false);
+  }, [isExpanded]);
 
   useLayoutEffect(() => {
     if (anchorTopRef.current === null || typeof window === "undefined") return;
@@ -99,9 +107,15 @@ export const ProductRow = React.memo(function ProductRow({
   );
 
   const handleToggle = useCallback(() => {
-    anchorTopRef.current = isExpanded ? null : rowRef.current?.getBoundingClientRect().top ?? null;
+    if (isExpanded) {
+      anchorTopRef.current = null;
+      onCollapseBuffer(expandedContentRef.current?.getBoundingClientRect().height ?? 0);
+    } else {
+      anchorTopRef.current = rowRef.current?.getBoundingClientRect().top ?? null;
+      onCollapseBuffer(0);
+    }
     onToggle();
-  }, [isExpanded, onToggle]);
+  }, [isExpanded, onCollapseBuffer, onToggle]);
 
   const saveName = useCallback(() => {
     const next = nameDraft.trim();
@@ -202,7 +216,7 @@ export const ProductRow = React.memo(function ProductRow({
       {isExpanded && (
         <tr>
           <td colSpan={7} className="!p-0 !whitespace-normal">
-            <div className="bg-[var(--bg)]/50 p-4 space-y-4 overflow-x-auto">
+            <div ref={expandedContentRef} className="bg-[var(--bg)]/50 p-4 space-y-4 overflow-x-auto">
               {/* Size grid */}
               <div>
                 <h4 className="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wide mb-2">
@@ -273,45 +287,59 @@ export const ProductRow = React.memo(function ProductRow({
               {/* Warehouse stock table */}
               {allWarehouses.length > 0 && (
                 <div>
-                  <h4 className="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wide mb-2">
-                    Остатки по складам
-                  </h4>
-                  <div className="overflow-x-auto">
-                    <table className="data-table">
-                      <thead>
-                        <tr>
-                          <th>Размер</th>
-                          <th className="num">Итого</th>
-                          {allWarehouses.map((wh) => (
-                            <th key={wh} className="num">
-                              {wh.length > 20 ? wh.substring(0, 20) + "..." : wh}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sortedSizes.map((s) => {
-                          const sizeWH = warehouseMap.get(s.size);
-                          const total = sizeWH
-                            ? Array.from(sizeWH.values()).reduce((a, b) => a + b, 0)
-                            : 0;
-                          return (
-                            <tr key={s.barcode}>
-                              <td className="font-medium">{s.size}</td>
-                              <td className="num font-bold">{total}</td>
-                              {allWarehouses.map((wh) => (
-                                <td key={wh} className="num">
-                                  {sizeWH?.get(wh) || (
-                                    <span className="text-[var(--text-muted)]">—</span>
-                                  )}
-                                </td>
-                              ))}
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsWarehouseStockOpen((value) => !value);
+                    }}
+                    className="flex w-full items-center justify-between rounded border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2 text-left transition-colors hover:border-[var(--accent)]"
+                  >
+                    <span className="text-sm font-medium uppercase tracking-wide text-[var(--text-muted)]">
+                      Остатки по складам
+                    </span>
+                    <span className="text-xs text-[var(--text-muted)]">
+                      {allWarehouses.length} складов {isWarehouseStockOpen ? "▲" : "▼"}
+                    </span>
+                  </button>
+                  {isWarehouseStockOpen && (
+                    <div className="mt-2 overflow-x-auto">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>Размер</th>
+                            <th className="num">Итого</th>
+                            {allWarehouses.map((wh) => (
+                              <th key={wh} className="num">
+                                {wh.length > 20 ? wh.substring(0, 20) + "..." : wh}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sortedSizes.map((s) => {
+                            const sizeWH = warehouseMap.get(s.size);
+                            const total = sizeWH
+                              ? Array.from(sizeWH.values()).reduce((a, b) => a + b, 0)
+                              : 0;
+                            return (
+                              <tr key={s.barcode}>
+                                <td className="font-medium">{s.size}</td>
+                                <td className="num font-bold">{total}</td>
+                                {allWarehouses.map((wh) => (
+                                  <td key={wh} className="num">
+                                    {sizeWH?.get(wh) || (
+                                      <span className="text-[var(--text-muted)]">—</span>
+                                    )}
+                                  </td>
+                                ))}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               )}
 
