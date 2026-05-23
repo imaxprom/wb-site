@@ -20,6 +20,7 @@ type SizeRow = {
 interface ProductsSplitViewProps {
   title?: string;
   description?: string;
+  showHeader?: boolean;
 }
 
 function productTitle(product: Product, customName: string) {
@@ -29,6 +30,7 @@ function productTitle(product: Product, customName: string) {
 export default function ProductsSplitView({
   title = "Товары",
   description = "Слева артикулы, справа размерная таблица выбранного артикула.",
+  showHeader = true,
 }: ProductsSplitViewProps) {
   const {
     products,
@@ -146,15 +148,17 @@ export default function ProductsSplitView({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-2xl font-bold">{title}</h2>
-          <p className="text-sm text-[var(--text-muted)]">{description}</p>
+      {showHeader && (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-2xl font-bold">{title}</h2>
+            <p className="text-sm text-[var(--text-muted)]">{description}</p>
+          </div>
+          <div className="text-sm text-[var(--text-muted)]">
+            {formatNumber(products.length)} артикулов
+          </div>
         </div>
-        <div className="text-sm text-[var(--text-muted)]">
-          {formatNumber(products.length)} артикулов
-        </div>
-      </div>
+      )}
 
       <div className="grid min-h-[calc(100vh-160px)] gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
         <aside className="min-h-0 rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">

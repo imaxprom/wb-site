@@ -5,8 +5,7 @@ import ProductsSplitView from "@/modules/shipment/components/ProductsSplitView";
 export default function ProductsTab() {
   return (
     <ProductsSplitView
-      title="Товары"
-      description="Слева артикулы, справа размерная таблица выбранного артикула."
+      showHeader={false}
     />
   );
 }
