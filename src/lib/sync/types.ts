@@ -40,6 +40,30 @@ export function getApiKey(): string {
   return getWbApiKey() || "";
 }
 
+export function dateInMoscow(date: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Moscow",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+export function hourInMoscow(date: Date = new Date()): number {
+  const value = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Moscow",
+    hour: "2-digit",
+    hour12: false,
+  }).format(date);
+  return Number(value);
+}
+
+export function shiftIsoDate(date: string, days: number): string {
+  const [year, month, day] = date.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1, day + days));
+  return shifted.toISOString().slice(0, 10);
+}
+
 // --- State persistence с 4 слоями защиты (см. scripts/daily-sync.js) ---
 
 function validateStatus(s: unknown): s is SyncStatus {
@@ -47,7 +71,7 @@ function validateStatus(s: unknown): s is SyncStatus {
   const obj = s as Record<string, unknown>;
   if (!Array.isArray(obj.history)) return false;
   const dateRe = /^\d{4}-\d{2}-\d{2}$/;
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = dateInMoscow();
   if (obj.today) {
     if (typeof obj.today !== "object") return false;
     const d = (obj.today as Record<string, unknown>).date;
@@ -100,7 +124,5 @@ export function saveStatus(status: SyncStatus): void {
 }
 
 export function yesterday(): string {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return d.toISOString().slice(0, 10);
+  return shiftIsoDate(dateInMoscow(), -1);
 }

@@ -16,12 +16,6 @@ export function getDb(): Database.Database {
     db.pragma("journal_mode = WAL");
     db.pragma("cache_size = -64000"); // 64MB cache
     db.pragma("busy_timeout = 5000");
-    // Индекс на source для дедупликации weekly_final
-    try {
-      const writeDb = new Database(DB_PATH);
-      writeDb.exec("CREATE INDEX IF NOT EXISTS idx_real_source_dates ON realization(source, date_from, date_to)");
-      writeDb.close();
-    } catch { /* readonly fallback — индекс уже есть или нет прав */ }
   }
   return db;
 }

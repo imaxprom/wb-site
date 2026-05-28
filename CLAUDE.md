@@ -58,9 +58,9 @@ docs/            — ТЗ и документация
 
 ## Production deploy
 - Основной скрипт: `bash scripts/deploy.sh`
-- `deploy.sh` синхронизирует код через `rsync`, исключая `node_modules`, `.next`, `.deploy-backups`, `.git`, `/data/` и runtime JSON мониторинга.
+- `deploy.sh` синхронизирует код через `rsync`, исключая `node_modules`, `.next`, `.venv`, `.npm-cache`, `.deploy-backups`, `.git`, `.env.production.local*`, `/data/`, `__pycache__/`, `*.pyc` и runtime JSON мониторинга.
 - На VPS всегда используется `bash scripts/prod-safe-build.sh`.
-- `prod-safe-build.sh` делает backup текущей `.next`, останавливает PM2 пользователя `makson`, запускает `npm run build`, перезапускает PM2 и проверяет `http://127.0.0.1:3000/login`.
+- `prod-safe-build.sh` делает backup текущей `.next`, останавливает PM2 пользователя `makson`, запускает `npm run build -- --webpack`, при наличии выполняет `node scripts/migrate-cogs-history.js`, перезапускает PM2 и проверяет `http://127.0.0.1:3000/login`.
 - Если build/start/health-check падает, скрипт восстанавливает предыдущую `.next` и перезапускает PM2.
 - Старый `scripts/rebuild-server.sh` относится к локальной/macOS схеме и не является production deploy.
 - По состоянию на 2026-05-27 production runtime уже работает в PostgreSQL mode (`MPHUB_DB_ENGINE=postgres`). Локальный worktree намеренно dirty после миграции и последних production-правок; перед любым деплоем сначала смотреть `git status` и выкатывать только явно разрешённый пользователем scope. Broad deploy делается через `bash scripts/deploy.sh`; production-правки делать только по явной просьбе пользователя.
@@ -74,7 +74,7 @@ docs/            — ТЗ и документация
 - Production cron отзывов: `*/15 * * * * cd /home/makson/website && /usr/bin/node scripts/reviews-sync.js > /dev/null 2>&1`.
 - Watchdog для `reviews-sync` должен учитывать 15-минутный cron с запасом: `max_age_min=45`.
 - 2026-05-17 архивный backfill обработал 15000 архивных записей и добавил 3660 новых отзывов: всего стало 146670, `sync_status` содержит `Архив: +3 660`.
-- 2026-05-27 production snapshot: `reviews=147971`, `review_complaints=572`; последний успешный archive tick добавил 61 новый отзыв, следующий запуск был ограничен WB `429` до `2026-05-26T21:30:01.951Z`.
+- 2026-05-28 production snapshot: `reviews=148152`, `review_complaints=572`; archive sync advanced to `archive_skip=55000`, last status `ok`, last success `2026-05-28T10:30:07.184Z`.
 - Жалобы генерируются через Codex gateway (`data/codex-gateway.env`, default URL `http://192.168.55.106:8080`), не через Claude CLI.
 - Для WB жалоб текст должен отправляться в `feedbackComplaint.explanation`, не в `feedbackComplaint.text`. Перед отправкой нужно запрашивать доступные причины `/complaints/{feedbackId}` и выбирать только `explanationRequired=true`; для fallback предпочитать reason `19`.
 - `review_accounts.wb_seller_lk` хранит LK JWT для заголовка `wb-seller-lk`; публичный API не должен отдавать этот токен.
@@ -87,7 +87,7 @@ docs/            — ТЗ и документация
   - V2 Excel summary получает из UI ручные значения `Всего на складе`, ручные правки региональных ячеек и строки `образец`;
   - V3 smart export получил ручное поле `Всего на складе` в детализации и передаёт его в `export-excel-v2.ts`.
 - Эти shipment-правки были задеплоены не общим `scripts/deploy.sh`, а точечным `rsync` файлов + `npm run build` + `pm2 restart mphub`, потому что пользователь явно просил выкатывать только конкретный участок.
-- Production shipment DB на 2026-05-24: `shipment_products=30`, `shipment_stock=5211`, `shipment_orders=166775`, max order date `2026-05-24T01:41:46`.
+- Production shipment DB на 2026-05-28: `shipment_products=30`, `shipment_stock=5432`, `shipment_orders=172292`, max order date `2026-05-28T11:45:22`. `shipment_orders` дедуплицируются по WB identity `order_uid` (`srid`/`gNumber`/`sticker`, fallback `barcode:date:warehouse`), не по старому `barcode,date,warehouse`.
 - `/shipment` → `Товары` использует левый/правый `ProductsSplitView`: слева поиск и артикулы, справа размерная таблица выбранного артикула; старая раскрывающаяся таблица не используется в основной вкладке. В основной вкладке скрыта внутренняя дублирующая шапка, `/shipment/products-test` оставлен как тестовый маршрут.
 - В товарах редактирование custom name включается только через карандаш; `Остатки по складам` свёрнуты по умолчанию.
 - `/warehouse` deployed на production: Google Sheets → PostgreSQL складской учёт, левый/правый вид, поиск `Артикул или название`, план упаковки на базе 30 дней × множитель `1/1.25/1.5/2`. Production содержит 127 размерных строк готового склада.
@@ -103,7 +103,7 @@ docs/            — ТЗ и документация
 - Таблица логистики агрегируется по уникальному WB артикулу без размеров/баркодов.
 - Отображаемая логистика считается от объёма карточки: `length_cm * width_cm * height_cm / 1000`, fallback — `paid_storage.volume`.
 - Production `shipment_products` уже содержит `length_cm`, `width_cm`, `height_cm`.
-- Production logistics data на 2026-05-24: `shipment_stock=5211`, `shipment_orders=166775`, `paid_storage=48352` max date `2026-05-22`, `warehouse_remains_volume=132`, `warehouse_measurements=32`, `logistics_tariff_cache=4`.
+- Production logistics data на 2026-05-28: `shipment_stock=5432`, `shipment_orders=172292`, `paid_storage=53716` max date `2026-05-27`, `warehouse_remains_volume=134`, `warehouse_measurements=36`, `logistics_tariff_cache=8`.
 - UI показывает:
   - `Объём из карточки`;
   - `Объём из отчёта остатков`;
@@ -122,7 +122,7 @@ docs/            — ТЗ и документация
 
 ## Разрешения
 - Читать файлы из Telegram tmp ТОЛЬКО по запросу пользователя
-- SSH к VPS (wb-site, claude-cli) для деплоя и администрирования
+- SSH к VPS/VM (`wb-site`, `codex-cli`) для деплоя и администрирования; `claude-cli` — только legacy alias, если нужно проверить старую привязку
 - `npm install` (локально) для зависимостей
 - Обращаться к WB API через серверные роуты
 
@@ -143,7 +143,7 @@ docs/            — ТЗ и документация
 - Login rate-limit хранится в БД (`auth_login_attempts`): в production PostgreSQL, в legacy/dev fallback SQLite; не в памяти процесса.
 - Security headers задаются в `next.config.ts`: noindex, nosniff, DENY frame, referrer/permissions policy, HSTS и CSP в production.
 - Локальный nginx на VPS должен иметь `server_tokens off`.
-- SQL со значениями из переменных писать через параметры `?`, не через строковую вставку.
+- SQL со значениями из переменных писать параметризованно: `?` для SQLite и helpers `pgRows`/`pgGet`, `$1...` для raw `pg` client; не собирать значения строковой вставкой.
 
 ## Режим работы
 - Перед каждым ответом используй extended thinking (глубокий анализ)

@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
-import { updateReviewAccount, deleteReviewAccount, getReviewAccountById, getReviewAccountByIdPg, initReviewTables, toPublicReviewAccount } from "@/lib/reviews-db";
+import {
+  updateReviewAccount,
+  updateReviewAccountPg,
+  deleteReviewAccount,
+  deleteReviewAccountPg,
+  getReviewAccountById,
+  getReviewAccountByIdPg,
+  initReviewTables,
+  toPublicReviewAccount,
+} from "@/lib/reviews-db";
 import { isPostgresEnabled, isPostgresReadonlyConnection } from "@/lib/postgres";
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -23,7 +32,11 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         delete body[key];
       }
     }
-    updateReviewAccount(Number(id), body);
+    if (isPostgresEnabled()) {
+      await updateReviewAccountPg(Number(id), body);
+    } else {
+      updateReviewAccount(Number(id), body);
+    }
     const updated = isPostgresEnabled()
       ? await getReviewAccountByIdPg(Number(id))
       : getReviewAccountById(Number(id));
@@ -47,7 +60,11 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
     initReviewTables();
     const { id } = await params;
-    deleteReviewAccount(Number(id));
+    if (isPostgresEnabled()) {
+      await deleteReviewAccountPg(Number(id));
+    } else {
+      deleteReviewAccount(Number(id));
+    }
     return NextResponse.json({ ok: true });
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

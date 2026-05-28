@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
-import { updateReviewStatus, initReviewTables } from "@/lib/reviews-db";
+import { updateReviewStatus, updateReviewStatusPg, initReviewTables } from "@/lib/reviews-db";
 import { isPostgresEnabled, isPostgresReadonlyConnection } from "@/lib/postgres";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -21,7 +21,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (!body.status) {
       return NextResponse.json({ error: "status is required" }, { status: 400 });
     }
-    updateReviewStatus(Number(id), body.status);
+    if (isPostgresEnabled()) {
+      await updateReviewStatusPg(Number(id), body.status);
+    } else {
+      updateReviewStatus(Number(id), body.status);
+    }
     return NextResponse.json({ ok: true });
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

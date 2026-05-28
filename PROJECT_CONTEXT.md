@@ -1,6 +1,6 @@
 # MpHub Project Context
 
-Last verified: 2026-05-27 00:26 MSK from local code, `npm run save-session-state`, production `ssh wb-site`, PM2, crontab and production PostgreSQL.
+Last verified: 2026-05-28 13:41 MSK from local code, `npm run save-session-state`, production `ssh wb-site`, PM2, crontab and production PostgreSQL.
 
 ## Runtime
 - Workspace: `/Users/octopus/Projects/website`.
@@ -14,20 +14,20 @@ Last verified: 2026-05-27 00:26 MSK from local code, `npm run save-session-state
 - `KnowledgeBase.tsx` is absent. In-app docs are `src/app/docs/page.tsx` + `public/data/docs.json`.
 
 ## Production Snapshot
-- Verified 2026-05-27 00:26 MSK:
+- Verified 2026-05-28 13:41 MSK:
   - `shipment_products`: 30.
-  - `shipment_stock`: 5372.
-  - `shipment_orders`: 170567, max `2026-05-26T23:48:15`.
-  - `paid_storage`: 51586, max date `2026-05-25`.
+  - `shipment_stock`: 5432.
+  - `shipment_orders`: 172292, max `2026-05-28T11:45:22`.
+  - `paid_storage`: 53716, max date `2026-05-27`.
   - `warehouse_ready_stock`: 127.
-  - `warehouse_remains_volume`: 134, max `synced_at=2026-05-26T19:25:41.117Z`.
-  - `warehouse_measurements`: 36, max `synced_at=2026-05-26T19:26:00.515Z`, max `measured_at=2026-05-23T13:19:17.441252Z`.
-  - `logistics_tariff_cache`: 7, max `synced_at=2026-05-26T20:14:41.759Z`.
-  - `reviews`: 147971.
+  - `warehouse_remains_volume`: 134, max `synced_at=2026-05-28T09:00:08.634Z`.
+  - `warehouse_measurements`: 36, max `synced_at=2026-05-28T09:10:01.338Z`, max `measured_at=2026-05-23T13:19:17.441252Z`.
+  - `logistics_tariff_cache`: 8, max `synced_at=2026-05-27T09:17:41.128Z`.
+  - `reviews`: 148152.
   - `review_complaints`: 572.
-  - `sync_status` for reviews: `done`, total/loaded `147971`, message `Отзывы: ожидание лимита WB до 2026-05-26T21:30:01.951Z`, updated `2026-05-27 00:15:56.950751+03`.
-  - `reviews_archive_sync_state`: `archive_skip=5000`, `last_status=rate_limited`, `last_success_at=2026-05-26T21:13:52.234Z`, `retry_after_until=2026-05-26T21:30:01.951Z`.
-- PM2 `mphub`: online, pid `231999`, restarts `125`, memory about `191-192 MB`.
+  - `sync_status` for reviews: `done`, total/loaded `148152`, message `В базе: 148 152 ✅ | Архив WB: skip 50000, получено 5 000, новых 0 | Цена и ПВЗ: 18 793`, updated `2026-05-28 13:30:07.192031+03`.
+  - `reviews_archive_sync_state`: `archive_skip=55000`, `last_status=ok`, `last_success_at=2026-05-28T10:30:07.184Z`, `retry_after_until=2026-05-28T10:44:07.184Z`.
+- PM2 `mphub`: online, pid `287074`, restarts `195`, memory about `179 MB`.
 - Production crontab is in PG mode:
   - `daily-sync-api.sh` every hour;
   - `sync-weekly-report.js` Monday-Wednesday hourly during business window;
@@ -44,13 +44,13 @@ Last verified: 2026-05-27 00:26 MSK from local code, `npm run save-session-state
 
 ## Current Implemented State
 - Production has been migrated to PostgreSQL for application runtime, cron-safe sync scripts and core API reads/writes. Legacy SQLite files remain as backups/import sources, not as production runtime source of truth.
-- `/supplies` exists in the left menu after warehouse/stock and shows WB supplies: number/type, planned → actual date, warehouse, status, packed/accepted, expandable article detail. Accepted supplies are cached in DB; draft rows are filtered from the UI.
+- `/supplies` exists in the left menu after `/warehouse` and before `/purchases`; it fetches up to 20 latest WB supplies and shows number/type, planned → actual date, warehouse, status, packed/accepted, expandable article detail. Accepted supplies are cached in DB; draft rows are filtered from the UI.
 - `/shipment` → `Товары` uses the left/right `ProductsSplitView`; the old expand-row table is no longer the main tab. Cost table version 1.1 UI changes are deployed.
 - `/warehouse` shows the left/right warehouse view with search `Артикул или название`; manual Google Sheets import stores ready boxes in PostgreSQL.
 - `/analytics` order chart uses the full orders-funnel source for totals and separate detailed coverage from `shipment_orders`; this explains days where chart total is higher than detailed regional rows.
 - `/finance` and forecast use PostgreSQL data. New articles can use fallback forecast logic until enough factual sales history exists; the estimate badge should disappear only when factual clean sales reach the configured threshold.
 - Reviews sync uses a slow archive tick every 15 minutes: one WB archive request per cron run, DB state/retry handling for WB `429`, no parallel archive backfill.
-- `/api/reviews?sync=true` is intentionally disabled in PostgreSQL mode and returns a controlled response; reviews sync belongs to production cron, not ad-hoc local writes.
+- `/api/reviews?sync=true` is intentionally disabled in PostgreSQL mode and returns a controlled response; reviews sync belongs to production cron, not ad-hoc local writes. UI manual full-sync controls are legacy/no-op in PG mode until hidden or relabelled.
 
 ## Reviews And Watchdog State
 - Account: `ИП Белякова А. Л. / IMSI`, `supplier_id=1166225`.
@@ -66,5 +66,5 @@ Last verified: 2026-05-27 00:26 MSK from local code, `npm run save-session-state
 
 ## Current Caveats
 - Production crontab still has old comments around reviews that say hourly, but the active job is `*/15 * * * * ... scripts/reviews-sync.js`.
-- `public/data/docs.json` contains some historical code examples mentioning SQLite; the user-facing knowledge sections should state PostgreSQL as the production source of truth.
+- `public/data/docs.json` is the in-app knowledge base. Some embedded code examples may lag behind current files; production PostgreSQL and current source code are authoritative.
 - Continue using Moscow time (`Europe/Moscow`) in user-facing reports.

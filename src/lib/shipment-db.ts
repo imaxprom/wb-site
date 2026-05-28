@@ -130,6 +130,10 @@ export function initShipmentTables(): void {
   d.exec(`
     CREATE TABLE IF NOT EXISTS shipment_orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_uid TEXT,
+      g_number TEXT,
+      sticker TEXT,
+      srid TEXT,
       date TEXT,
       warehouse TEXT,
       federal_district TEXT,
@@ -147,10 +151,23 @@ export function initShipmentTables(): void {
       finished_price REAL,
       price_with_disc REAL,
       is_cancel INTEGER,
-      cancel_date TEXT,
-      UNIQUE(barcode, date, warehouse)
+      cancel_date TEXT
     )
   `);
+  for (const column of [
+    "order_uid TEXT",
+    "g_number TEXT",
+    "sticker TEXT",
+    "srid TEXT",
+  ]) {
+    try { d.exec(`ALTER TABLE shipment_orders ADD COLUMN ${column}`); } catch { /* already exists */ }
+  }
+  d.exec(`
+    UPDATE shipment_orders
+    SET order_uid = COALESCE(NULLIF(order_uid, ''), barcode || ':' || date || ':' || warehouse)
+    WHERE order_uid IS NULL OR order_uid = ''
+  `);
+  d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_shipment_orders_order_uid ON shipment_orders(order_uid)`);
 
   d.exec(`
     CREATE TABLE IF NOT EXISTS shipment_stock (
@@ -250,7 +267,26 @@ export function initShipmentTables(): void {
 }
 
 function canRunPostgresDdl(): boolean {
-  return !isPostgresReadonlyConnection();
+  return !isPostgresReadonlyConnection() && process.env.MPHUB_ALLOW_PG_DDL === "1";
+}
+
+async function tryOptionalPgDdl(client: PoolClient, sql: string): Promise<void> {
+  const savepoint = `optional_ddl_${Math.random().toString(36).slice(2)}`;
+  await client.query(`SAVEPOINT ${savepoint}`);
+  try {
+    await client.query(sql);
+    await client.query(`RELEASE SAVEPOINT ${savepoint}`);
+  } catch (error) {
+    await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+    await client.query(`RELEASE SAVEPOINT ${savepoint}`);
+    const code = (error as { code?: string }).code;
+    if (code === "42501" || code === "42703") {
+      const reason = code === "42501" ? "insufficient privileges" : "missing column";
+      console.warn(`[shipment-db] Skipped optional PostgreSQL DDL: ${reason} (${sql.trim().split(/\s+/).slice(0, 6).join(" ")})`);
+      return;
+    }
+    throw error;
+  }
 }
 
 function assertPostgresWritable(): void {
@@ -298,6 +334,69 @@ export async function initShipmentTablesPg(): Promise<void> {
         per_box INTEGER,
         disabled INTEGER DEFAULT 0,
         PRIMARY KEY(user_id, article_wb, barcode)
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS shipment_orders (
+        id BIGSERIAL PRIMARY KEY,
+        order_uid TEXT,
+        g_number TEXT,
+        sticker TEXT,
+        srid TEXT,
+        date TEXT,
+        warehouse TEXT,
+        federal_district TEXT,
+        region TEXT,
+        article_seller TEXT,
+        article_wb BIGINT,
+        barcode TEXT,
+        category TEXT,
+        subject TEXT,
+        brand TEXT,
+        size TEXT,
+        total_price NUMERIC,
+        discount_percent NUMERIC,
+        spp NUMERIC,
+        finished_price NUMERIC,
+        price_with_disc NUMERIC,
+        is_cancel INTEGER,
+        cancel_date TEXT
+      )
+    `);
+    await tryOptionalPgDdl(client, `ALTER TABLE shipment_orders ADD COLUMN IF NOT EXISTS order_uid TEXT`);
+    await tryOptionalPgDdl(client, `ALTER TABLE shipment_orders ADD COLUMN IF NOT EXISTS g_number TEXT`);
+    await tryOptionalPgDdl(client, `ALTER TABLE shipment_orders ADD COLUMN IF NOT EXISTS sticker TEXT`);
+    await tryOptionalPgDdl(client, `ALTER TABLE shipment_orders ADD COLUMN IF NOT EXISTS srid TEXT`);
+    await tryOptionalPgDdl(client, `ALTER TABLE shipment_orders DROP CONSTRAINT IF EXISTS shipment_orders_barcode_date_warehouse_key`);
+    await tryOptionalPgDdl(client, `
+      UPDATE shipment_orders
+      SET order_uid = COALESCE(NULLIF(order_uid, ''), barcode || ':' || date || ':' || warehouse)
+      WHERE order_uid IS NULL OR order_uid = ''
+    `);
+    await tryOptionalPgDdl(client, `CREATE UNIQUE INDEX IF NOT EXISTS idx_shipment_orders_order_uid ON shipment_orders(order_uid)`);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS shipment_stock (
+        barcode TEXT,
+        article_wb TEXT,
+        article_seller TEXT,
+        brand TEXT,
+        size TEXT,
+        warehouse TEXT,
+        quantity BIGINT,
+        updated_at TEXT,
+        PRIMARY KEY(barcode, warehouse)
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS shipment_products (
+        article_wb TEXT PRIMARY KEY,
+        name TEXT,
+        brand TEXT,
+        category TEXT,
+        length_cm NUMERIC DEFAULT 0,
+        width_cm NUMERIC DEFAULT 0,
+        height_cm NUMERIC DEFAULT 0,
+        sizes_json TEXT
       )
     `);
     await client.query(`
@@ -783,14 +882,14 @@ export function saveOrders(orders: OrderRecord[]): void {
   // INSERT with ON CONFLICT UPDATE — accumulate orders and update cancel status
   const stmt = d.prepare(`
     INSERT INTO shipment_orders
-      (date, warehouse, federal_district, region, article_seller, article_wb,
+      (order_uid, g_number, sticker, srid, date, warehouse, federal_district, region, article_seller, article_wb,
        barcode, category, subject, brand, size, total_price, discount_percent,
        spp, finished_price, price_with_disc, is_cancel, cancel_date)
     VALUES
-      (@date, @warehouse, @federalDistrict, @region, @articleSeller, @articleWB,
+      (@orderUid, @gNumber, @sticker, @srid, @date, @warehouse, @federalDistrict, @region, @articleSeller, @articleWB,
        @barcode, @category, @subject, @brand, @size, @totalPrice, @discountPercent,
        @spp, @finishedPrice, @priceWithDisc, @isCancel, @cancelDate)
-    ON CONFLICT(barcode, date, warehouse) DO UPDATE SET
+    ON CONFLICT(order_uid) DO UPDATE SET
       is_cancel = excluded.is_cancel,
       cancel_date = excluded.cancel_date
   `);
@@ -798,6 +897,10 @@ export function saveOrders(orders: OrderRecord[]): void {
   const insert = d.transaction((rows: OrderRecord[]) => {
     for (const o of rows) {
       stmt.run({
+        orderUid: o.orderUid || `${o.barcode}:${o.date}:${o.warehouse}`,
+        gNumber: o.gNumber || "",
+        sticker: o.sticker || "",
+        srid: o.srid || "",
         date: o.date,
         warehouse: o.warehouse,
         federalDistrict: o.federalDistrict,
@@ -830,17 +933,21 @@ export async function saveOrdersPg(orders: OrderRecord[]): Promise<void> {
     for (const o of orders) {
       await client.query(`
         INSERT INTO shipment_orders
-          (date, warehouse, federal_district, region, article_seller, article_wb,
+          (order_uid, g_number, sticker, srid, date, warehouse, federal_district, region, article_seller, article_wb,
            barcode, category, subject, brand, size, total_price, discount_percent,
            spp, finished_price, price_with_disc, is_cancel, cancel_date)
         VALUES
           ($1, $2, $3, $4, $5, $6,
            $7, $8, $9, $10, $11, $12, $13,
-           $14, $15, $16, $17, $18)
-        ON CONFLICT(barcode, date, warehouse) DO UPDATE SET
+           $14, $15, $16, $17, $18, $19, $20, $21, $22)
+        ON CONFLICT(order_uid) DO UPDATE SET
           is_cancel = EXCLUDED.is_cancel,
           cancel_date = EXCLUDED.cancel_date
       `, [
+        o.orderUid || `${o.barcode}:${o.date}:${o.warehouse}`,
+        o.gNumber || "",
+        o.sticker || "",
+        o.srid || "",
         o.date,
         o.warehouse,
         o.federalDistrict,
@@ -1104,6 +1211,10 @@ export function getOrders(dateFrom: string, dateTo: string): OrderRecord[] {
   `).all(dateFrom, dateTo) as Record<string, unknown>[];
 
   return rows.map((r) => ({
+    orderUid: (r.order_uid as string) || `${r.barcode}:${r.date}:${r.warehouse}`,
+    gNumber: (r.g_number as string) || "",
+    sticker: (r.sticker as string) || "",
+    srid: (r.srid as string) || "",
     date: r.date as string,
     warehouse: r.warehouse as string,
     warehouseType: "",
@@ -1136,6 +1247,10 @@ export async function getOrdersPg(dateFrom: string, dateTo: string): Promise<Ord
   `, [dateFrom, dateTo]);
 
   return rows.map((r) => ({
+    orderUid: (r.order_uid as string) || `${r.barcode}:${r.date}:${r.warehouse}`,
+    gNumber: (r.g_number as string) || "",
+    sticker: (r.sticker as string) || "",
+    srid: (r.srid as string) || "",
     date: r.date as string,
     warehouse: r.warehouse as string,
     warehouseType: "",

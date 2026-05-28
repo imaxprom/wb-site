@@ -77,6 +77,10 @@ export interface WarehouseReadyStockRow {
 }
 
 export interface OrderRecord {
+  orderUid: string;
+  gNumber: string;
+  sticker: string;
+  srid: string;
   date: string;
   warehouse: string;
   warehouseType: string;

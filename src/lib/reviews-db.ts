@@ -5,7 +5,7 @@
 
 import Database from "better-sqlite3";
 import path from "path";
-import { isPostgresEnabled, pgGet, pgRows } from "@/lib/postgres";
+import { isPostgresEnabled, pgGet, pgRows, withPgTransaction } from "@/lib/postgres";
 
 const DB_PATH = path.join(process.cwd(), "data", "finance.db");
 
@@ -317,6 +317,19 @@ export function createReviewAccount(data: { name: string; api_key: string; store
   return result.lastInsertRowid as number;
 }
 
+export async function createReviewAccountPg(data: { name: string; api_key: string; store_name?: string; inn?: string; supplier_id?: string }): Promise<number> {
+  let id = 0;
+  await withPgTransaction(async (client) => {
+    const result = await client.query<{ id: number }>(`
+      INSERT INTO review_accounts (name, api_key, store_name, inn, supplier_id)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING id
+    `, [data.name, data.api_key, data.store_name || null, data.inn || null, data.supplier_id || null]);
+    id = result.rows[0]?.id || 0;
+  });
+  return id;
+}
+
 export function updateReviewAccount(id: number, data: Partial<ReviewAccount>): void {
   const d = getDb();
 
@@ -349,12 +362,52 @@ export function updateReviewAccount(id: number, data: Partial<ReviewAccount>): v
   d.prepare(`UPDATE review_accounts SET ${fields.join(", ")} WHERE id = ?`).run(...values);
 }
 
+export async function updateReviewAccountPg(id: number, data: Partial<ReviewAccount>): Promise<void> {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+
+  const allowed = [
+    "name", "store_name", "inn", "supplier_id", "api_key",
+    "cookie_status", "api_status", "auto_replies", "auto_dialogs",
+    "auto_complaints", "use_auto_proxy", "settings_json",
+    "wb_authorize_v3", "wb_validation_key", "wb_seller_lk",
+  ] as const;
+
+  for (const key of allowed) {
+    if (key in data) {
+      values.push((data as Record<string, unknown>)[key]);
+      fields.push(`${key} = $${values.length}`);
+    }
+  }
+
+  if ("wb_authorize_v3" in data || "wb_validation_key" in data) {
+    fields.push("wb_cookie_updated_at = CURRENT_TIMESTAMP");
+  }
+
+  if (fields.length === 0) return;
+  fields.push("updated_at = CURRENT_TIMESTAMP");
+  values.push(id);
+
+  await withPgTransaction(async (client) => {
+    await client.query(`UPDATE review_accounts SET ${fields.join(", ")} WHERE id = $${values.length}`, values);
+  });
+}
+
 export function deleteReviewAccount(id: number): void {
   const d = getDb();
 
   d.prepare(`DELETE FROM reviews WHERE account_id = ?`).run(id);
   d.prepare(`DELETE FROM review_stats WHERE account_id = ?`).run(id);
   d.prepare(`DELETE FROM review_accounts WHERE id = ?`).run(id);
+}
+
+export async function deleteReviewAccountPg(id: number): Promise<void> {
+  await withPgTransaction(async (client) => {
+    await client.query("DELETE FROM review_complaints WHERE account_id = $1", [id]);
+    await client.query("DELETE FROM reviews WHERE account_id = $1", [id]);
+    await client.query("DELETE FROM review_stats WHERE account_id = $1", [id]);
+    await client.query("DELETE FROM review_accounts WHERE id = $1", [id]);
+  });
 }
 
 // ─── Reviews CRUD ────────────────────────────────────────────
@@ -509,10 +562,20 @@ export function getReviewById(id: number): Review | null {
   return (d.prepare(`SELECT * FROM reviews WHERE id = ?`).get(id) as Review) || null;
 }
 
+export async function getReviewByIdPg(id: number): Promise<Review | null> {
+  return await pgGet<Review>(`SELECT * FROM reviews WHERE id = ?`, [id]) || null;
+}
+
 export function updateReviewStatus(id: number, status: string): void {
   const d = getDb();
 
   d.prepare(`UPDATE reviews SET status = ? WHERE id = ?`).run(status, id);
+}
+
+export async function updateReviewStatusPg(id: number, status: string): Promise<void> {
+  await withPgTransaction(async (client) => {
+    await client.query("UPDATE reviews SET status = $1 WHERE id = $2", [status, id]);
+  });
 }
 
 // ─── Stats ───────────────────────────────────────────────────
@@ -865,6 +928,33 @@ export function createComplaint(data: {
   return result.lastInsertRowid as number;
 }
 
+export async function createComplaintPg(data: {
+  review_id: number;
+  account_id: number;
+  wb_review_id: string;
+  complaint_reason_id: number;
+  explanation?: string;
+  manager_name?: string;
+}): Promise<number> {
+  let id = 0;
+  await withPgTransaction(async (client) => {
+    const result = await client.query<{ id: number }>(`
+      INSERT INTO review_complaints (review_id, account_id, wb_review_id, complaint_reason_id, explanation, manager_name)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING id
+    `, [
+      data.review_id,
+      data.account_id,
+      data.wb_review_id,
+      data.complaint_reason_id,
+      data.explanation || null,
+      data.manager_name || null,
+    ]);
+    id = result.rows[0]?.id || 0;
+  });
+  return id;
+}
+
 export function getLastComplaintByManager(accountId: number, managerName: string): string | null {
   const d = getDb();
 
@@ -873,6 +963,15 @@ export function getLastComplaintByManager(accountId: number, managerName: string
     WHERE account_id = ? AND manager_name = ? AND explanation IS NOT NULL
     ORDER BY id DESC LIMIT 1
   `).get(accountId, managerName) as { explanation: string } | undefined;
+  return row?.explanation || null;
+}
+
+export async function getLastComplaintByManagerPg(accountId: number, managerName: string): Promise<string | null> {
+  const row = await pgGet<{ explanation: string }>(`
+    SELECT explanation FROM review_complaints
+    WHERE account_id = ? AND manager_name = ? AND explanation IS NOT NULL
+    ORDER BY id DESC LIMIT 1
+  `, [accountId, managerName]);
   return row?.explanation || null;
 }
 
@@ -895,12 +994,33 @@ export function shouldPauseByRecentRejections(accountId: number, lastN: number =
   return { pause: rows.length >= lastN && approved === 0, rejected, approved };
 }
 
+export async function shouldPauseByRecentRejectionsPg(accountId: number, lastN: number = 5): Promise<{ pause: boolean; rejected: number; approved: number }> {
+  const rows = await pgRows<{ status: string }>(`
+    SELECT status FROM review_complaints
+    WHERE account_id = ? AND status IN ('approved','rejected')
+    ORDER BY COALESCE(resolved_at, submitted_at) DESC
+    LIMIT ?
+  `, [accountId, lastN]);
+  const approved = rows.filter(r => r.status === "approved").length;
+  const rejected = rows.filter(r => r.status === "rejected").length;
+  return { pause: rows.length >= lastN && approved === 0, rejected, approved };
+}
+
 /** Перезапись AI-содержимого (когда pending-запись создана без AI-данных,
  *  а потом Claude сгенерил) */
 export function updateComplaintContent(id: number, reasonId: number, explanation: string, managerName: string): void {
   const d = getDb();
   d.prepare(`UPDATE review_complaints SET complaint_reason_id = ?, explanation = ?, manager_name = ? WHERE id = ?`)
     .run(reasonId, explanation, managerName, id);
+}
+
+export async function updateComplaintContentPg(id: number, reasonId: number, explanation: string, managerName: string): Promise<void> {
+  await withPgTransaction(async (client) => {
+    await client.query(
+      "UPDATE review_complaints SET complaint_reason_id = $1, explanation = $2, manager_name = $3 WHERE id = $4",
+      [reasonId, explanation, managerName, id],
+    );
+  });
 }
 
 export function updateComplaintStatus(id: number, status: string, errorMessage?: string): void {
@@ -917,10 +1037,30 @@ export function updateComplaintStatus(id: number, status: string, errorMessage?:
   }
 }
 
+export async function updateComplaintStatusPg(id: number, status: string, errorMessage?: string): Promise<void> {
+  await withPgTransaction(async (client) => {
+    if (status === "submitted") {
+      await client.query("UPDATE review_complaints SET status = $1, submitted_at = CURRENT_TIMESTAMP WHERE id = $2", [status, id]);
+    } else if (status === "approved" || status === "rejected") {
+      await client.query("UPDATE review_complaints SET status = $1, resolved_at = CURRENT_TIMESTAMP WHERE id = $2", [status, id]);
+    } else if (status === "error") {
+      await client.query("UPDATE review_complaints SET status = $1, error_message = $2 WHERE id = $3", [status, errorMessage || null, id]);
+    } else {
+      await client.query("UPDATE review_complaints SET status = $1 WHERE id = $2", [status, id]);
+    }
+  });
+}
+
 export function updateReviewComplaintStatus(reviewId: number, complaintStatus: string): void {
   const d = getDb();
 
   d.prepare(`UPDATE reviews SET complaint_status = ? WHERE id = ?`).run(complaintStatus, reviewId);
+}
+
+export async function updateReviewComplaintStatusPg(reviewId: number, complaintStatus: string): Promise<void> {
+  await withPgTransaction(async (client) => {
+    await client.query("UPDATE reviews SET complaint_status = $1 WHERE id = $2", [complaintStatus, reviewId]);
+  });
 }
 
 export function getComplaintsForSubmission(accountId: number): ReviewComplaint[] {
@@ -984,6 +1124,14 @@ export function getTodayComplaintsCount(accountId: number): number {
   return row.cnt;
 }
 
+export async function getTodayComplaintsCountPg(accountId: number): Promise<number> {
+  const row = await pgGet<{ cnt: number }>(`
+    SELECT COUNT(*) as cnt FROM review_complaints
+    WHERE account_id = ? AND created_at::date = CURRENT_DATE
+  `, [accountId]);
+  return row?.cnt || 0;
+}
+
 /**
  * Reviews eligible for auto-complaint: matching ratings, no existing complaint, not hidden/excluded.
  */
@@ -1013,4 +1161,29 @@ export function getReviewsForAutoComplaint(accountId: number, ratings: number[],
       ${excludeClause}
     ORDER BY date DESC
   `).all(...params) as Review[];
+}
+
+export async function getReviewsForAutoComplaintPg(accountId: number, ratings: number[], excludedArticles: string[]): Promise<Review[]> {
+  const ratingPlaceholders = ratings.map(() => "?").join(",");
+  const params: unknown[] = [accountId];
+  params.push(...ratings);
+
+  let excludeClause = "";
+  if (excludedArticles.length > 0) {
+    const artPlaceholders = excludedArticles.map(() => "?").join(",");
+    excludeClause = `AND product_article NOT IN (${artPlaceholders})`;
+    params.push(...excludedArticles);
+  }
+
+  return await pgRows<Review>(`
+    SELECT * FROM reviews
+    WHERE account_id = ?
+      AND rating IN (${ratingPlaceholders})
+      AND complaint_status IS NULL
+      AND is_hidden = 0
+      AND is_excluded_rating = 0
+      AND wb_review_id IS NOT NULL
+      ${excludeClause}
+    ORDER BY date DESC
+  `, params);
 }

@@ -3,7 +3,10 @@ import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import {
   getAcceptedSupply,
+  getAcceptedSupplyContent,
+  getAcceptedSupplyContentPg,
   getAcceptedSupplyPg,
+  getDb,
   getSupplySnapshotsPg,
   saveAcceptedSupply,
   saveAcceptedSupplyPg,
@@ -12,7 +15,7 @@ import {
   type AcceptedSupplyInput,
   type SupplySnapshotInput,
 } from "@/lib/shipment-db";
-import { isPostgresEnabled, isPostgresReadonlyConnection } from "@/lib/postgres";
+import { isPostgresEnabled, isPostgresReadonlyConnection, pgGet } from "@/lib/postgres";
 import { getWbApiKey } from "@/lib/wb-api-key";
 
 const SUPPLIES_API = "https://supplies-api.wildberries.ru/api/v1";
@@ -55,6 +58,8 @@ interface WbSupplyDetail {
   storageCoef?: string | null;
   deliveryCoef?: string | null;
   quantity?: number;
+  packedQuantity?: number;
+  packedQuantitySource?: "package" | "goods" | "detail";
   readyForSaleQuantity?: number;
   acceptedQuantity?: number;
   unloadingQuantity?: number;
@@ -65,6 +70,27 @@ interface WbSupplyDetail {
 interface SupplyRow extends WbSupplyListRow {
   detail: WbSupplyDetail | null;
   detailError?: string;
+}
+
+interface WbPackageBarcode {
+  barcode?: string;
+  quantity?: number;
+}
+
+interface WbPackage {
+  quantity?: number;
+  barcodes?: WbPackageBarcode[];
+}
+
+interface WbSupplyGood {
+  barcode?: string;
+  quantity?: number;
+}
+
+interface SupplyContentPayload {
+  source?: "package" | "goods";
+  packages?: WbPackage[];
+  goods?: WbSupplyGood[];
 }
 
 let listCache: { key: string; ts: number; data: SupplyRow[] } | null = null;
@@ -171,6 +197,73 @@ async function getSupplyDetail(supplyID: number): Promise<WbSupplyDetail> {
   return detail;
 }
 
+function safeJson<T>(value: string | null | undefined): T | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return null;
+  }
+}
+
+function packagePackedQuantity(packages: WbPackage[]): number {
+  return packages.reduce((sum, pack) => {
+    const barcodeTotal = (pack.barcodes || []).reduce((itemSum, item) => itemSum + Number(item.quantity || 0), 0);
+    return sum + (barcodeTotal || Number(pack.quantity || 0));
+  }, 0);
+}
+
+function contentPackedQuantity(payload: SupplyContentPayload | null): { quantity: number; source: "package" | "goods" } | null {
+  if (!payload) return null;
+  if (payload.source === "package" || (payload.packages && payload.packages.length > 0)) {
+    return { quantity: packagePackedQuantity(payload.packages || []), source: "package" };
+  }
+  if (payload.source === "goods" || (payload.goods && payload.goods.length > 0)) {
+    return {
+      quantity: (payload.goods || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0),
+      source: "goods",
+    };
+  }
+  return null;
+}
+
+async function readStoredSupplyContentPg(supplyID: number): Promise<SupplyContentPayload | null> {
+  const row = await pgGet<{ payload_json: string }>(`
+    SELECT payload_json
+    FROM wb_supply_contents
+    WHERE supply_id = ?
+  `, [supplyID]).catch(() => undefined);
+  if (row?.payload_json) return safeJson<SupplyContentPayload>(row.payload_json);
+
+  const accepted = await getAcceptedSupplyContentPg(supplyID).catch(() => null);
+  return (accepted?.payload as SupplyContentPayload | undefined) || null;
+}
+
+function readStoredSupplyContentSqlite(supplyID: number): SupplyContentPayload | null {
+  try {
+    const db = getDb();
+    const table = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'wb_supply_contents'").get();
+    if (table) {
+      const row = db.prepare("SELECT payload_json FROM wb_supply_contents WHERE supply_id = ?").get(supplyID) as { payload_json: string } | undefined;
+      if (row?.payload_json) return safeJson<SupplyContentPayload>(row.payload_json);
+    }
+  } catch {
+    // Fallback to accepted content below.
+  }
+
+  const accepted = getAcceptedSupplyContent(supplyID);
+  return (accepted?.payload as SupplyContentPayload | undefined) || null;
+}
+
+async function enrichDetailWithPackedQuantity(supplyID: number, detail: WbSupplyDetail): Promise<WbSupplyDetail> {
+  const payload = isPostgresEnabled()
+    ? await readStoredSupplyContentPg(supplyID)
+    : readStoredSupplyContentSqlite(supplyID);
+  const packed = contentPackedQuantity(payload);
+  if (!packed) return { ...detail, packedQuantity: detail.quantity, packedQuantitySource: "detail" };
+  return { ...detail, packedQuantity: packed.quantity, packedQuantitySource: packed.source };
+}
+
 export async function GET(request: NextRequest) {
   const authError = await requireAdmin(request);
   if (authError) return authError;
@@ -187,11 +280,11 @@ export async function GET(request: NextRequest) {
 
     if (isPostgresEnabled() && isPostgresReadonlyConnection()) {
       const stored = await getSupplySnapshotsPg(limit, offset);
-      const supplies = stored.map((item) => ({
+      const supplies = await Promise.all(stored.map(async (item) => ({
         ...item.row,
         supplyID: item.supplyID,
-        detail: item.detail,
-      }));
+        detail: item.detail ? await enrichDetailWithPackedQuantity(item.supplyID, item.detail as WbSupplyDetail) : item.detail,
+      })));
       return NextResponse.json({ supplies, meta: { limit, offset, source: "db" } });
     }
 
@@ -218,7 +311,7 @@ export async function GET(request: NextRequest) {
           ? await getAcceptedSupplyPg(supplyID as number)
           : getAcceptedSupply(supplyID as number);
         if (stored) {
-          const detail = stored.detail as WbSupplyDetail;
+          const detail = await enrichDetailWithPackedQuantity(supplyID as number, stored.detail as WbSupplyDetail);
           if (isDraftSupply(row, detail)) continue;
           await persistSupplySnapshot({ supplyID: supplyID as number, row, detail: detail as Record<string, unknown>, listPosition: offset + i });
           supplies.push({ ...row, detail });
@@ -229,7 +322,7 @@ export async function GET(request: NextRequest) {
       try {
         if (detailRequests > 0) await sleep(DETAIL_DELAY_MS);
         detailRequests++;
-        const detail = await getSupplyDetail(supplyID as number);
+        const detail = await enrichDetailWithPackedQuantity(supplyID as number, await getSupplyDetail(supplyID as number));
         if (isDraftSupply(row, detail)) continue;
         await persistSupplySnapshot({ supplyID: supplyID as number, row, detail: detail as Record<string, unknown>, listPosition: offset + i });
         if (detail.statusID === 5) {

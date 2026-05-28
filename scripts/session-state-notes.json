@@ -2,13 +2,13 @@
   "currentFocus": [
     "Production runtime is in PostgreSQL mode (`MPHUB_DB_ENGINE=postgres`); production PostgreSQL on VM 107 is the data source of truth. Local SQLite is legacy/stale fallback.",
     "Local MpHub development must use `127.0.0.1:3000`; do not use the literal `localhost` hostname for this project.",
-    "`/supplies` is deployed: 20 non-draft WB supplies, accepted-supply DB cache, row expansion where WB exposes detail, and `Допринято` as supply type.",
+    "`/supplies` is deployed: fetches up to 20 latest WB supplies, hides draft rows, keeps accepted-supply DB cache, expands rows where WB exposes detail, and shows `Допринято` as supply type.",
     "`/shipment` → `Товары` uses the left/right `ProductsSplitView`; cost/table version 1.1 UI changes are deployed.",
     "`/warehouse` stores Google Sheets ready-stock imports in PostgreSQL; current production `warehouse_ready_stock=127`.",
     "Reviews sync runs every 15 minutes as a slow archive tick: one WB archive request per run, with DB state/retry handling for `429`; watchdog threshold is `max_age_min=45`."
   ],
   "continueFromHere": [
-    "Keep monitoring production `data/reviews-sync.log`; reviews archive sync should make at most one WB archive request per 15-minute cron tick and advance after WB rate-limit windows.",
+    "Keep monitoring production `data/reviews-sync.log`; reviews archive sync should make at most one WB archive request per 15-minute cron tick and continue advancing after `archive_skip=55000`.",
     "Consider cleaning production crontab comments so the Reviews Sync heading says every 15 minutes instead of hourly.",
     "If data/status questions arise, verify production PostgreSQL and runtime through `ssh wb-site` before answering.",
     "Before any deploy, inspect dirty worktree scope and deploy only the user-approved files.",

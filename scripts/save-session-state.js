@@ -189,7 +189,7 @@ function productionRuntime() {
     "curl --max-time 10 -sS -o /dev/null -w 'login:%{http_code}\\n' http://127.0.0.1:3000/login || true",
     "curl --max-time 10 -sS -o /dev/null -w 'logistics:%{http_code}\\n' http://127.0.0.1:3000/logistics || true",
     "echo '---CRON---'",
-    "crontab -l 2>/dev/null | grep -E 'reviews-sync|shipment-sync|logistics-volume-sync|vps-watchdog|paid-storage-sync' || true",
+    "crontab -l 2>/dev/null | grep -E 'daily-sync-api|sync-weekly-report|reviews-sync|reviews-complaints|shipment-sync|logistics-volume-sync|vps-watchdog|paid-storage-sync|data-health-cron' || true",
   ].join("\n");
 
   const result = tryExec("production runtime", () => execFileSync(

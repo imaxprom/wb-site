@@ -1,6 +1,6 @@
 # MpHub TODO
 
-Last updated: 2026-05-27 00:30 MSK.
+Last updated: 2026-05-28 13:41 MSK.
 
 ## High Priority
 - Before context cleanup or a new handoff, run `npm run save-session-state`, then verify `SESSION_STATE.md` against production if the answer depends on data, cron, PM2, deploy or WB API.
@@ -15,7 +15,7 @@ Last updated: 2026-05-27 00:30 MSK.
   - expected behavior is one WB archive request per run;
   - `429` should be recorded in `reviews_archive_sync_state` and `sync_status`, not treated as a broken app state.
 - Watchdog for `reviews-sync` should use `max_age_min=45`.
-- Verify next review ticks after `retry_after_until=2026-05-26T21:30:01.951Z` UTC and confirm the counter moves beyond `reviews=147971` when WB allows the next archive page.
+- Reviews archive sync already advanced beyond the previous 27.05 snapshot; current generated snapshot is `reviews=148152`, `archive_skip=55000`, `last_status=ok`. Continue monitoring new WB `429` windows and archive progress after `skip=55000`.
 - Confirm production monitor/data-health does not show false stale warnings after the PG-mode cron changes.
 
 ## PostgreSQL Follow-Up
@@ -26,8 +26,7 @@ Last updated: 2026-05-27 00:30 MSK.
 
 ## Supplies Follow-Up
 - Visually verify production `/supplies` after login:
-  - 20 non-draft supplies are shown;
-  - draft rows are hidden;
+  - up to 20 latest supplies are fetched, and draft rows are hidden;
   - accepted supplies use cached DB data;
   - `Допринято` appears as supply type, not status;
   - rows expand with article/detail data where WB exposes it.
@@ -48,6 +47,7 @@ Last updated: 2026-05-27 00:30 MSK.
 - Add a visible reviews sync/rate-limit status in UI, so users can see when WB `429` delayed archive sync.
 - Improve Reviews charts to show complaint breakdown explicitly: submitted, approved, rejected, error.
 - Review default `/reviews` filters. It opens with ratings `1,2,3`, which can look like missing data if the user expects all reviews.
+- Hide or relabel the legacy manual full-sync control in reviews account settings: in PostgreSQL mode `/api/reviews?sync=true` is intentionally disabled and sync belongs to production cron.
 - Consider persisting shipment UI manual export values if users need them to survive reload/navigation.
 
 ## Operational Notes

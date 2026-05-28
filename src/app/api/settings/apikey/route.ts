@@ -46,6 +46,8 @@ export async function PUT(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
+  const readonlyError = localReadonlyGuard("WB API key deletion");
+  if (readonlyError) return readonlyError;
 
   try {
     deleteWbApiKey();

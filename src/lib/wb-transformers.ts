@@ -76,26 +76,33 @@ export function transformStocks(items: WBStockItem[]): StockItem[] {
 
 /** Convert WB orders response to our OrderRecord[] */
 export function transformOrders(orders: WBOrder[]): OrderRecord[] {
-  return orders.map((o) => ({
-    date: o.date,
-    warehouse: o.warehouseName,
-    warehouseType: "",
-    country: o.countryName || "",
-    federalDistrict: o.oblastOkrugName || "",
-    region: o.regionName || "",
-    articleSeller: o.supplierArticle,
-    articleWB: String(o.nmId),
-    barcode: o.barcode,
-    category: o.category,
-    subject: o.subject,
-    brand: o.brand,
-    size: o.techSize,
-    totalPrice: o.totalPrice,
-    discountPercent: o.discountPercent,
-    spp: o.spp,
-    finishedPrice: o.finishedPrice,
-    priceWithDisc: o.priceWithDisc,
-    isCancel: o.isCancel,
-    cancelDate: o.cancelDate || "",
-  }));
+  return orders.map((o) => {
+    const fallbackUid = `${o.barcode}:${o.date}:${o.warehouseName}`;
+    return {
+      orderUid: o.srid || o.gNumber || o.sticker || fallbackUid,
+      gNumber: o.gNumber || "",
+      sticker: o.sticker || "",
+      srid: o.srid || "",
+      date: o.date,
+      warehouse: o.warehouseName,
+      warehouseType: "",
+      country: o.countryName || "",
+      federalDistrict: o.oblastOkrugName || "",
+      region: o.regionName || "",
+      articleSeller: o.supplierArticle,
+      articleWB: String(o.nmId),
+      barcode: o.barcode,
+      category: o.category,
+      subject: o.subject,
+      brand: o.brand,
+      size: o.techSize,
+      totalPrice: o.totalPrice,
+      discountPercent: o.discountPercent,
+      spp: o.spp,
+      finishedPrice: o.finishedPrice,
+      priceWithDisc: o.priceWithDisc,
+      isCancel: o.isCancel,
+      cancelDate: o.cancelDate || "",
+    };
+  });
 }

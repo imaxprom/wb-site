@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
-import { getReviewAccounts, getReviewAccountsPg, createReviewAccount, toPublicReviewAccount } from "@/lib/reviews-db";
+import { getReviewAccounts, getReviewAccountsPg, createReviewAccount, createReviewAccountPg, toPublicReviewAccount } from "@/lib/reviews-db";
 import { isPostgresEnabled, isPostgresReadonlyConnection } from "@/lib/postgres";
 
 export async function GET(req: NextRequest) {
@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     if (!body.name || !body.api_key) {
       return NextResponse.json({ error: "name and api_key are required" }, { status: 400 });
     }
-    const id = createReviewAccount(body);
+    const id = isPostgresEnabled() ? await createReviewAccountPg(body) : createReviewAccount(body);
     return NextResponse.json({ id });
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

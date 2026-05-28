@@ -68,6 +68,12 @@ export async function POST(req: NextRequest) {
   if (authError) return authError;
   const readonlyError = localReadonlyGuard("Monitor service actions");
   if (readonlyError) return readonlyError;
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json(
+      { error: "Monitor service actions are disabled in production. Use PM2/cron operations through SSH." },
+      { status: 410 },
+    );
+  }
 
   try {
     const { id, action } = await req.json();

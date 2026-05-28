@@ -27,6 +27,7 @@ data/daily-sync-status.json
 # Build artifacts
 tsconfig.tsbuildinfo
 next-env.d.ts
+e2e/test-results/
 
 # Monitor state (dynamic, per-environment — не коммитим и не деплоим)
 public/data/monitor/status.json

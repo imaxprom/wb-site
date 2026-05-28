@@ -36,6 +36,8 @@ CRON_TASKS = {
     # Логистические объёмы гоняются после paid-storage, раз в сутки.
     "warehouse-remains-sync": {"log": DATA_DIR / "warehouse-remains-sync.log", "max_age_min": 1440, "name": "Warehouse Remains Sync", "only_hours_msk": list(range(5, 24))},
     "warehouse-measurements-sync": {"log": DATA_DIR / "warehouse-measurements-sync.log", "max_age_min": 1440, "name": "Warehouse Measurements Sync", "only_hours_msk": list(range(5, 24))},
+    "auth-check": {"log": DATA_DIR / "auth-check.log", "max_age_min": 1500, "name": "Auth Check"},
+    "data-health-cron": {"log": PROJECT_DIR / "public" / "data" / "monitor" / "data-health-cron.json", "max_age_min": 120, "name": "Data Health Cron"},
 }
 
 # ─── Logging ─────────────────────────────────────────────────

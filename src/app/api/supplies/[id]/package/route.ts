@@ -68,6 +68,8 @@ interface ArticleSummary {
   }[];
 }
 
+type BarcodeSummary = ArticleSummary["barcodes"][number];
+
 const packageCache = new Map<string, { ts: number; data: WbPackage[] }>();
 const goodsCache = new Map<string, { ts: number; data: WbSupplyGood[] }>();
 const detailCache = new Map<string, { ts: number; data: WbSupplyDetail }>();
@@ -263,7 +265,7 @@ function summarizeArticles(packages: WbPackage[], meta: Map<string, BarcodeMeta>
   return Array.from(byArticle.values())
     .map((article) => ({
       ...article,
-      barcodes: article.barcodes.sort((a, b) => b.quantity - a.quantity || a.barcode.localeCompare(b.barcode)),
+      barcodes: article.barcodes.sort(compareBarcodesBySize),
     }))
     .sort((a, b) => b.quantity - a.quantity || a.articleWB.localeCompare(b.articleWB));
 }
@@ -311,9 +313,48 @@ function summarizeGoods(goods: WbSupplyGood[], meta: Map<string, BarcodeMeta>): 
   return Array.from(byArticle.values())
     .map((article) => ({
       ...article,
-      barcodes: article.barcodes.sort((a, b) => b.quantity - a.quantity || a.barcode.localeCompare(b.barcode)),
+      barcodes: article.barcodes.sort(compareBarcodesBySize),
     }))
     .sort((a, b) => b.quantity - a.quantity || a.articleWB.localeCompare(b.articleWB));
+}
+
+function sizeSortKey(size: string): [number, number, string] {
+  const numbers = String(size || "")
+    .match(/\d+/g)
+    ?.map((value) => Number(value))
+    .filter((value) => Number.isFinite(value)) || [];
+  return [
+    numbers[0] ?? Number.MAX_SAFE_INTEGER,
+    numbers[1] ?? numbers[0] ?? Number.MAX_SAFE_INTEGER,
+    String(size || ""),
+  ];
+}
+
+function compareBarcodesBySize(a: BarcodeSummary, b: BarcodeSummary): number {
+  const aKey = sizeSortKey(a.size);
+  const bKey = sizeSortKey(b.size);
+  return aKey[0] - bKey[0]
+    || aKey[1] - bKey[1]
+    || aKey[2].localeCompare(bKey[2], "ru")
+    || a.barcode.localeCompare(b.barcode);
+}
+
+function withSortedBarcodeSizes<T extends { articles?: ArticleSummary[] }>(payload: T): T {
+  if (!Array.isArray(payload.articles)) return payload;
+  return {
+    ...payload,
+    articles: payload.articles.map((article) => ({
+      ...article,
+      barcodes: [...article.barcodes].sort(compareBarcodesBySize),
+    })),
+  };
+}
+
+function packagePackedQuantity(packages: WbPackage[]): number {
+  return packages.reduce((sum, pack) => {
+    const barcodeTotal = (pack.barcodes || []).reduce((itemSum, item) => itemSum + Number(item.quantity || 0), 0);
+    return sum + (barcodeTotal || Number(pack.quantity || 0));
+  }, 0);
 }
 
 export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -336,7 +377,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
             payload: stored.payload,
           });
         }
-        return NextResponse.json(stored.payload);
+        return NextResponse.json(withSortedBarcodeSizes(stored.payload as { articles?: ArticleSummary[] }));
       }
     }
 
@@ -375,12 +416,12 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
         await persistAcceptedSupplyContent({ supplyID, source: "goods", payload });
       }
 
-      return NextResponse.json(payload);
+      return NextResponse.json(withSortedBarcodeSizes(payload));
     }
 
     const packages = await wbFetchPackage(id);
     const articles = summarizeArticles(packages, meta);
-    const totalQuantity = packages.reduce((sum, pack) => sum + Number(pack.quantity || 0), 0);
+    const totalQuantity = packagePackedQuantity(packages);
 
     const payload = {
       supplyID: id,
@@ -400,7 +441,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
       await persistAcceptedSupplyContent({ supplyID, source: "package", payload });
     }
 
-    return NextResponse.json(payload);
+    return NextResponse.json(withSortedBarcodeSizes(payload));
   } catch (error) {
     return apiError(error, error instanceof WbApiError ? error.status : 500);
   }

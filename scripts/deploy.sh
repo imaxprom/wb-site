@@ -10,10 +10,14 @@ echo "📦 Syncing files..."
 rsync -az --delete \
   --exclude='node_modules' \
   --exclude='.next' \
+  --exclude='.venv' \
+  --exclude='.npm-cache' \
   --exclude='.deploy-backups' \
   --exclude='.git' \
   --exclude='.env.production.local' \
   --exclude='.env.production.local.*' \
+  --exclude='__pycache__/' \
+  --exclude='*.pyc' \
   --exclude='/data/' \
   --exclude='public/data/monitor/status.json' \
   --exclude='public/data/monitor/repair-state.json' \

@@ -17,6 +17,8 @@ interface SupplyDetail {
   actualWarehouseName?: string;
   supplierAssignName?: string;
   quantity?: number;
+  packedQuantity?: number;
+  packedQuantitySource?: "package" | "goods" | "detail";
   readyForSaleQuantity?: number;
   acceptedQuantity?: number;
   unloadingQuantity?: number;
@@ -102,6 +104,25 @@ function statusLabel(statusID: number | undefined) {
   }
 }
 
+function statusBadgeClass(statusID: number | undefined) {
+  switch (statusID) {
+    case 1:
+      return "border-[var(--text-muted)]/30 bg-[var(--text-muted)]/10 text-[var(--text-muted)]";
+    case 2:
+      return "border-[#42A5F5]/35 bg-[#42A5F5]/10 text-[#42A5F5]";
+    case 3:
+      return "border-[var(--accent)]/35 bg-[var(--accent)]/10 text-[var(--accent-hover)]";
+    case 4:
+      return "border-[var(--warning)]/35 bg-[var(--warning)]/10 text-[var(--warning)]";
+    case 5:
+      return "border-[var(--success)]/35 bg-[var(--success)]/10 text-[var(--success)]";
+    case 6:
+      return "border-cyan-400/35 bg-cyan-400/10 text-cyan-300";
+    default:
+      return "border-[var(--border)] bg-[var(--bg)] text-white";
+  }
+}
+
 function virtualTypeLabel(virtualTypeID: number | undefined) {
   switch (virtualTypeID) {
     case 5:
@@ -123,7 +144,8 @@ function typeLabel(boxTypeID: number | undefined, isBoxOnPallet?: boolean) {
 
 function quantityPair(detail: SupplyDetail | null) {
   if (!detail) return "-";
-  return `${formatNumber(detail.quantity || 0)} / ${formatNumber(detail.acceptedQuantity || 0)}`;
+  const packed = detail.packedQuantity ?? detail.quantity ?? 0;
+  return `${formatNumber(packed)} / ${formatNumber(detail.acceptedQuantity || 0)}`;
 }
 
 export default function SuppliesPage() {
@@ -337,7 +359,7 @@ export default function SuppliesPage() {
                           {supply.detailError && <div className="text-xs text-[var(--text-muted)]">{supply.detailError}</div>}
                         </td>
                         <td className="px-4 py-3 text-center align-middle">
-                          <span className="inline-flex min-w-24 justify-center rounded-full border border-[var(--border)] bg-[var(--bg)] px-3 py-1 text-xs font-medium text-white">
+                          <span className={`inline-flex min-w-24 justify-center rounded-full border px-3 py-1 text-xs font-medium ${statusBadgeClass(statusID)}`}>
                             {statusLabel(statusID)}
                           </span>
                         </td>

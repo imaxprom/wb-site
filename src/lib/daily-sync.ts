@@ -3,7 +3,7 @@
  * Вызывает независимые sync-модули, каждый в своём try/catch.
  * Ошибка в одном модуле не блокирует остальные.
  */
-import { type SyncStatus, type DaySyncStatus, emptySource, loadStatus, saveStatus, yesterday } from "./sync/types";
+import { type SyncStatus, type DaySyncStatus, emptySource, hourInMoscow, loadStatus, saveStatus, yesterday } from "./sync/types";
 import { syncReport } from "./sync/realization";
 import { syncAdvertising } from "./sync/advertising";
 import { syncOrders } from "./sync/orders";
@@ -125,7 +125,7 @@ export function startDailyCron(): void {
   if (cronTimer) return;
 
   async function tick() {
-    const hour = new Date().getHours();
+    const hour = hourInMoscow();
     if (hour < CRON_START_HOUR || hour > CRON_END_HOUR) return;
 
     const status = loadStatus();

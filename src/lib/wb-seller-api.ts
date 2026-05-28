@@ -263,9 +263,15 @@ async function saveReportResponse(
   let fileName = `report-${reportId}.xlsx`;
   const match = disposition.match(/filename[*]?=(?:UTF-8''|"?)([^";]+)/i);
   if (match) fileName = decodeURIComponent(match[1]);
+  fileName = path.basename(fileName).replace(/[^\w.-]+/g, "_");
+  if (!/\.xlsx$/i.test(fileName)) fileName = `report-${reportId}.xlsx`;
 
   const buffer = Buffer.from(await res.arrayBuffer());
-  const filePath = path.join(REPORTS_DIR, fileName);
+  const filePath = path.resolve(REPORTS_DIR, fileName);
+  const reportsRoot = path.resolve(REPORTS_DIR);
+  if (!filePath.startsWith(reportsRoot + path.sep)) {
+    return { ok: false, error: "Unsafe report filename" };
+  }
   fs.writeFileSync(filePath, buffer);
 
   return { ok: true, filePath, fileName };

@@ -9,6 +9,7 @@ import {
 } from "@/lib/shipment-db";
 import { verifyToken } from "@/lib/auth";
 import { isPostgresEnabled } from "@/lib/postgres";
+import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 
 initShipmentTables();
 
@@ -36,6 +37,8 @@ export async function PUT(req: NextRequest) {
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const readonlyError = localReadonlyGuard("Product override updates");
+  if (readonlyError) return readonlyError;
 
   try {
     const body = await req.json() as {

@@ -4,20 +4,34 @@ import fs from "fs";
 import path from "path";
 import {
   getReviewAccountById,
+  getReviewAccountByIdPg,
   getReviewAccounts,
+  getReviewAccountsPg,
   getReviewById,
+  getReviewByIdPg,
   getReviewsForAutoComplaint,
+  getReviewsForAutoComplaintPg,
   createComplaint,
+  createComplaintPg,
   updateComplaintStatus,
+  updateComplaintStatusPg,
   updateComplaintContent,
+  updateComplaintContentPg,
   updateReviewComplaintStatus,
+  updateReviewComplaintStatusPg,
   getComplaintsByAccount,
   getComplaintsByAccountPg,
   getComplaintByReviewId,
+  getComplaintByReviewIdPg,
   getTodayComplaintsCount,
+  getTodayComplaintsCountPg,
   getLastComplaintByManager,
+  getLastComplaintByManagerPg,
   shouldPauseByRecentRejections,
+  shouldPauseByRecentRejectionsPg,
   type ReviewAccount,
+  type Review,
+  type ReviewComplaint,
 } from "@/lib/reviews-db";
 import { isPostgresEnabled, isPostgresReadonlyConnection } from "@/lib/postgres";
 
@@ -74,6 +88,71 @@ function getCodexGatewayConfig() {
     model: process.env.CODEX_GATEWAY_MODEL || fileEnv.CODEX_GATEWAY_MODEL || "gpt-5.5",
     timeoutMs: Number(process.env.CODEX_GATEWAY_TIMEOUT_MS || fileEnv.CODEX_GATEWAY_TIMEOUT_MS || 180000),
   };
+}
+
+async function readReviewAccountById(id: number): Promise<ReviewAccount | null> {
+  return isPostgresEnabled() ? await getReviewAccountByIdPg(id) : getReviewAccountById(id);
+}
+
+async function readReviewAccountsWithCabinetTokens(): Promise<ReviewAccount[]> {
+  const accounts = isPostgresEnabled() ? await getReviewAccountsPg() : getReviewAccounts();
+  return accounts.filter(a => a.wb_authorize_v3);
+}
+
+async function readReviewById(id: number): Promise<Review | null> {
+  return isPostgresEnabled() ? await getReviewByIdPg(id) : getReviewById(id);
+}
+
+async function readComplaintByReviewId(reviewId: number): Promise<ReviewComplaint | null> {
+  return isPostgresEnabled() ? await getComplaintByReviewIdPg(reviewId) : getComplaintByReviewId(reviewId);
+}
+
+async function readTodayComplaintsCount(accountId: number): Promise<number> {
+  return isPostgresEnabled() ? await getTodayComplaintsCountPg(accountId) : getTodayComplaintsCount(accountId);
+}
+
+async function readReviewsForAutoComplaint(accountId: number, ratings: number[], excludedArticles: string[]): Promise<Review[]> {
+  return isPostgresEnabled()
+    ? await getReviewsForAutoComplaintPg(accountId, ratings, excludedArticles)
+    : getReviewsForAutoComplaint(accountId, ratings, excludedArticles);
+}
+
+async function readLastComplaintByManager(accountId: number, managerName: string): Promise<string | null> {
+  return isPostgresEnabled()
+    ? await getLastComplaintByManagerPg(accountId, managerName)
+    : getLastComplaintByManager(accountId, managerName);
+}
+
+async function readPauseByRecentRejections(accountId: number, lastN: number): Promise<{ pause: boolean; rejected: number; approved: number }> {
+  return isPostgresEnabled()
+    ? await shouldPauseByRecentRejectionsPg(accountId, lastN)
+    : shouldPauseByRecentRejections(accountId, lastN);
+}
+
+async function writeComplaint(data: {
+  review_id: number;
+  account_id: number;
+  wb_review_id: string;
+  complaint_reason_id: number;
+  explanation?: string;
+  manager_name?: string;
+}): Promise<number> {
+  return isPostgresEnabled() ? await createComplaintPg(data) : createComplaint(data);
+}
+
+async function writeComplaintStatus(id: number, status: string, errorMessage?: string): Promise<void> {
+  if (isPostgresEnabled()) await updateComplaintStatusPg(id, status, errorMessage);
+  else updateComplaintStatus(id, status, errorMessage);
+}
+
+async function writeComplaintContent(id: number, reasonId: number, explanation: string, managerName: string): Promise<void> {
+  if (isPostgresEnabled()) await updateComplaintContentPg(id, reasonId, explanation, managerName);
+  else updateComplaintContent(id, reasonId, explanation, managerName);
+}
+
+async function writeReviewComplaintStatus(reviewId: number, complaintStatus: string): Promise<void> {
+  if (isPostgresEnabled()) await updateReviewComplaintStatusPg(reviewId, complaintStatus);
+  else updateReviewComplaintStatus(reviewId, complaintStatus);
 }
 
 function getComplaintsConfig(account: ReviewAccount): ComplaintsConfig {
@@ -407,12 +486,12 @@ export async function POST(req: NextRequest) {
 
     // Mode 1: Auto-submit for an account
     if (json.auto && json.account_id) {
-      const account = getReviewAccountById(json.account_id);
+      const account = await readReviewAccountById(json.account_id);
       if (!account) return NextResponse.json({ error: "Account not found" }, { status: 404 });
       if (!account.wb_authorize_v3) return NextResponse.json({ error: "Cabinet tokens not configured" }, { status: 400 });
 
       const config = getComplaintsConfig(account);
-      const todayCount = getTodayComplaintsCount(account.id);
+      const todayCount = await readTodayComplaintsCount(account.id);
       const remaining = Math.max(0, config.daily_limit - todayCount);
       if (remaining === 0) return NextResponse.json({ submitted: 0, message: "Daily limit reached" });
 
@@ -420,7 +499,7 @@ export async function POST(req: NextRequest) {
         ? config.excluded_articles.split(/[,\n]/).map((s: string) => s.trim()).filter(Boolean)
         : [];
 
-      const reviews = getReviewsForAutoComplaint(account.id, config.ratings, excludedArticles);
+      const reviews = await readReviewsForAutoComplaint(account.id, config.ratings, excludedArticles);
       const toSubmit = reviews.slice(0, remaining);
 
       let submitted = 0;
@@ -430,7 +509,7 @@ export async function POST(req: NextRequest) {
         const available = await fetchAvailableComplaintReasons(account, review.wb_review_id!);
         const textReasons = available.ok ? getTextComplaintReasons(available.reasons, config.allowed_reasons) : [];
         if (!available.ok || textReasons.length === 0) {
-          const complaintId = createComplaint({
+          const complaintId = await writeComplaint({
             review_id: review.id,
             account_id: account.id,
             wb_review_id: review.wb_review_id!,
@@ -438,10 +517,10 @@ export async function POST(req: NextRequest) {
             explanation: "",
             manager_name: "",
           });
-          updateComplaintStatus(complaintId, "error", available.ok
+          await writeComplaintStatus(complaintId, "error", available.ok
             ? reasonErrorMessage(review.wb_review_id!, available.reasons, config.allowed_reasons)
             : `WB reasons HTTP ${available.status}: ${available.body}`);
-          updateReviewComplaintStatus(review.id, "error");
+          await writeReviewComplaintStatus(review.id, "error");
           errors++;
           continue;
         }
@@ -449,7 +528,7 @@ export async function POST(req: NextRequest) {
         // Pick random manager
         const managers = config.managers?.length ? config.managers : [{ name: "Default", style: "" }];
         const manager = managers[Math.floor(Math.random() * managers.length)];
-        const previousText = getLastComplaintByManager(account.id, manager.name);
+        const previousText = await readLastComplaintByManager(account.id, manager.name);
         const reasonIds = textReasons.map((reason) => reason.id);
 
         const ai = await generateComplaint(review, reasonIds, {
@@ -462,7 +541,7 @@ export async function POST(req: NextRequest) {
         let { reason_id: reasonId, explanation } = ai;
         if (!reasonIds.includes(reasonId)) reasonId = defaultReasonId(reasonIds);
 
-        const complaintId = createComplaint({
+        const complaintId = await writeComplaint({
           review_id: review.id,
           account_id: account.id,
           wb_review_id: review.wb_review_id!,
@@ -474,11 +553,11 @@ export async function POST(req: NextRequest) {
         const result = await submitComplaintToWB(account, review.wb_review_id!, reasonId, explanation);
 
         if (result.ok) {
-          updateComplaintStatus(complaintId, "submitted");
-          updateReviewComplaintStatus(review.id, "submitted");
+          await writeComplaintStatus(complaintId, "submitted");
+          await writeReviewComplaintStatus(review.id, "submitted");
           submitted++;
         } else {
-          updateComplaintStatus(complaintId, "error", `HTTP ${result.status}: ${result.body}`);
+          await writeComplaintStatus(complaintId, "error", `HTTP ${result.status}: ${result.body}`);
           errors++;
         }
 
@@ -493,17 +572,17 @@ export async function POST(req: NextRequest) {
     // Mode 2: Manual single complaint — АСИНХРОННЫЙ flow (202 Accepted + polling)
     if (json.review_id) {
       const reviewId = Number(json.review_id);
-      const existing = getComplaintByReviewId(reviewId);
+      const existing = await readComplaintByReviewId(reviewId);
       if (existing && existing.status !== "error") {
         return NextResponse.json({ error: "Complaint already submitted" }, { status: 400 });
       }
 
-      const review = getReviewById(reviewId);
+      const review = await readReviewById(reviewId);
       if (!review || !review.wb_review_id) {
         return NextResponse.json({ error: "Review not found" }, { status: 404 });
       }
 
-      const account = getReviewAccountById(review.account_id);
+      const account = await readReviewAccountById(review.account_id);
       if (!account || !account.wb_authorize_v3) {
         return NextResponse.json({ error: "Cabinet tokens not configured for this account" }, { status: 400 });
       }
@@ -511,7 +590,7 @@ export async function POST(req: NextRequest) {
       // Эффективность-чек: если последние 5 обработанных — все rejected,
       // даём пользователю знать и не даём подать. Обходится ручной отменой или после нового approved.
       if (!json.dry_run && !json.force) {
-        const eff = shouldPauseByRecentRejections(account.id, 5);
+        const eff = await readPauseByRecentRejections(account.id, 5);
         if (eff.pause) {
           return NextResponse.json({
             error: `Пауза: последние 5 жалоб все отклонены WB. Проверь настройки промпта/менеджеров. Передай force=true чтобы подать принудительно.`,
@@ -536,7 +615,7 @@ export async function POST(req: NextRequest) {
         const reasons = textReasons.map((reason) => reason.id);
         const managers = config.managers?.length ? config.managers : [{ name: "Default", style: "" }];
         const manager = managers[Math.floor(Math.random() * managers.length)];
-        const previousText = getLastComplaintByManager(account.id, manager.name);
+        const previousText = await readLastComplaintByManager(account.id, manager.name);
         const ai = await generateComplaint(review, reasons, {
           system_prompt: config.system_prompt,
           user_prompt: config.user_prompt,
@@ -572,7 +651,7 @@ export async function POST(req: NextRequest) {
       const reasonIds = textReasons.map((reason) => reason.id);
 
       // Создаём pending-запись сразу
-      const complaintId = createComplaint({
+      const complaintId = await writeComplaint({
         review_id: review.id,
         account_id: account.id,
         wb_review_id: review.wb_review_id,
@@ -580,7 +659,7 @@ export async function POST(req: NextRequest) {
         explanation: json.explanation || "",
         manager_name: "",
       });
-      updateReviewComplaintStatus(review.id, "pending");
+      await writeReviewComplaintStatus(review.id, "pending");
 
       // Запускаем обработку на фоне (не await). Клиент сразу получает 202.
       // Внутри — вызов Codex gateway (с retry) + отправка на WB (с retry) + обновление БД.
@@ -598,7 +677,7 @@ export async function POST(req: NextRequest) {
             const reasons = reasonId ? [reasonId] : reasonIds;
             const managers = config.managers?.length ? config.managers : [{ name: "Default", style: "" }];
             const manager = managers[Math.floor(Math.random() * managers.length)];
-            const previousText = getLastComplaintByManager(account.id, manager.name);
+            const previousText = await readLastComplaintByManager(account.id, manager.name);
 
             // Retry AI generation: Codex gateway can be slow while spawning codex exec.
             let ai = null;
@@ -616,15 +695,15 @@ export async function POST(req: NextRequest) {
               if (attempt < MAX_TRIES) await sleep(RETRY_DELAY_MS);
             }
             if (!ai) {
-              updateComplaintStatus(complaintId, "error", `AI generation failed after ${MAX_TRIES} attempts`);
-              updateReviewComplaintStatus(review.id, "error");
+              await writeComplaintStatus(complaintId, "error", `AI generation failed after ${MAX_TRIES} attempts`);
+              await writeReviewComplaintStatus(review.id, "error");
               return;
             }
             reasonId = reasonId || ai.reason_id;
             if (!reasonIds.includes(reasonId)) reasonId = defaultReasonId(reasonIds);
             explanation = explanation || ai.explanation;
             managerName = manager.name;
-            updateComplaintContent(complaintId, reasonId, explanation, managerName);
+            await writeComplaintContent(complaintId, reasonId, explanation, managerName);
           }
           if (!reasonId) reasonId = defaultReasonId(reasonIds);
 
@@ -640,15 +719,15 @@ export async function POST(req: NextRequest) {
           }
 
           if (wbResult?.ok) {
-            updateComplaintStatus(complaintId, "submitted");
-            updateReviewComplaintStatus(review.id, "submitted");
+            await writeComplaintStatus(complaintId, "submitted");
+            await writeReviewComplaintStatus(review.id, "submitted");
           } else {
-            updateComplaintStatus(complaintId, "error", `HTTP ${wbResult?.status}: ${wbResult?.body}`);
-            updateReviewComplaintStatus(review.id, "error");
+            await writeComplaintStatus(complaintId, "error", `HTTP ${wbResult?.status}: ${wbResult?.body}`);
+            await writeReviewComplaintStatus(review.id, "error");
           }
         } catch (err: unknown) {
-          updateComplaintStatus(complaintId, "error", (err as Error).message);
-          updateReviewComplaintStatus(review.id, "error");
+          await writeComplaintStatus(complaintId, "error", (err as Error).message);
+          await writeReviewComplaintStatus(review.id, "error");
         }
       })();
 
@@ -667,11 +746,13 @@ export async function POST(req: NextRequest) {
 // ─── Sync complaint statuses from WB ───────────────────────
 
 async function syncComplaintStatuses(): Promise<number> {
-  const accounts = getReviewAccounts().filter(a => a.wb_authorize_v3);
+  const accounts = await readReviewAccountsWithCabinetTokens();
   let totalUpdated = 0;
 
   for (const account of accounts) {
-    const pending = getComplaintsByAccount(account.id, "submitted");
+    const pending = isPostgresEnabled()
+      ? await getComplaintsByAccountPg(account.id, "submitted")
+      : getComplaintsByAccount(account.id, "submitted");
     if (pending.length === 0) continue;
 
     const headers = buildHeaders(account);
@@ -695,8 +776,8 @@ async function syncComplaintStatuses(): Promise<number> {
         const status = fb.supplierComplaints?.feedbackComplaint?.status;
         if (status === "approved" || status === "rejected") {
           const complaint = pendingMap.get(fb.id)!;
-          updateComplaintStatus(complaint.id, status);
-          updateReviewComplaintStatus(complaint.review_id, status);
+          await writeComplaintStatus(complaint.id, status);
+          await writeReviewComplaintStatus(complaint.review_id, status);
           pendingMap.delete(fb.id);
           totalUpdated++;
         }
