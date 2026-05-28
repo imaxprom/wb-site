@@ -61,15 +61,15 @@ export default function UploadTab() {
           <span className="text-lg">🔄</span>
           <h3 className="font-medium">Автообновление</h3>
         </div>
-        <div className="flex flex-wrap gap-3">
-          {["09:00", "12:00", "15:00", "18:00", "21:00"].map((t) => {
+        <div className="flex flex-wrap gap-2">
+          {Array.from({ length: 24 }, (_, hour) => `${String(hour).padStart(2, "0")}:00`).map((t) => {
             const [h] = t.split(":").map(Number);
             const now = new Date();
             const isPast = now.getHours() > h || (now.getHours() === h && now.getMinutes() > 0);
             return (
               <div
                 key={t}
-                className={`px-3 py-1.5 rounded-lg text-sm font-mono border ${
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-mono border ${
                   isPast
                     ? "border-[var(--border)] text-[var(--text-muted)]"
                     : "border-[var(--accent)]/40 text-[var(--accent)] bg-[var(--accent)]/5"
@@ -82,7 +82,7 @@ export default function UploadTab() {
           })}
         </div>
         <p className="text-xs text-[var(--text-muted)] mt-2">
-          Данные обновляются автоматически 5 раз в день
+          Данные обновляются автоматически каждый час
         </p>
       </div>
 

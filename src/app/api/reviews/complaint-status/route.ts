@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
-import { getComplaintByReviewId } from "@/lib/reviews-db";
+import { getComplaintByReviewId, getComplaintByReviewIdPg } from "@/lib/reviews-db";
+import { isPostgresEnabled } from "@/lib/postgres";
 
 /**
  * GET /api/reviews/complaint-status?review_id=N — статус жалобы
@@ -11,14 +12,16 @@ import { getComplaintByReviewId } from "@/lib/reviews-db";
  * - stuck: true если pending > 5 минут (процесс завис/упал)
  */
 export async function GET(req: NextRequest) {
-  const authError = requireAdmin(req);
+  const authError = await requireAdmin(req);
   if (authError) return authError;
 
   const reviewId = Number(req.nextUrl.searchParams.get("review_id"));
   if (!reviewId) {
     return NextResponse.json({ error: "review_id required" }, { status: 400 });
   }
-  const complaint = getComplaintByReviewId(reviewId);
+  const complaint = isPostgresEnabled()
+    ? await getComplaintByReviewIdPg(reviewId)
+    : getComplaintByReviewId(reviewId);
   if (!complaint) {
     return NextResponse.json({ status: "none" });
   }

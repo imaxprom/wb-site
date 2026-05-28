@@ -5,6 +5,7 @@
  */
 import Database from "better-sqlite3";
 import { SourceStatus, emptySource, DB_PATH, getApiKey } from "./types";
+import { isPostgresEnabled, pgGet, pgRows, withPgTransaction } from "@/lib/postgres";
 
 function ensureCampaignNmTable(db: Database.Database): void {
   db.exec(`
@@ -14,6 +15,18 @@ function ensureCampaignNmTable(db: Database.Database): void {
       updated_at TEXT NOT NULL
     );
   `);
+}
+
+async function ensureCampaignNmTablePg(): Promise<void> {
+  await withPgTransaction(async (client) => {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS campaign_nm_map (
+        campaign_id BIGINT PRIMARY KEY,
+        nm_id BIGINT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+  });
 }
 
 async function fetchCampaignNmMap(apiKey: string): Promise<{ ok: boolean; map: Map<number, number> }> {
@@ -58,34 +71,74 @@ export async function syncAdvertising(date: string, prevValue = 0): Promise<Sour
       return s;
     }
 
-    const db = new Database(DB_PATH);
-    db.pragma("busy_timeout = 5000");
-    ensureCampaignNmTable(db);
-
-    const upsertMap = db.prepare(`
-      INSERT INTO campaign_nm_map (campaign_id, nm_id, updated_at) VALUES (?, ?, ?)
-      ON CONFLICT(campaign_id) DO UPDATE SET nm_id=excluded.nm_id, updated_at=excluded.updated_at
-    `);
     const now = new Date().toISOString();
-    db.transaction(() => {
-      for (const [cid, nm] of adverts.map) upsertMap.run(cid, nm, now);
-    })();
+    let cachedRows: { campaign_id: number; nm_id: number }[] = [];
+    if (isPostgresEnabled()) {
+      await ensureCampaignNmTablePg();
+      await withPgTransaction(async (client) => {
+        for (const [cid, nm] of adverts.map) {
+          await client.query(`
+            INSERT INTO campaign_nm_map (campaign_id, nm_id, updated_at) VALUES ($1, $2, $3)
+            ON CONFLICT(campaign_id) DO UPDATE SET nm_id=EXCLUDED.nm_id, updated_at=EXCLUDED.updated_at
+          `, [cid, nm, now]);
+        }
+      });
+      cachedRows = await pgRows<{ campaign_id: number; nm_id: number }>(
+        "SELECT campaign_id, nm_id FROM campaign_nm_map"
+      );
+    } else {
+      const db = new Database(DB_PATH);
+      db.pragma("busy_timeout = 5000");
+      ensureCampaignNmTable(db);
 
-    const cachedRows = db.prepare("SELECT campaign_id, nm_id FROM campaign_nm_map").all() as { campaign_id: number; nm_id: number }[];
+      const upsertMap = db.prepare(`
+        INSERT INTO campaign_nm_map (campaign_id, nm_id, updated_at) VALUES (?, ?, ?)
+        ON CONFLICT(campaign_id) DO UPDATE SET nm_id=excluded.nm_id, updated_at=excluded.updated_at
+      `);
+      db.transaction(() => {
+        for (const [cid, nm] of adverts.map) upsertMap.run(cid, nm, now);
+      })();
+      cachedRows = db.prepare("SELECT campaign_id, nm_id FROM campaign_nm_map").all() as { campaign_id: number; nm_id: number }[];
+      db.close();
+    }
+
     const cachedNmMap = new Map<number, number>(cachedRows.map(r => [r.campaign_id, r.nm_id]));
 
     const resolveNm = (advertId: number) => adverts.map.get(advertId) || cachedNmMap.get(advertId) || 0;
 
     // Idempotency: сверяем с тем, что уже лежит в БД.
     // Если сумма и кол-во записей совпадают — не трогаем.
-    const existingStats = db.prepare(
-      "SELECT COUNT(*) as cnt, COALESCE(SUM(amount), 0) as sum FROM advertising WHERE date = ?"
-    ).get(date) as { cnt: number; sum: number };
+    const existingStats = isPostgresEnabled()
+      ? await pgGet<{ cnt: number; sum: number }>(
+          "SELECT COUNT(*) as cnt, COALESCE(SUM(amount), 0) as sum FROM advertising WHERE date = ?",
+          [date]
+        ) || { cnt: 0, sum: 0 }
+      : (() => {
+          const db = new Database(DB_PATH);
+          db.pragma("busy_timeout = 5000");
+          const row = db.prepare(
+            "SELECT COUNT(*) as cnt, COALESCE(SUM(amount), 0) as sum FROM advertising WHERE date = ?"
+          ).get(date) as { cnt: number; sum: number };
+          db.close();
+          return row;
+        })();
     const unchanged =
       existingStats.cnt === entries.length &&
       Math.abs(existingStats.sum - total) < 0.01;
 
-    if (!unchanged) {
+    if (!unchanged && isPostgresEnabled()) {
+      await withPgTransaction(async (client) => {
+        await client.query("DELETE FROM advertising WHERE date = $1", [date]);
+        for (const e of entries) {
+          await client.query(
+            "INSERT INTO advertising (date, campaign_name, campaign_id, amount, payment_type, nm_id) VALUES ($1, $2, $3, $4, $5, $6)",
+            [date, e.campName || "", e.advertId || 0, e.updSum || 0, e.paymentType || "Баланс", resolveNm(e.advertId || 0)]
+          );
+        }
+      });
+    } else if (!unchanged) {
+      const db = new Database(DB_PATH);
+      db.pragma("busy_timeout = 5000");
       db.prepare("DELETE FROM advertising WHERE date = ?").run(date);
       const ins = db.prepare("INSERT INTO advertising (date, campaign_name, campaign_id, amount, payment_type, nm_id) VALUES (?, ?, ?, ?, ?, ?)");
       db.transaction(() => {
@@ -93,8 +146,8 @@ export async function syncAdvertising(date: string, prevValue = 0): Promise<Sour
           ins.run(date, e.campName || "", e.advertId || 0, e.updSum || 0, e.paymentType || "Баланс", resolveNm(e.advertId || 0));
         }
       })();
+      db.close();
     }
-    db.close();
 
     s.ok = true;
     s.value = total;

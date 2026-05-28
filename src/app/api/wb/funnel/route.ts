@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
+import { localReadonlyGuard } from "@/lib/local-readonly-guard";
+import { getWbApiKeyFromRequest } from "@/lib/wb-api-key";
 
 /**
  * Sales Funnel API — получить orderCount по дням за последние 7 дней.
@@ -10,10 +12,12 @@ import { apiError } from "@/lib/api-utils";
  * Response: { days: [{ date: "2026-03-21", orderCount: 1231 }, ...], total: 7628 }
  */
 export async function GET(req: NextRequest) {
-  const authError = requireAdmin(req);
+  const authError = await requireAdmin(req);
   if (authError) return authError;
+  const readonlyError = localReadonlyGuard("WB funnel proxy");
+  if (readonlyError) return readonlyError;
 
-  const apiKey = req.headers.get("x-wb-api-key");
+  const apiKey = getWbApiKeyFromRequest(req.headers);
   if (!apiKey) return NextResponse.json({ error: "API key missing" }, { status: 401 });
 
   const start = req.nextUrl.searchParams.get("start");

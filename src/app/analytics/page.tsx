@@ -34,7 +34,14 @@ export default function AnalyticsPage() {
   // Local orders loaded by date range
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(false);
-  const [weeklyStats, setWeeklyStats] = useState<{ orders: number; deliveries: number; returns: number; returnRate: number; buyouts: number } | null>(null);
+  const [weeklyStats, setWeeklyStats] = useState<{
+    orders: number;
+    dailyOrders?: Record<string, number>;
+    deliveries: number;
+    returns: number;
+    returnRate: number;
+    buyouts: number;
+  } | null>(null);
 
   const fetchOrders = useCallback(async (from: string, to: string) => {
     setLoadingOrders(true);
@@ -65,6 +72,11 @@ export default function AnalyticsPage() {
     if (!orders.length) return null;
     return getOrderStats(orders);
   }, [orders]);
+  const fullOrdersCount = weeklyStats?.orders || stats?.total || 0;
+  const detailCoverageText =
+    fullOrdersCount > orders.length
+      ? `Детализация: ${formatNumber(orders.length)} из ${formatNumber(fullOrdersCount)} заказов`
+      : undefined;
 
   const calculations = useMemo(() => {
     if (!products.length || !stock.length) return [];
@@ -147,7 +159,7 @@ export default function AnalyticsPage() {
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <StatCard
           title="Заказы"
-          value={formatNumber(weeklyStats?.orders || stats?.total || 0)}
+          value={formatNumber(fullOrdersCount)}
           color="warning"
         />
         <StatCard
@@ -177,19 +189,19 @@ export default function AnalyticsPage() {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-stretch">
         {stats && (
           <div className="h-full">
-            <RegionPieChart data={stats.byRegion} />
+            <RegionPieChart data={stats.byRegion} subtitle={detailCoverageText} />
           </div>
         )}
 
         {orders.length > 0 && (
           <div className="lg:col-span-3 h-full">
-            <RegionalMatrix orders={orders} />
+            <RegionalMatrix orders={orders} totalOrders={fullOrdersCount} />
           </div>
         )}
       </div>
 
       {/* Orders chart */}
-      {stats && <OrdersLineChart data={stats.byDate} />}
+      {stats && <OrdersLineChart data={weeklyStats?.dailyOrders || stats.byDate} />}
     </div>
   );
 }

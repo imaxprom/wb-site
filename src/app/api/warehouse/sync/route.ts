@@ -3,14 +3,17 @@ import { promisify } from "util";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
+import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 
 export const runtime = "nodejs";
 
 const execFileAsync = promisify(execFile);
 
 export async function POST(request: NextRequest) {
-  const authError = requireAdmin(request);
+  const authError = await requireAdmin(request);
   if (authError) return authError;
+  const readonlyError = localReadonlyGuard("Warehouse Google sync");
+  if (readonlyError) return readonlyError;
 
   try {
     const startedAt = new Date().toISOString();

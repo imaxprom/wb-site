@@ -15,10 +15,42 @@ const Database = require("better-sqlite3");
 const path = require("path");
 const fs = require("fs");
 const AdmZip = require("adm-zip");
+const { Pool } = require("pg");
 const { readFirstSheetRows } = require("./lib/excel-rows");
 
 const DB_PATH = path.join(__dirname, "..", "data", "weekly_reports.db");
 const TOKENS_PATH = path.join(__dirname, "..", "data", "wb-tokens.json");
+
+function loadEnvFile(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return;
+    for (const line of fs.readFileSync(filePath, "utf-8").split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+      const idx = trimmed.indexOf("=");
+      const key = trimmed.slice(0, idx).trim();
+      const value = trimmed.slice(idx + 1).trim().replace(/^['"]|['"]$/g, "");
+      if (key && process.env[key] === undefined) process.env[key] = value;
+    }
+  } catch { /* ignore */ }
+}
+
+loadEnvFile(path.join(__dirname, "..", ".env.production.local"));
+
+const USE_PG = process.env.MPHUB_DB_ENGINE === "postgres";
+let pgPool = null;
+
+function getPgPool() {
+  if (!pgPool) {
+    if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required when MPHUB_DB_ENGINE=postgres");
+    pgPool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      max: Number(process.env.PGPOOL_MAX || 5),
+      application_name: process.env.PGAPPNAME || "mphub-weekly-sync",
+    });
+  }
+  return pgPool;
+}
 
 // Маппинг колонок — тот же что в create-weekly-db.js
 const COLUMN_MAP = [
@@ -202,45 +234,158 @@ async function loadExcelToDB(db, xlsxBuffer, reportId, reportType, periodFrom, p
   return rows.length;
 }
 
+function buildPgBatchInsert(rows, reportId, reportType, periodFrom, periodTo) {
+  const dbCols = COLUMN_MAP.map((c) => c.db);
+  const allCols = ["report_id", "report_type", "period_from", "period_to", ...dbCols];
+  const values = [];
+  const rowSql = rows.map((r, rowIndex) => {
+    const placeholders = allCols.map((_, colIndex) => `$${rowIndex * allCols.length + colIndex + 1}`);
+    values.push(reportId, reportType, periodFrom, periodTo);
+    for (const c of COLUMN_MAP) {
+      const v = r[c.excel];
+      values.push(v === undefined || v === null || v === "" ? null : v);
+    }
+    return `(${placeholders.join(",")})`;
+  });
+
+  return {
+    sql: `INSERT INTO weekly_rows (${allCols.join(",")}) VALUES ${rowSql.join(",")}`,
+    values,
+  };
+}
+
+async function loadExcelToPg(xlsxBuffer, reportId, reportType, periodFrom, periodTo) {
+  const rows = await readFirstSheetRows(xlsxBuffer);
+  if (rows.length === 0) {
+    console.log(`  ⚠️ Отчёт #${reportId}: Excel пустой`);
+    return 0;
+  }
+
+  const client = await getPgPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("DELETE FROM weekly_rows WHERE report_id = $1", [reportId]);
+    await client.query("DELETE FROM reports WHERE report_id = $1", [reportId]);
+
+    const batchSize = 250;
+    for (let i = 0; i < rows.length; i += batchSize) {
+      const batch = buildPgBatchInsert(rows.slice(i, i + batchSize), reportId, reportType, periodFrom, periodTo);
+      await client.query(batch.sql, batch.values);
+    }
+
+    await client.query(`
+      INSERT INTO reports (report_id, report_type, period_from, period_to, rows_count)
+      VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (report_id) DO UPDATE SET
+        report_type = EXCLUDED.report_type,
+        period_from = EXCLUDED.period_from,
+        period_to = EXCLUDED.period_to,
+        rows_count = EXCLUDED.rows_count,
+        loaded_at = CURRENT_TIMESTAMP
+    `, [reportId, reportType, periodFrom, periodTo, rows.length]);
+    await client.query("COMMIT");
+    return rows.length;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function recalculateBuyoutRatesPg() {
+  const client = await getPgPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("DELETE FROM buyout_rates");
+    await client.query("DELETE FROM weekly_buyout_stats");
+    const buyoutResult = await client.query(`
+      INSERT INTO buyout_rates (article_wb, orders, buyouts, buyout_rate, updated_at)
+      SELECT nm_id,
+        COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Логистика' THEN srid END) as orders,
+        COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Продажа' THEN srid END) as buyouts,
+        CASE
+          WHEN COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Логистика' THEN srid END) > 0
+          THEN COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Продажа' THEN srid END)::double precision
+            / COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Логистика' THEN srid END)
+          ELSE 0
+        END as buyout_rate,
+        CURRENT_TIMESTAMP
+      FROM weekly_rows
+      WHERE supplier_oper_name IN ('Логистика', 'Продажа') AND nm_id != ''
+      GROUP BY nm_id
+      HAVING COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Логистика' THEN srid END) >= 30
+    `);
+    const weeklyResult = await client.query(`
+      INSERT INTO weekly_buyout_stats (period_from, period_to, orders, buyouts, returns, return_rate)
+      SELECT period_from, period_to,
+        COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Логистика' THEN srid END) as orders,
+        COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Продажа' THEN srid END) as buyouts,
+        COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Логистика' THEN srid END)
+          - COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Продажа' THEN srid END) as returns,
+        CASE
+          WHEN COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Логистика' THEN srid END) > 0
+          THEN (
+            COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Логистика' THEN srid END)
+              - COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Продажа' THEN srid END)
+          )::double precision / COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Логистика' THEN srid END)
+          ELSE 0
+        END as return_rate
+      FROM weekly_rows
+      WHERE supplier_oper_name IN ('Логистика', 'Продажа')
+      GROUP BY period_from, period_to
+    `);
+    await client.query("COMMIT");
+    return { buyoutRows: buyoutResult.rowCount || 0, weeklyRows: weeklyResult.rowCount || 0 };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function main() {
   console.log(`[${new Date().toISOString()}] Синхронизация еженедельных отчётов WB`);
 
   // Инициализация БД
-  const db = new Database(DB_PATH);
-  db.pragma("journal_mode = WAL");
+  const db = USE_PG ? null : new Database(DB_PATH);
+  if (db) {
+    db.pragma("journal_mode = WAL");
 
-  // Убедимся что таблицы есть
-  const colDefs = COLUMN_MAP.map((c) => `${c.db} ${c.type}`).join(",\n    ");
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS reports (
-      id INTEGER PRIMARY KEY,
-      report_id INTEGER NOT NULL,
-      report_type INTEGER NOT NULL,
-      period_from TEXT NOT NULL,
-      period_to TEXT NOT NULL,
-      rows_count INTEGER NOT NULL,
-      loaded_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(report_id)
-    )
-  `);
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS weekly_rows (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      report_id INTEGER NOT NULL,
-      report_type INTEGER NOT NULL,
-      period_from TEXT NOT NULL,
-      period_to TEXT NOT NULL,
-      ${colDefs}
-    )
-  `);
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_wr_period ON weekly_rows(period_from, period_to);
-    CREATE INDEX IF NOT EXISTS idx_wr_report ON weekly_rows(report_id);
-    CREATE INDEX IF NOT EXISTS idx_wr_barcode ON weekly_rows(barcode);
-    CREATE INDEX IF NOT EXISTS idx_wr_nm ON weekly_rows(nm_id);
-    CREATE INDEX IF NOT EXISTS idx_wr_oper ON weekly_rows(supplier_oper_name);
-    CREATE INDEX IF NOT EXISTS idx_wr_sale_dt ON weekly_rows(sale_dt);
-  `);
+    // Убедимся что таблицы есть
+    const colDefs = COLUMN_MAP.map((c) => `${c.db} ${c.type}`).join(",\n    ");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS reports (
+        id INTEGER PRIMARY KEY,
+        report_id INTEGER NOT NULL,
+        report_type INTEGER NOT NULL,
+        period_from TEXT NOT NULL,
+        period_to TEXT NOT NULL,
+        rows_count INTEGER NOT NULL,
+        loaded_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(report_id)
+      )
+    `);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS weekly_rows (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        report_id INTEGER NOT NULL,
+        report_type INTEGER NOT NULL,
+        period_from TEXT NOT NULL,
+        period_to TEXT NOT NULL,
+        ${colDefs}
+      )
+    `);
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_wr_period ON weekly_rows(period_from, period_to);
+      CREATE INDEX IF NOT EXISTS idx_wr_report ON weekly_rows(report_id);
+      CREATE INDEX IF NOT EXISTS idx_wr_barcode ON weekly_rows(barcode);
+      CREATE INDEX IF NOT EXISTS idx_wr_nm ON weekly_rows(nm_id);
+      CREATE INDEX IF NOT EXISTS idx_wr_oper ON weekly_rows(supplier_oper_name);
+      CREATE INDEX IF NOT EXISTS idx_wr_sale_dt ON weekly_rows(sale_dt);
+    `);
+  }
 
   // Авторизация
   let headers;
@@ -248,7 +393,8 @@ async function main() {
     headers = await getAuthHeaders();
   } catch (e) {
     console.log("❌ Ошибка авторизации: " + e.message);
-    db.close();
+    if (db) db.close();
+    if (pgPool) await pgPool.end();
     process.exit(1);
   }
 
@@ -257,9 +403,10 @@ async function main() {
   console.log(`Отчётов в ЛК: ${wbReports.length}`);
 
   // Какие уже загружены
-  const loaded = new Set(
-    db.prepare("SELECT report_id FROM reports").all().map((r) => r.report_id)
-  );
+  const loadedRows = USE_PG
+    ? (await getPgPool().query("SELECT report_id FROM reports")).rows
+    : db.prepare("SELECT report_id FROM reports").all();
+  const loaded = new Set(loadedRows.map((r) => Number(r.report_id)));
   console.log(`Уже загружено: ${loaded.size} отчётов`);
 
   // Группируем по периоду (type1 + type2)
@@ -291,7 +438,9 @@ async function main() {
         const xlsxBuf = await downloadExcel(headers, report.id);
         if (!xlsxBuf) continue;
 
-        const rowsLoaded = await loadExcelToDB(db, xlsxBuf, report.id, report.type, periodFrom, periodTo);
+        const rowsLoaded = USE_PG
+          ? await loadExcelToPg(xlsxBuf, report.id, report.type, periodFrom, periodTo)
+          : await loadExcelToDB(db, xlsxBuf, report.id, report.type, periodFrom, periodTo);
         console.log(`  ✅ type=${report.type}: загружено ${rowsLoaded} строк`);
         newCount++;
       } catch (e) {
@@ -303,59 +452,64 @@ async function main() {
   // Пересчёт buyout_rates в finance.db
   if (newCount > 0) {
     try {
-      const financeDbPath = path.join(__dirname, "..", "data", "finance.db");
-      const fdb = new Database(financeDbPath);
-      fdb.exec(`CREATE TABLE IF NOT EXISTS buyout_rates (
-        article_wb TEXT PRIMARY KEY,
-        orders INTEGER,
-        buyouts INTEGER,
-        buyout_rate REAL,
-        updated_at TEXT DEFAULT (datetime('now'))
-      )`);
-      fdb.exec(`CREATE TABLE IF NOT EXISTS weekly_buyout_stats (
-        period_from TEXT,
-        period_to TEXT,
-        orders INTEGER,
-        buyouts INTEGER,
-        returns INTEGER,
-        return_rate REAL,
-        PRIMARY KEY(period_from, period_to)
-      )`);
-      fdb.exec("DELETE FROM buyout_rates");
-      fdb.exec("DELETE FROM weekly_buyout_stats");
-      const rows = db.prepare(`
-        SELECT nm_id,
-          COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Логистика' THEN srid END) as orders,
-          COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Продажа' THEN srid END) as buyouts
-        FROM weekly_rows
-        WHERE supplier_oper_name IN ('Логистика', 'Продажа') AND nm_id != ''
-        GROUP BY nm_id
-        HAVING orders >= 30
-      `).all();
-      const ins = fdb.prepare("INSERT INTO buyout_rates (article_wb, orders, buyouts, buyout_rate) VALUES (?, ?, ?, ?)");
-      fdb.transaction(() => {
-        for (const r of rows) {
-          ins.run(r.nm_id, r.orders, r.buyouts, r.orders > 0 ? r.buyouts / r.orders : 0);
-        }
-      })();
-      fdb.close();
-      // Weekly buyout stats
-      const weeklyRows = db.prepare(`
-        SELECT period_from, period_to,
-          COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Логистика' THEN srid END) as orders,
-          COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Продажа' THEN srid END) as buyouts
-        FROM weekly_rows
-        WHERE supplier_oper_name IN ('Логистика', 'Продажа')
-        GROUP BY period_from, period_to
-      `).all();
-      const insW = fdb.prepare("INSERT INTO weekly_buyout_stats VALUES (?, ?, ?, ?, ?, ?)");
-      fdb.transaction(() => {
-        for (const w of weeklyRows) {
-          const returns = w.orders - w.buyouts;
-          insW.run(w.period_from, w.period_to, w.orders, w.buyouts, returns, w.orders > 0 ? returns / w.orders : 0);
-        }
-      })();
-      console.log(`✅ buyout_rates обновлены: ${rows.length} артикулов, ${weeklyRows.length} недель`);
+      if (USE_PG) {
+        const result = await recalculateBuyoutRatesPg();
+        console.log(`✅ buyout_rates обновлены: ${result.buyoutRows} артикулов, ${result.weeklyRows} недель`);
+      } else {
+        const financeDbPath = path.join(__dirname, "..", "data", "finance.db");
+        const fdb = new Database(financeDbPath);
+        fdb.exec(`CREATE TABLE IF NOT EXISTS buyout_rates (
+          article_wb TEXT PRIMARY KEY,
+          orders INTEGER,
+          buyouts INTEGER,
+          buyout_rate REAL,
+          updated_at TEXT DEFAULT (datetime('now'))
+        )`);
+        fdb.exec(`CREATE TABLE IF NOT EXISTS weekly_buyout_stats (
+          period_from TEXT,
+          period_to TEXT,
+          orders INTEGER,
+          buyouts INTEGER,
+          returns INTEGER,
+          return_rate REAL,
+          PRIMARY KEY(period_from, period_to)
+        )`);
+        fdb.exec("DELETE FROM buyout_rates");
+        fdb.exec("DELETE FROM weekly_buyout_stats");
+        const rows = db.prepare(`
+          SELECT nm_id,
+            COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Логистика' THEN srid END) as orders,
+            COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Продажа' THEN srid END) as buyouts
+          FROM weekly_rows
+          WHERE supplier_oper_name IN ('Логистика', 'Продажа') AND nm_id != ''
+          GROUP BY nm_id
+          HAVING orders >= 30
+        `).all();
+        const ins = fdb.prepare("INSERT INTO buyout_rates (article_wb, orders, buyouts, buyout_rate) VALUES (?, ?, ?, ?)");
+        fdb.transaction(() => {
+          for (const r of rows) {
+            ins.run(r.nm_id, r.orders, r.buyouts, r.orders > 0 ? r.buyouts / r.orders : 0);
+          }
+        })();
+        // Weekly buyout stats
+        const weeklyRows = db.prepare(`
+          SELECT period_from, period_to,
+            COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Логистика' THEN srid END) as orders,
+            COUNT(DISTINCT CASE WHEN supplier_oper_name = 'Продажа' THEN srid END) as buyouts
+          FROM weekly_rows
+          WHERE supplier_oper_name IN ('Логистика', 'Продажа')
+          GROUP BY period_from, period_to
+        `).all();
+        const insW = fdb.prepare("INSERT INTO weekly_buyout_stats VALUES (?, ?, ?, ?, ?, ?)");
+        fdb.transaction(() => {
+          for (const w of weeklyRows) {
+            const returns = w.orders - w.buyouts;
+            insW.run(w.period_from, w.period_to, w.orders, w.buyouts, returns, w.orders > 0 ? returns / w.orders : 0);
+          }
+        })();
+        fdb.close();
+        console.log(`✅ buyout_rates обновлены: ${rows.length} артикулов, ${weeklyRows.length} недель`);
+      }
     } catch (e) {
       console.log(`⚠️ buyout_rates: ${e.message}`);
     }
@@ -363,12 +517,16 @@ async function main() {
 
   // WAL checkpoint — сбрасываем WAL чтобы не блокировать readonly соединения
   if (newCount > 0) {
-    try { db.pragma("wal_checkpoint(TRUNCATE)"); } catch { /* ignore */ }
+    try { if (db) db.pragma("wal_checkpoint(TRUNCATE)"); } catch { /* ignore */ }
   }
 
   // Итог
-  const total = db.prepare("SELECT COUNT(*) as c FROM weekly_rows").get();
-  const reportsList = db.prepare("SELECT * FROM reports ORDER BY period_from DESC").all();
+  const total = USE_PG
+    ? (await getPgPool().query("SELECT COUNT(*)::int as c FROM weekly_rows")).rows[0]
+    : db.prepare("SELECT COUNT(*) as c FROM weekly_rows").get();
+  const reportsList = USE_PG
+    ? (await getPgPool().query("SELECT * FROM reports ORDER BY period_from DESC")).rows
+    : db.prepare("SELECT * FROM reports ORDER BY period_from DESC").all();
 
   console.log(`\n════════════════════════════`);
   if (newCount > 0) {
@@ -381,7 +539,8 @@ async function main() {
     console.log(`  #${r.report_id} type=${r.report_type}: ${r.period_from}—${r.period_to} (${r.rows_count} строк)`)
   );
 
-  db.close();
+  if (db) db.close();
+  if (pgPool) await pgPool.end();
   
   // Код выхода: 0 = есть новые или нет новых, 1 = ошибка
   process.exit(0);

@@ -7,6 +7,7 @@ import path from "path";
 import Database from "better-sqlite3";
 import { SourceStatus, emptySource, DB_PATH, TOKENS_PATH } from "./types";
 import { readFirstSheetRows } from "@/lib/server/excel-rows";
+import { isPostgresEnabled, pgGet, withPgTransaction } from "@/lib/postgres";
 
 export async function syncReport(date: string): Promise<SourceStatus> {
   const s: SourceStatus = { ...emptySource(), lastAttempt: new Date().toISOString() };
@@ -63,16 +64,30 @@ export async function syncReport(date: string): Promise<SourceStatus> {
       return s;
     }
 
-    const db = new Database(DB_PATH);
-    db.pragma("busy_timeout = 5000");
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS realization_report_meta (
-        report_id INTEGER PRIMARY KEY,
-        create_date TEXT,
-        details_count INTEGER,
-        imported_at TEXT NOT NULL
-      )
-    `);
+    const pgMode = isPostgresEnabled();
+    const db = pgMode ? null : new Database(DB_PATH);
+    if (db) {
+      db.pragma("busy_timeout = 5000");
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS realization_report_meta (
+          report_id INTEGER PRIMARY KEY,
+          create_date TEXT,
+          details_count INTEGER,
+          imported_at TEXT NOT NULL
+        )
+      `);
+    } else {
+      await withPgTransaction(async (client) => {
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS realization_report_meta (
+            report_id BIGINT PRIMARY KEY,
+            create_date TEXT,
+            details_count BIGINT,
+            imported_at TEXT NOT NULL
+          )
+        `);
+      });
+    }
     let totalRows = 0;
 
     const reportsDir = path.join(process.cwd(), "data", "reports");
@@ -80,8 +95,18 @@ export async function syncReport(date: string): Promise<SourceStatus> {
     fs.mkdirSync(extractDir, { recursive: true });
 
     for (const report of dateReports as { id: number; dateFrom: string; dateTo: string; type: number; createDate?: string; detailsCount?: number }[]) {
-      const existingMeta = db.prepare("SELECT create_date, details_count FROM realization_report_meta WHERE report_id = ?").get(report.id) as { create_date: string; details_count: number } | undefined;
-      const existingRows = db.prepare("SELECT COUNT(*) as cnt FROM realization WHERE realizationreport_id = ?").get(report.id) as { cnt: number };
+      const existingMeta = pgMode
+        ? await pgGet<{ create_date: string; details_count: number }>(
+            "SELECT create_date, details_count FROM realization_report_meta WHERE report_id = ?",
+            [report.id]
+          )
+        : db!.prepare("SELECT create_date, details_count FROM realization_report_meta WHERE report_id = ?").get(report.id) as { create_date: string; details_count: number } | undefined;
+      const existingRows = pgMode
+        ? await pgGet<{ cnt: number }>(
+            "SELECT COUNT(*) as cnt FROM realization WHERE realizationreport_id = ?",
+            [report.id]
+          ) || { cnt: 0 }
+        : db!.prepare("SELECT COUNT(*) as cnt FROM realization WHERE realizationreport_id = ?").get(report.id) as { cnt: number };
 
       if (existingMeta
         && existingMeta.create_date === (report.createDate || "")
@@ -91,15 +116,31 @@ export async function syncReport(date: string): Promise<SourceStatus> {
       }
 
       if (!existingMeta && existingRows.cnt > 0) {
-        db.prepare("INSERT INTO realization_report_meta (report_id, create_date, details_count, imported_at) VALUES (?, ?, ?, ?)")
-          .run(report.id, report.createDate || "", report.detailsCount || existingRows.cnt, new Date().toISOString());
+        if (pgMode) {
+          await pgGet(`
+            INSERT INTO realization_report_meta (report_id, create_date, details_count, imported_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(report_id) DO UPDATE SET
+              create_date = EXCLUDED.create_date,
+              details_count = EXCLUDED.details_count,
+              imported_at = EXCLUDED.imported_at
+            RETURNING report_id
+          `, [report.id, report.createDate || "", report.detailsCount || existingRows.cnt, new Date().toISOString()]);
+        } else {
+          db!.prepare("INSERT INTO realization_report_meta (report_id, create_date, details_count, imported_at) VALUES (?, ?, ?, ?)")
+            .run(report.id, report.createDate || "", report.detailsCount || existingRows.cnt, new Date().toISOString());
+        }
         totalRows += existingRows.cnt;
         continue;
       }
 
       if (existingRows.cnt > 0) {
         console.log(`[sync/realization] Report ${report.id} regenerated, re-importing`);
-        db.prepare("DELETE FROM realization WHERE realizationreport_id = ?").run(report.id);
+        if (pgMode) {
+          await pgGet("DELETE FROM realization WHERE realizationreport_id = ? RETURNING realizationreport_id", [report.id]);
+        } else {
+          db!.prepare("DELETE FROM realization WHERE realizationreport_id = ?").run(report.id);
+        }
       }
 
       const dlRes = await fetch(
@@ -163,38 +204,63 @@ export async function syncReport(date: string): Promise<SourceStatus> {
       const xlsxHeaders = Object.keys(rows[0]);
       const mappedCols = Object.entries(COL_MAP).filter(([xlsx]) => xlsxHeaders.includes(xlsx));
       const insertCols = ["realizationreport_id", "date_from", "date_to", "rr_dt", ...mappedCols.map(([, db]) => db)];
-      const placeholders = insertCols.map(() => "?").join(", ");
-      const stmt = db.prepare(`INSERT INTO realization (${insertCols.join(", ")}) VALUES (${placeholders})`);
 
       const saleDates = rows.map(r => r["Дата продажи"]).filter(Boolean).sort() as string[];
       const dateFrom = saleDates[0] || date;
       const dateTo = saleDates[saleDates.length - 1] || date;
 
-      db.transaction(() => {
-        for (const row of rows) {
-          const values: unknown[] = [report.id, dateFrom, dateTo, dateTo];
-          for (const [xlsx] of mappedCols) {
-            values.push(row[xlsx] ?? (typeof row[xlsx] === "number" ? 0 : ""));
+      if (pgMode) {
+        const placeholders = insertCols.map((_, index) => `$${index + 1}`).join(", ");
+        await withPgTransaction(async (client) => {
+          for (const row of rows) {
+            const values: unknown[] = [report.id, dateFrom, dateTo, dateTo];
+            for (const [xlsx] of mappedCols) {
+              values.push(row[xlsx] ?? (typeof row[xlsx] === "number" ? 0 : ""));
+            }
+            await client.query(`INSERT INTO realization (${insertCols.join(", ")}) VALUES (${placeholders})`, values);
           }
-          stmt.run(...values);
-        }
-      })();
+        });
+      } else {
+        const placeholders = insertCols.map(() => "?").join(", ");
+        const stmt = db!.prepare(`INSERT INTO realization (${insertCols.join(", ")}) VALUES (${placeholders})`);
+        db!.transaction(() => {
+          for (const row of rows) {
+            const values: unknown[] = [report.id, dateFrom, dateTo, dateTo];
+            for (const [xlsx] of mappedCols) {
+              values.push(row[xlsx] ?? (typeof row[xlsx] === "number" ? 0 : ""));
+            }
+            stmt.run(...values);
+          }
+        })();
+      }
 
-      db.prepare(`
-        INSERT INTO realization_report_meta (report_id, create_date, details_count, imported_at)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(report_id) DO UPDATE SET
-          create_date = excluded.create_date,
-          details_count = excluded.details_count,
-          imported_at = excluded.imported_at
-      `).run(report.id, report.createDate || "", report.detailsCount || rows.length, new Date().toISOString());
+      if (pgMode) {
+        await pgGet(`
+          INSERT INTO realization_report_meta (report_id, create_date, details_count, imported_at)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(report_id) DO UPDATE SET
+            create_date = EXCLUDED.create_date,
+            details_count = EXCLUDED.details_count,
+            imported_at = EXCLUDED.imported_at
+          RETURNING report_id
+        `, [report.id, report.createDate || "", report.detailsCount || rows.length, new Date().toISOString()]);
+      } else {
+        db!.prepare(`
+          INSERT INTO realization_report_meta (report_id, create_date, details_count, imported_at)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(report_id) DO UPDATE SET
+            create_date = excluded.create_date,
+            details_count = excluded.details_count,
+            imported_at = excluded.imported_at
+        `).run(report.id, report.createDate || "", report.detailsCount || rows.length, new Date().toISOString());
+      }
 
       totalRows += rows.length;
       try { fs.unlinkSync(zipPath); } catch { /* */ }
       try { fs.unlinkSync(xlsxPath); } catch { /* */ }
     }
 
-    db.close();
+    db?.close();
     s.ok = totalRows > 0;
     s.value = totalRows;
     s.stable = true;

@@ -21,6 +21,11 @@ interface WarehouseSizeRow {
   target_sales_qty: number;
   target_sales_45d: number;
   wb_stock_qty: number;
+  supply_packed_qty: number;
+  supply_accepted_qty: number;
+  supply_unloading_qty: number;
+  supply_ready_for_sale_qty: number;
+  supply_plan_deduct_qty: number;
   warehouse_required_units: number;
   plan_pack_units: number;
   plan_pack_boxes: number | null;
@@ -89,6 +94,7 @@ function formatDateTime(value: string | null | undefined) {
 }
 
 function packingPlanTitle(row: WarehouseSizeRow) {
+  const rawPlan = Number(row.warehouse_required_units || 0) - Number(row.supply_plan_deduct_qty || 0) - Number(row.units_qty || 0);
   return [
     `Заказы ${row.packing_days || 30} дней: ${formatNumber(row.base_orders_qty ?? row.base_sales_qty ?? row.target_sales_qty ?? row.target_sales_45d)}`,
     `% выкупа: ${formatNumber((row.buyout_rate ?? 1) * 100, 1)}%`,
@@ -97,8 +103,16 @@ function packingPlanTitle(row: WarehouseSizeRow) {
     `Коэффициент упаковки: x${formatNumber(row.packing_multiplier ?? 1, 2)}`,
     `Цель с коэффициентом: ${formatNumber(row.target_sales_qty ?? row.target_sales_45d)}`,
     `Остаток WB: ${formatNumber(row.wb_stock_qty)}`,
-    `Нужно держать на складе: ${formatNumber(row.warehouse_required_units)}`,
+    `Потребность после WB: ${formatNumber(row.warehouse_required_units)}`,
+    `Упаковано в поставках: ${formatNumber(row.supply_packed_qty)}`,
+    `Принято WB: ${formatNumber(row.supply_accepted_qty)}`,
+    `Раскладывается: ${formatNumber(row.supply_unloading_qty)}`,
+    `Поступило в продажу: ${formatNumber(row.supply_ready_for_sale_qty)}`,
+    `Вычитаем активные поставки: ${formatNumber(row.supply_plan_deduct_qty)}`,
     `Готово на складе: ${formatNumber(row.units_qty)}`,
+    `Расчёт: ${formatNumber(row.warehouse_required_units)} - ${formatNumber(row.supply_plan_deduct_qty)} - ${formatNumber(row.units_qty)} = ${formatNumber(rawPlan)} шт`,
+    `Итоговый план: ${formatNumber(row.plan_pack_units)} шт`,
+    "Если расчёт меньше 0, показываем 0",
   ].join("\n");
 }
 

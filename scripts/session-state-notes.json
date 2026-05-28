@@ -1,15 +1,17 @@
 {
   "currentFocus": [
-    "Production code was full-synced from local on 2026-05-23; latest logistics/sidebar formula changes are deployed.",
-    "`/logistics` uses split report locality vs RF-only tariff indices.",
-    "Tariff `ИЛ/ИРП` use 13 full completed weeks excluding the current week and WB exception categories.",
-    "Sidebar auto-collapses by default, expands on hover, and can be pinned from the top button.",
-    "Reviews sync is intentionally hourly at minute 17 because WB feedbacks API rate-limits with `429`; watchdog threshold is `max_age_min=60`."
+    "Production runtime is in PostgreSQL mode (`MPHUB_DB_ENGINE=postgres`); production PostgreSQL on VM 107 is the data source of truth. Local SQLite is legacy/stale fallback.",
+    "Local MpHub development must use `127.0.0.1:3000`; do not use the literal `localhost` hostname for this project.",
+    "`/supplies` is deployed: 20 non-draft WB supplies, accepted-supply DB cache, row expansion where WB exposes detail, and `Допринято` as supply type.",
+    "`/shipment` → `Товары` uses the left/right `ProductsSplitView`; cost/table version 1.1 UI changes are deployed.",
+    "`/warehouse` stores Google Sheets ready-stock imports in PostgreSQL; current production `warehouse_ready_stock=127`.",
+    "Reviews sync runs every 15 minutes as a slow archive tick: one WB archive request per run, with DB state/retry handling for `429`; watchdog threshold is `max_age_min=45`."
   ],
   "continueFromHere": [
-    "Visually verify production `/logistics` in browser: top cards, `1,00` formatting, per-article `ИЛ/ИРП`, sidebar hover/pin behavior, and table overlay.",
-    "Compare deployed calculation with WB values: `ИЛ=1,00`, `ИРП=0,09`.",
-    "Keep monitoring production `data/reviews-sync.log`; do not increase reviews sync frequency until WB `429` behavior is rechecked.",
+    "Keep monitoring production `data/reviews-sync.log`; reviews archive sync should make at most one WB archive request per 15-minute cron tick and advance after WB rate-limit windows.",
+    "Consider cleaning production crontab comments so the Reviews Sync heading says every 15 minutes instead of hourly.",
+    "If data/status questions arise, verify production PostgreSQL and runtime through `ssh wb-site` before answering.",
+    "Before any deploy, inspect dirty worktree scope and deploy only the user-approved files.",
     "Review critical WB measurement article `178439058`: WB latest measurement `3.059 л` vs card volume `2.5 л`."
   ]
 }

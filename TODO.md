@@ -1,55 +1,56 @@
 # MpHub TODO
 
-Last updated: 2026-05-23 MSK.
+Last updated: 2026-05-27 00:30 MSK.
 
 ## High Priority
-- Use `npm run save-session-state` before context cleanup. In Codex sandbox it may require escalated permissions because it verifies production through `ssh wb-site` and `rsync --dry-run`.
-- Keep `scripts/session-state-notes.json` current before saving session state; it drives the generated Current Focus and Continue From Here blocks.
-- Verify visually in a real browser that production `/logistics` now shows the deployed local logistics/sidebar changes:
-  - split locality/report logic vs RF-only tariff indices in `/api/logistics/products`;
-  - `1,00` formatting for localization index;
-  - top cards for `Индекс локализации`, `Индекс распределения продаж`, `Локальность отчёта WB`;
-  - per-article `ИЛ/ИРП`, RF locality, report locality;
-  - hover-expand sidebar, top pin button, text `MPHub` logo, fixed overlay z-index.
-- Review the single critical WB measurement:
-  - article `178439058`
-  - WB latest measurement `3.059 л`
-  - card volume `2.5 л`
-  - measured at `2026-05-14T23:36:06.281762Z`
-- Keep monitoring `data/reviews-sync.log` on production. Do not increase reviews cron frequency while WB feedbacks API is rate-limiting.
+- Before context cleanup or a new handoff, run `npm run save-session-state`, then verify `SESSION_STATE.md` against production if the answer depends on data, cron, PM2, deploy or WB API.
+- Keep `scripts/session-state-notes.json` current; it feeds generated Current Focus and Continue From Here.
+- Do not switch data direction back to local sync. Production PostgreSQL is the runtime source of truth; local dev should read current data through the configured tunnel and must not run background sync jobs unless explicitly requested.
+- Do not deploy without explicit user approval. The worktree contains migration/runtime changes, docs and context updates; inspect deploy scope first.
+- After any UI/logic change, run at least `npm run build` before deploy and update `public/data/docs.json` if user-facing behavior changes.
 
-## Logistics Follow-Up
-- Continue validating the WB localization/index model against user screenshots and exports:
-  - report local/nonlocal percentages include CIS/countries and currently match checked WB article examples;
-  - tariff indices are calculated on RF-only orders over 13 full completed weeks;
-  - do not alter the official formula just to fit a target number.
-- Recheck production `/logistics`: compare WB `ИЛ=1,00` and `ИРП=0,09` against the deployed calculation.
-- Add an action/workflow for handling critical WB measurements: mark as reviewed, create appeal/task, or store a decision note per article.
-- Decide whether the new-measurements window should stay 7 days or become configurable.
-- Consider showing a separate “critical only” filter in `/logistics` in addition to the current `Посмотреть новые` filter.
-- Confirm with the user whether report volume from `warehouse_remains_volume` should ever drive calculation, or remain an informational comparison column.
+## Production Checks To Keep Watching
+- Reviews archive sync:
+  - active cron is every 15 minutes;
+  - expected behavior is one WB archive request per run;
+  - `429` should be recorded in `reviews_archive_sync_state` and `sync_status`, not treated as a broken app state.
+- Watchdog for `reviews-sync` should use `max_age_min=45`.
+- Verify next review ticks after `retry_after_until=2026-05-26T21:30:01.951Z` UTC and confirm the counter moves beyond `reviews=147971` when WB allows the next archive page.
+- Confirm production monitor/data-health does not show false stale warnings after the PG-mode cron changes.
+
+## PostgreSQL Follow-Up
+- Keep checking any endpoint that still has SQLite fallback logic before changing it: finance reconciliation, weekly Excel imports, WB auth/login helper scripts and old diagnostic scripts.
+- `weekly_reports.db` remains a legacy/import source for Excel reconciliation. Do not delete it until the Excel workflow is explicitly migrated.
+- Keep production `.env.production.local` secret. Never print `DATABASE_URL`, JWT secret or WB keys in user-facing answers.
+- Consider cleaning production crontab comments so the Reviews Sync heading says every 15 minutes instead of hourly.
+
+## Supplies Follow-Up
+- Visually verify production `/supplies` after login:
+  - 20 non-draft supplies are shown;
+  - draft rows are hidden;
+  - accepted supplies use cached DB data;
+  - `Допринято` appears as supply type, not status;
+  - rows expand with article/detail data where WB exposes it.
+- Watch accepted-supply cache growth and decide later whether older accepted supplies need a backfill beyond the currently displayed set.
+
+## Shipment/Warehouse/Logistics Follow-Up
+- Recheck `/shipment` → `Товары`: version 1.1 layout, small top cards, hover highlight, renamed columns `Размер`/`Баркод`, no duplicate expanded headers.
+- Recheck `/warehouse`: search placeholder `Артикул или название`, selected article table stability, Google Sheets import into PostgreSQL.
 - Continue validating warehouse-family matching for sales-based default warehouses, especially Samara/Novosemeykino and long WB warehouse names.
-
-## Monitor/UI
-- Verify in browser after deploy that monitor schedules display human-readable values:
-  - `каждый час`
-  - `каждые 5 мин`
-  - `каждые 30 мин`
-  - `ежедневно в HH:MM МСК`
-- Verify in browser after deploy that the sidebar red triangle badge displays `1` next to `Расчёт логистики` and remains readable in collapsed/sidebar hover mode.
-- Verify in browser after deploy that `/logistics` banner shows the 4 current new measurements and that `Посмотреть новые` filters the table correctly.
-- Watch production watchdog alerts after the reviews threshold change. Expected state: no false warning at minute 55 for hourly reviews cron.
-- Production crontab code and comment are now aligned for `reviews-sync` (`17 * * * *`, hourly at minute 17); continue watching for false alerts.
+- Review the critical WB measurement:
+  - article `178439058`;
+  - WB latest measurement `3.059 л`;
+  - card volume `2.5 л`;
+  - measured at `2026-05-14T23:36:06.281762Z`.
+- Decide whether the logistics new-measurements window should stay 7 days or become configurable.
 
 ## Medium Priority
-- Consider persisting shipment UI manual export values if users need them to survive reload/navigation. Current V2/V3 manual values are React state for the current page session.
-- Add an authenticated endpoint or admin-only UI action for reviews archive backfill instead of SSH-only execution.
+- Add a visible reviews sync/rate-limit status in UI, so users can see when WB `429` delayed archive sync.
 - Improve Reviews charts to show complaint breakdown explicitly: submitted, approved, rejected, error.
-- Add visible sync error/status for WB `429` in UI, so users do not interpret rate-limit failures as “0 new reviews”.
-- Review default `/reviews` filters. It currently opens with ratings `1,2,3`, which can look like missing data if the user expects all reviews.
+- Review default `/reviews` filters. It opens with ratings `1,2,3`, which can look like missing data if the user expects all reviews.
+- Consider persisting shipment UI manual export values if users need them to survive reload/navigation.
 
 ## Operational Notes
 - Do not bypass `reviews-sync.lock`; remove it only after confirming no `node scripts/reviews-sync.js` process is running.
-- Production DB and logs are not committed and must remain excluded from deploys.
-- Prefer `scripts/deploy.sh` / `prod-safe-build.sh` for broad production deploys.
-- For narrow production deploys in the current dirty worktree, use targeted `rsync` only with explicit user approval and a server-side backup.
+- Production DB, logs, `.env.production.local`, WB keys and service account files are not committed and must stay excluded from deploys.
+- Use `127.0.0.1` for local MpHub dev URLs and health checks; do not use the literal `localhost` hostname.

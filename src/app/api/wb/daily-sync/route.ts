@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
+import { isCronRequest } from "@/lib/cron-auth";
 import { getSyncStatus, syncDailyReport, syncYesterday, startDailyCron } from "@/lib/daily-sync";
+import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 
 /**
  * GET /api/wb/daily-sync — Get sync status + history
@@ -13,8 +15,14 @@ import { getSyncStatus, syncDailyReport, syncYesterday, startDailyCron } from "@
 let cronStarted = false;
 
 export async function GET(req: NextRequest) {
-  const authError = requireAdmin(req);
+  const authError = await requireAdmin(req);
   if (authError) return authError;
+
+  const readonlyError = localReadonlyGuard("Daily sync cron");
+  if (readonlyError) {
+    const status = getSyncStatus();
+    return NextResponse.json({ ...status, disabled: true, reason: "local_postgres_readonly" });
+  }
 
   if (!cronStarted) {
     startDailyCron();
@@ -26,8 +34,12 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const authError = requireAdmin(req);
-  if (authError) return authError;
+  if (!isCronRequest(req)) {
+    const authError = await requireAdmin(req);
+    if (authError) return authError;
+  }
+  const readonlyError = localReadonlyGuard("Manual daily sync");
+  if (readonlyError) return readonlyError;
 
   if (!cronStarted) {
     startDailyCron();

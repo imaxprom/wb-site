@@ -11,6 +11,8 @@ import {
   Package,
   Warehouse,
   Truck,
+  ShoppingCart,
+  Megaphone,
   FileText,
   BookOpen,
   Settings as SettingsIcon,
@@ -25,7 +27,10 @@ const NAV_GROUPS = [
     { href: "/finance", label: "Финансы", icon: DollarSign },
     { href: "/shipment", label: "Расчёт отгрузки", icon: Package },
     { href: "/logistics", label: "Расчёт логистики", icon: Truck },
+    { href: "https://ads.imaxprom.site", label: "Реклама", icon: Megaphone, external: true },
     { href: "/warehouse", label: "Склад", icon: Warehouse },
+    { href: "/supplies", label: "Поставки", icon: Package },
+    { href: "/purchases", label: "Закупки", icon: ShoppingCart },
   ],
   [
     { href: "/monitor", label: "Мониторинг", icon: Activity },
@@ -39,6 +44,7 @@ export function Sidebar({ pinned, onTogglePinned }: { pinned: boolean; onToggleP
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
+  const [suppressHoverUntilLeave, setSuppressHoverUntilLeave] = useState(false);
   const [logisticsAlerts, setLogisticsAlerts] = useState(0);
   const expanded = pinned || hovered || open;
 
@@ -80,8 +86,13 @@ export function Sidebar({ pinned, onTogglePinned }: { pinned: boolean; onToggleP
 
       {/* Sidebar */}
       <aside
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
+        onMouseEnter={() => {
+          if (!suppressHoverUntilLeave) setHovered(true);
+        }}
+        onMouseLeave={() => {
+          setHovered(false);
+          setSuppressHoverUntilLeave(false);
+        }}
         className={cn(
           "fixed left-0 top-0 h-screen bg-[var(--bg-card)] border-r border-[var(--border)] flex flex-col z-[60] transition-all duration-200",
           expanded ? "w-60 shadow-xl shadow-black/10 md:shadow-none" : "w-16",
@@ -102,7 +113,13 @@ export function Sidebar({ pinned, onTogglePinned }: { pinned: boolean; onToggleP
           )}
           <button
             type="button"
-            onClick={onTogglePinned}
+            onClick={() => {
+              if (pinned) {
+                setHovered(false);
+                setSuppressHoverUntilLeave(true);
+              }
+              onTogglePinned();
+            }}
             className={cn(
               "absolute right-2 top-2 z-10 hidden h-8 w-8 items-center justify-center rounded-lg border transition-colors md:flex",
               pinned
@@ -129,21 +146,16 @@ export function Sidebar({ pinned, onTogglePinned }: { pinned: boolean; onToggleP
                 />
               )}
               {group.map((item) => {
-                const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    onClick={() => setOpen(false)}
-                    title={expanded ? undefined : item.label}
-                    className={cn(
-                      "flex items-center text-base transition-colors",
-                      expanded ? "px-5 py-3" : "justify-center px-3 py-3",
-                      isActive
-                        ? "bg-[var(--accent)]/10 text-[var(--accent)] border-r-2 border-[var(--accent)]"
-                        : "text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--bg-card-hover)]"
-                    )}
-                  >
+                const isActive = !item.external && (pathname === item.href || pathname.startsWith(item.href + "/"));
+                const className = cn(
+                  "flex items-center text-base transition-colors",
+                  expanded ? "px-5 py-3" : "justify-center px-3 py-3",
+                  isActive
+                    ? "bg-[var(--accent)]/10 text-[var(--accent)] border-r-2 border-[var(--accent)]"
+                    : "text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--bg-card-hover)]"
+                );
+                const content = (
+                  <>
                     <span className={cn("relative shrink-0", expanded && "mr-2")}>
                       <item.icon size={18} className="shrink-0" />
                       {item.href === "/logistics" && logisticsAlerts > 0 && !expanded && (
@@ -171,6 +183,30 @@ export function Sidebar({ pinned, onTogglePinned }: { pinned: boolean; onToggleP
                         )}
                       </span>
                     )}
+                  </>
+                );
+                if (item.external) {
+                  return (
+                    <a
+                      key={item.href}
+                      href={item.href}
+                      onClick={() => setOpen(false)}
+                      title={expanded ? undefined : item.label}
+                      className={className}
+                    >
+                      {content}
+                    </a>
+                  );
+                }
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={() => setOpen(false)}
+                    title={expanded ? undefined : item.label}
+                    className={className}
+                  >
+                    {content}
                   </Link>
                 );
               })}

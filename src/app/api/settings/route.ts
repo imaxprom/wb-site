@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { initShipmentTables, getUserSettings, setUserSetting } from "@/lib/shipment-db";
+import {
+  getUserSettings,
+  getUserSettingsPg,
+  initShipmentTables,
+  initShipmentTablesPg,
+  setUserSetting,
+  setUserSettingPg,
+} from "@/lib/shipment-db";
 import { verifyToken } from "@/lib/auth";
+import { isPostgresEnabled, isPostgresReadonlyConnection } from "@/lib/postgres";
 
 initShipmentTables();
 
@@ -31,7 +39,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const stored = getUserSettings(userId);
+  const stored = isPostgresEnabled()
+    ? (await initShipmentTablesPg(), await getUserSettingsPg(userId))
+    : getUserSettings(userId);
 
   // Merge defaults with stored settings
   const settings = { ...DEFAULT_SETTINGS, ...stored };
@@ -46,9 +56,21 @@ export async function PUT(req: NextRequest) {
   }
 
   try {
+    if (isPostgresEnabled() && isPostgresReadonlyConnection()) {
+      return NextResponse.json(
+        { error: "Settings writes are disabled in local PostgreSQL readonly mode" },
+        { status: 403 }
+      );
+    }
+
     const body = await req.json() as Record<string, unknown>;
     for (const [key, value] of Object.entries(body)) {
-      setUserSetting(userId, key, value);
+      if (isPostgresEnabled()) {
+        await initShipmentTablesPg();
+        await setUserSettingPg(userId, key, value);
+      } else {
+        setUserSetting(userId, key, value);
+      }
     }
     return NextResponse.json({ ok: true });
   } catch (err) {

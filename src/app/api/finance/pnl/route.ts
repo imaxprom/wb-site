@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
-import { getPnl } from "@/modules/finance/lib/queries";
+import { getPnl, getPnlPg } from "@/modules/finance/lib/queries";
 import { apiError } from "@/lib/api-utils";
+import { isPostgresEnabled } from "@/lib/postgres";
 
 export async function GET(request: NextRequest) {
-  const authError = requireAdmin(request);
+  const authError = await requireAdmin(request);
   if (authError) return authError;
 
   const { searchParams } = new URL(request.url);
@@ -13,7 +14,9 @@ export async function GET(request: NextRequest) {
   const nmId = searchParams.get("nm_id") ? Number(searchParams.get("nm_id")) : undefined;
 
   try {
-    const pnl = getPnl(dateFrom, dateTo, nmId);
+    const pnl = isPostgresEnabled()
+      ? await getPnlPg(dateFrom, dateTo, nmId)
+      : getPnl(dateFrom, dateTo, nmId);
     return NextResponse.json(pnl);
   } catch (error) {
     return apiError(error);

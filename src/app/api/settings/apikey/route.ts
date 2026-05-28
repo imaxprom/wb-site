@@ -2,11 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { apiError } from "@/lib/api-utils";
 import { requireAdmin } from "@/lib/api-auth";
 import { getWbApiKey, setWbApiKey, deleteWbApiKey } from "@/lib/wb-api-key";
+import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 
 /** GET — check if API key exists, return masked version */
 export async function GET(req: NextRequest) {
-  const authError = requireAdmin(req);
+  const authError = await requireAdmin(req);
   if (authError) return authError;
+  const readonlyError = localReadonlyGuard("WB API key updates");
+  if (readonlyError) return readonlyError;
 
   try {
     const key = getWbApiKey();
@@ -22,8 +25,10 @@ export async function GET(req: NextRequest) {
 
 /** PUT — save API key */
 export async function PUT(req: NextRequest) {
-  const authError = requireAdmin(req);
+  const authError = await requireAdmin(req);
   if (authError) return authError;
+  const readonlyError = localReadonlyGuard("WB API key deletion");
+  if (readonlyError) return readonlyError;
 
   try {
     const { key } = (await req.json()) as { key?: string };
@@ -39,7 +44,7 @@ export async function PUT(req: NextRequest) {
 
 /** DELETE — remove API key */
 export async function DELETE(req: NextRequest) {
-  const authError = requireAdmin(req);
+  const authError = await requireAdmin(req);
   if (authError) return authError;
 
   try {

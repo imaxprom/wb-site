@@ -6,7 +6,7 @@ import { requireMonitorAdmin } from "@/lib/monitor-auth";
 const REGISTRY_PATH = join(process.cwd(), "public/data/monitor/monitor-registry.json");
 
 export async function GET(req: NextRequest) {
-  const authError = requireMonitorAdmin(req);
+  const authError = await requireMonitorAdmin(req);
   if (authError) return authError;
 
   const { searchParams } = req.nextUrl;

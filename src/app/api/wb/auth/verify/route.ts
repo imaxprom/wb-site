@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { playwrightSubmitCode } from "@/lib/wb-auth-playwright";
+import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 
 /**
  * POST /api/wb/auth/verify — Submit SMS code (Playwright on VPS)
  */
 
 export async function POST(req: NextRequest) {
-  const authError = requireAdmin(req);
+  const authError = await requireAdmin(req);
   if (authError) return authError;
+  const readonlyError = localReadonlyGuard("WB cabinet SMS verification");
+  if (readonlyError) return readonlyError;
 
   try {
     const { code } = await req.json();

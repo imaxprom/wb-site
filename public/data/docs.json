@@ -7,7 +7,7 @@
       "blocks": [
         {
           "type": "text",
-          "content": "MpHub — production-дашборд Wildberries на VPS. Локальный MacBook используется для разработки и подготовки правок, но рабочая основа — прод: /home/makson/website на wb-site, PM2 + cron + SQLite."
+          "content": "MpHub — production-дашборд Wildberries на VPS. Локальный MacBook используется для разработки и подготовки правок, но рабочая основа — прод: /home/makson/website на wb-site, PM2 + cron + PostgreSQL."
         },
         {
           "type": "schema",
@@ -22,7 +22,7 @@
             "",
             "Локальная разработка:",
             "  /Users/octopus/Projects/website",
-            "  npm run dev на localhost:3000",
+            "  npm run dev на 127.0.0.1:3000",
             "  npm run build перед выкладкой",
             "",
             "Смежные проекты:",
@@ -35,7 +35,7 @@
           "title": "Технологии",
           "items": [
             "Next.js 16 + React 19 + TypeScript + Tailwind CSS 4 — веб-дашборд",
-            "SQLite WAL (better-sqlite3) — finance.db, weekly_reports.db, пользовательские настройки и отзывы",
+            "PostgreSQL — основная production БД MpHub; SQLite finance.db/weekly_reports.db оставлены как legacy/backup и источник отдельных импортов",
             "PM2 — production-процесс сайта mphub на VPS",
             "cron — production-расписание синхронизаций и watchdog",
             "Puppeteer / Playwright — авторизация WB Seller и браузерные сценарии",
@@ -308,17 +308,17 @@
           "title": "Гибридный подход к данным",
           "lines": [
             "Два источника данных:",
-            "  weekly_reports.db (Excel) — еженедельные отчёты из ЛК WB, эталон",
-            "  finance.db (API) — ежедневная синхронизация через daily-sync.js",
+            "  PostgreSQL weekly_reports/weekly_rows + legacy weekly_reports.db (Excel) — еженедельные отчёты из ЛК WB, эталон",
+            "  PostgreSQL realization/advertising/orders_funnel (API) — ежедневная синхронизация через daily-sync-api.sh",
             "",
             "P&L (сводка) — гибрид:",
             "  1. Находим Excel-недели, пересекающиеся с периодом",
             "  2. Продажи/возвраты/услуги из Excel фильтруем по sale_dt",
-            "  3. Дни после последнего Excel-отчёта — из finance.db (API)",
+            "  3. Дни после последнего Excel-отчёта — из PostgreSQL API-таблиц",
             "  4. Реклама и заказы — всегда из отдельных таблиц по дате",
             "  Граница раздела = MAX(period_to) из Excel",
             "",
-            "По дням (daily) — finance.db:",
+            "По дням (daily) — PostgreSQL realization:",
             "  Дедупликация: weekly_final > weekly > daily",
             "  Если за неделю есть weekly_final, daily и weekly исключаются",
             "",
@@ -340,7 +340,7 @@
         },
         {
           "type": "list",
-          "title": "Настройки (сохраняются в SQLite)",
+          "title": "Настройки (сохраняются в PostgreSQL)",
           "items": [
             "/finance/settings — себестоимость по баркодам. Инлайн-редактирование, импорт из файла",
             "/finance/taxes — ставки НДС (5%) и УСН (1%). Можно изменить",
@@ -366,7 +366,7 @@
           "title": "API эндпоинты (серверные)",
           "items": [
             "/api/finance/pnl — сводный P&L (гибрид Excel + API)",
-            "/api/finance/daily — данные по дням (finance.db с дедупликацией)",
+            "/api/finance/daily — данные по дням (PostgreSQL realization с дедупликацией)",
             "/api/finance/articles — юнит-экономика по артикулам",
             "/api/finance/ads — рекламные кампании",
             "/api/finance/reconciliation — сверка Excel vs API",
@@ -383,10 +383,10 @@
           "type": "list",
           "title": "Источники данных WB",
           "items": [
-            "reportDetailByPeriod — реализация (продажи, возвраты, комиссия, логистика, хранение) → finance.db",
-            "sync-weekly-report.js — Excel-отчёты из ЛК WB (эталон) → weekly_reports.db",
-            "/adv/v1/upd — расход на рекламу по дням → finance.db (advertising)",
-            "/api/analytics/v3/sales-funnel/products — заказы → finance.db (orders_funnel)"
+            "reportDetailByPeriod — реализация (продажи, возвраты, комиссия, логистика, хранение) → PostgreSQL realization",
+            "sync-weekly-report.js — Excel-отчёты из ЛК WB (эталон) → PostgreSQL weekly_reports/weekly_rows; legacy weekly_reports.db остаётся для импорта/сверки",
+            "/adv/v1/upd — расход на рекламу по дням → PostgreSQL advertising",
+            "/api/analytics/v3/sales-funnel/products — заказы → PostgreSQL orders_funnel"
           ]
         },
         {
@@ -519,7 +519,7 @@
       "blocks": [
         {
           "type": "text",
-          "content": "Раздел /shipment — расчёт отгрузки на склады WB. Данные в SQLite. Процент выкупа из realization (~80-83%). Код в src/modules/shipment/."
+          "content": "Раздел /shipment — расчёт отгрузки на склады WB. Production-данные хранятся в PostgreSQL; SQLite остаётся legacy/local fallback. Процент выкупа из realization (~80-83%). Код в src/modules/shipment/."
         },
         {
           "type": "schema",
@@ -528,13 +528,13 @@
             "1. Загрузка данных (вкладка «Загрузка данных»)",
             "   → Кнопка «Загрузить всё из WB» → POST /api/data/sync",
             "   → Карточки, остатки, заказы загружаются из WB API",
-            "   → Заказы НАКАПЛИВАЮТСЯ в SQLite (INSERT OR IGNORE)",
+            "   → Заказы накапливаются в production PostgreSQL; legacy SQLite fallback использует INSERT OR IGNORE",
             "   → Остатки перезаписываются (текущее состояние)",
             "   → API запрашивает с буфером +7 дней (WB фильтрует по lastChangeDate)",
             "   → Сегодняшний день не учитывается (неполный)",
             "",
             "2. Отображение: DataProvider → fetch /api/data/orders?days=28",
-            "   → SQLite фильтрует по выбранному периоду",
+            "   → БД фильтрует по выбранному периоду",
             "   → Период = wb-upload-days (4/5/6/7/8 недель)",
             "",
             "3. Терминология WB:",
@@ -566,7 +566,9 @@
           "title": "4 вкладки",
           "items": [
             "Расчёт — переключатель V1 Стандарт / V2 Динамика / V3 Умный (по умолчанию V3)",
-            "Товары — список артикулов, размеров, perBox. Можно редактировать имена и количество",
+            "Товары — рабочий вид слева/справа: слева поиск и список артикулов, справа размерная таблица выбранного артикула; строки больше не раскрываются",
+            "В товарах можно редактировать своё наименование через кнопку-карандаш, менять perBox и включать/отключать размеры из расчёта",
+            "Блок «Остатки по складам» внутри товара свёрнут по умолчанию и раскрывается кнопкой",
             "perBox не подставляется автоматически по размеру: новые карточки WB импортируются с perBox=0, а реальное «шт/кор» берётся только из ручных product_overrides",
             "Загрузка данных — кнопка «Загрузить всё из WB» + селект периода + диапазон дат + статус",
             "Настройки отгрузки — % выкупа (авто/ручной), регионы (авто/ручной), размер короба"
@@ -576,14 +578,14 @@
           "type": "list",
           "title": "Хранение данных",
           "items": [
-            "Заказы → SQLite shipment_orders (накопительно, ON CONFLICT DO UPDATE — обновляет is_cancel)",
-            "Остатки → SQLite shipment_stock (перезаписываются при каждой загрузке)",
-            "Карточки → SQLite shipment_products (UPSERT)",
-            "Готовые короба склада → SQLite warehouse_ready_stock, читается через /api/warehouse/stock",
-            "Настройки (выкуп, регионы, короб) → SQLite user_settings через /api/settings",
-            "Overrides (имена, perBox, отключённые) → SQLite product_overrides через /api/overrides",
+            "Заказы → PostgreSQL shipment_orders (накопительно, ON CONFLICT DO UPDATE — обновляет is_cancel)",
+            "Остатки → PostgreSQL shipment_stock (перезаписываются при каждой загрузке)",
+            "Карточки → PostgreSQL shipment_products (UPSERT)",
+            "Готовые короба склада → PostgreSQL warehouse_ready_stock, читается через /api/warehouse/stock",
+            "Настройки (выкуп, регионы, короб) → PostgreSQL user_settings через /api/settings",
+            "Overrides (имена, perBox, отключённые) → PostgreSQL product_overrides через /api/overrides",
             "API-ключ WB → data/wb-api-key.txt через /api/settings/apikey",
-            "Авторизация → SQLite users, JWT cookie (30 дней)",
+            "Авторизация → PostgreSQL users, JWT cookie (30 дней)",
             "% выкупа → GET /api/data/buyout-rates (из realization: delivery_amount/quantity)"
           ]
         },
@@ -600,7 +602,7 @@
         },
         {
           "type": "text",
-          "content": "⚠️ Данные на сервере (SQLite), не в кеше браузера. Error Boundary: src/app/shipment/error.tsx."
+          "content": "⚠️ Данные на сервере (production PostgreSQL), не в кеше браузера. Error Boundary: src/app/shipment/error.tsx."
         }
       ]
     },
@@ -666,7 +668,7 @@
       "blocks": [
         {
           "type": "text",
-          "content": "Раздел /warehouse добавлен локально как рабочая зона складского учёта. На первом этапе реализован импорт готовых коробов из Google Sheets в локальную SQLite. Основной синк читает таблицу без записи обратно; отдельный сервисный скрипт используется только для аккуратного обновления формул в самой Google-таблице."
+          "content": "Раздел /warehouse — рабочая зона складского учёта на production и 127.0.0.1. Импорт готовых коробов идёт из Google Sheets в PostgreSQL. Основной синк читает таблицу без записи обратно; отдельный сервисный скрипт используется только для аккуратного обновления формул в самой Google-таблице."
         },
         {
           "type": "list",
@@ -675,13 +677,13 @@
             "Google Sheets остаётся источником ручного складского учёта на переходный период",
             "Service Account получает доступ только к нужной таблице",
             "scripts/warehouse-google-inspect.js проверяет структуру листов и печатает расчёт в консоль",
-            "scripts/warehouse-google-sync.js читает все листы и сохраняет готовые короба в SQLite",
+            "scripts/warehouse-google-sync.js читает все листы и сохраняет готовые короба в PostgreSQL",
             "scripts/warehouse-google-formulas.js обновляет формулы правого блока «Короб склад»: SUM(остатки по размеру) / штук в коробке",
             "GET /api/warehouse/stock отдаёт агрегированные данные для страницы /warehouse",
             "GET /api/warehouse/stock обогащает складские строки баркодом из локальной shipment_products.sizes_json по article_wb + размер; Google-таблица не является источником баркода",
             "scripts/warehouse-google-sync.js сохраняет все размерные колонки из складской Google-таблицы, включая нулевые остатки; артикулы/размеры не добавляются из карточной базы",
-            "GET /api/warehouse/stock считает план упаковки по фиксированной базе 30 дней: все заказы за 30 дней, включая отмены и корректировку последних 7 дней, × эффективный % выкупа × артикульный trend.multiplier из V2/V3 × warehousePackingMultiplier − остаток WB − уже готово на складе; отрицательная дельта показывается как 0",
-            "POST /api/warehouse/sync запускает ручной импорт Google Sheets → SQLite из кнопки «Обновить» на странице /warehouse",
+            "GET /api/warehouse/stock считает план упаковки по фиксированной базе 30 дней: все заказы за 30 дней, включая отмены и корректировку последних 7 дней, × эффективный % выкупа × артикульный trend.multiplier из V2/V3 × warehousePackingMultiplier − остаток WB − упаковано в активных поставках со статусами 3/4/6 − уже готово на складе; отрицательная дельта показывается как 0",
+            "POST /api/warehouse/sync запускает ручной импорт Google Sheets → PostgreSQL из кнопки «Обновить» на странице /warehouse",
             "MpHub подставляет эти значения в расчёт отгрузки V2/V3 по article_wb + размер"
           ]
         },
@@ -691,16 +693,50 @@
           "items": [
             "Пункт «Склад» добавлен в левое меню",
             "Страница /warehouse показывает карточки итогов и рабочий вид «слева/справа»: слева список артикулов и тренд каждого артикула, справа размерная таблица выбранного артикула с итоговой строкой по фактическим штукам, коробам и общему плану упаковки; верхняя карточка «Общий тренд» показывает общий trend.multiplier по всем складским артикулам",
+            "В левом списке склада есть поиск с плейсхолдером «Артикул или название»; фильтрует по article_wb и названию листа Google Sheets",
             "В раскрытии артикула показывается колонка «Баркод» из локальной базы MpHub, а не из складской Google-таблицы",
             "Карточка «Настройка плана упаковки» сохраняет warehousePackingMultiplier в user_settings; база всегда 30 дней расчёта, доступны множители ×1,00/×1,25/×1,50/×2,00",
-            "В размерной таблице показывается колонка «План упаковки»: сколько штук/коробов нужно допаковать на складе по формуле расчёта отгрузки с учётом остатка WB и готового склада",
+            "В размерной таблице показывается колонка «План упаковки»: сколько штук/коробов нужно допаковать на складе по формуле расчёта отгрузки с учётом остатка WB, готового склада и поставок. Подсказка по ячейке показывает последовательную математику: заказы, выкуп, тренд, коэффициент упаковки, остаток WB, упаковано/принято/раскладывается/поступило в продажу, вычитание поставок и итог.",
             "Тестовая страница /warehouse/test показывает 5 вариантов нижней таблицы склада на актуальных локальных данных: слева/справа, карточки, раскрытие, вкладки, группы по объёму",
             "В карточке «Последний импорт» есть кнопка «Обновить»: запускает scripts/warehouse-google-sync.js и перечитывает данные",
-            "Локальная SQLite содержит warehouse_sync_runs и warehouse_ready_stock",
-            "Актуальный локальный импорт после снятия фильтра нулевых остатков: 19 листов, 127 размерных строк, 20 344 шт, 242,07 коробов",
+            "PostgreSQL содержит warehouse_sync_runs и warehouse_ready_stock",
+            "Актуальный production импорт после снятия фильтра нулевых остатков: 19 листов, 127 размерных строк, 20 344 шт, 242,07 коробов; ручной production sync проверен 2026-05-24 02:05 МСК",
             "Формулы «Короб склад» заменены во всех 19 листах; BERFIN обработан отдельным правилом из-за сдвига правого блока",
             "На листе «Стринги в рубчик 5шт 5цв» пустые нормы коробов в A5/B5/C5/E5/F5/G5 — формулы стоят, но для будущего расчёта эти нормы нужно заполнить",
             "Расчёт отгрузки V2/V3 синхронизирует колонку «Всего на складе» со складом; сомнительные сопоставления размера подсвечиваются красным"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "supplies",
+      "icon": "🚚",
+      "title": "Поставки",
+      "blocks": [
+        {
+          "type": "text",
+          "content": "Раздел /supplies показывает последние поставки WB: номер и тип, плановую и фактическую дату, склад, статус, упаковано/принято и раскрытие по артикулам. В production данные читаются через WB Supplies API и кэшируются в PostgreSQL для принятых поставок."
+        },
+        {
+          "type": "list",
+          "title": "Статусы WB statusID",
+          "items": [
+            "1 — Не запланировано",
+            "2 — Запланировано",
+            "3 — Отгрузка разрешена",
+            "4 — Идёт приёмка",
+            "5 — Принято",
+            "6 — Отгружено на воротах"
+          ]
+        },
+        {
+          "type": "list",
+          "title": "Особенности отображения",
+          "items": [
+            "Черновики не показываются в списке поставок.",
+            "Тип поставки берётся отдельно от статуса: Короба, Короба на паллете, Без коробов или Допринято.",
+            "Для virtualTypeID=5 в колонке номера/типа отображается Допринято, а статус остаётся по statusID.",
+            "Принятые поставки сохраняются в PostgreSQL, потому что после приёмки их состав не должен меняться."
           ]
         }
       ]
@@ -712,7 +748,7 @@
       "blocks": [
         {
           "type": "text",
-          "content": "Модуль отзывов работает с аккаунтами WB в finance.db. API /api/reviews/* закрыт requireAdmin. Секреты аккаунтов не отдаются на фронт: UI получает только флаги has_api_key / has_wb_authorize_v3 / has_wb_validation_key."
+          "content": "Модуль отзывов работает с аккаунтами WB в production PostgreSQL. API /api/reviews/* закрыт requireAdmin. Секреты аккаунтов не отдаются на фронт: UI получает только флаги has_api_key / has_wb_authorize_v3 / has_wb_validation_key."
         },
         {
           "type": "schema",
@@ -720,9 +756,9 @@
           "lines": [
             "WB Feedbacks API (отзывы)",
             "   ↓",
-            "scripts/reviews-sync.js (production cron, каждый час на минуте 17)",
+            "scripts/reviews-sync.js (production cron, каждые 15 минут)",
             "   ↓",
-            "SQLite: reviews, review_accounts, review_complaints",
+            "PostgreSQL: reviews, review_accounts, review_complaints, reviews_archive_sync_state",
             "   ↓",
             "API Routes: /api/reviews/* (requireAdmin)",
             "   ↓",
@@ -738,22 +774,23 @@
         },
         {
           "type": "list",
-          "title": "Таблицы в БД (finance.db)",
+          "title": "Таблицы в БД (PostgreSQL)",
           "items": [
             "review_accounts — аккаунты продавцов (API-ключ, токены кабинета, настройки автожалоб)",
             "reviews — все отзывы (текст, оценка, товар, покупатель, цена, ПВЗ, статус жалобы)",
             "review_complaints — история жалоб (текст обращения, причина, статус, персонаж-менеджер)",
             "review_stats — статистика по дням (количество отзывов, негативных, жалоб)",
-            "sync_status — состояние синхронизации (статус, прогресс, сообщение)"
+            "sync_status — состояние синхронизации (статус, прогресс, сообщение)",
+            "reviews_archive_sync_state — курсор архива WB, retry_after и статус последнего archive tick"
           ]
         },
         {
           "type": "list",
           "title": "Синхронизация отзывов",
           "items": [
-            "scripts/reviews-sync.js — production cron, каждый час на минуте 17 из-за WB 429",
-            "Инкрементальная — все неотвеченные + последние 500 отвеченных",
-            "Полная — все отзывы (кнопка в настройках аккаунта)",
+            "scripts/reviews-sync.js — production cron каждые 15 минут; обычный режим делает один WB archive request за запуск",
+            "DB-state — archive_skip, retry_after_until, last_status и счётчики хранятся в reviews_archive_sync_state",
+            "WB 429 — записывается в состояние и следующий тик пропускает запрос до retry_after_until",
             "Обогащение — Orders API (30 дней, реалтайм) + Statistics API (90 дней, задержка 7-10 дн)",
             "Связка отзыв↔заказ — через lastOrderShkId (shk_id) = sticker в Orders API",
             "Порционная запись — batch по 5000, не копит в памяти"
@@ -829,7 +866,7 @@
           "type": "list",
           "title": "Фоновые скрипты (production cron)",
           "items": [
-            "reviews-sync.js — каждый час на минуте 17, синхронизация отзывов + обогащение",
+            "reviews-sync.js — каждые 15 минут, slow archive tick отзывов + DB retry state",
             "reviews-complaints.js — каждые 30 мин, автожалобы + синхронизация статусов"
           ]
         },
@@ -907,7 +944,8 @@
             "",
             "Уровень 2: health-collector.py / monitor API",
             "   Читает PM2, crontab, логи, public/data/monitor/monitor-registry.json.",
-            "   Пишет public/data/monitor/status.json и data-health-cron.json.",
+            "   data-health-cron.sh запускает scripts/data-health-snapshot.js: проверяет WB API, свежесть ключевых PostgreSQL-таблиц и последние успешные cron-логи.",
+            "   health-collector.py поднимает overall=error из data-health-cron.json в красный статус сервиса data-health-cron.",
             "",
             "Уровень 3: сайт /monitor",
             "   Показывает статусы, логи, здоровье данных, auth-status.",
@@ -923,17 +961,17 @@
           "title": "Сервисы в monitor-registry.json",
           "lines": [
             "mphub-website      — PM2 process mphub, Next.js на порту 80",
-            "daily-sync         — scripts/daily-sync.js, каждый час",
+            "daily-sync         — scripts/daily-sync-api.sh, каждый час",
             "weekly-sync        — scripts/sync-weekly-report.js, Пн-Ср 10-23 МСК",
             "shipment-sync      — scripts/shipment-sync.sh, каждый час, days=28",
-            "reviews-sync       — scripts/reviews-sync.js, каждый час на минуте 17",
+            "reviews-sync       — scripts/reviews-sync.js, каждые 15 минут",
             "reviews-complaints — scripts/reviews-complaints.js, каждые 30 мин",
             "mphub-watchdog     — scripts/vps-watchdog.py, каждые 5 мин",
             "auth-check         — scripts/auth-check.js, ежедневно 22:00 МСК",
             "paid-storage-sync  — scripts/paid-storage-sync.js, ежедневно ночью",
             "warehouse-remains-sync — scripts/logistics-volume-sync.js --source remains, 06:00/09:00/12:00/15:00/18:00/21:00 МСК",
             "warehouse-measurements-sync — scripts/logistics-volume-sync.js --source measurements, 06:10/09:10/12:10/15:10/18:10/21:10 МСК",
-            "data-health-cron   — scripts/data-health-cron.sh, каждый час"
+            "data-health-cron   — scripts/data-health-cron.sh + scripts/data-health-snapshot.js, каждый час"
           ]
         },
         {
@@ -944,7 +982,7 @@
             "Ожидают — сервис по расписанию сейчас не должен быть активным или нет свежего запуска",
             "Упали — PM2/скрипт/health-check в ошибке",
             "Ошибок за 24ч — счётчик ERROR/CRITICAL по логам",
-            "Здоровье данных — отдельный снимок data-health-cron.json",
+            "Здоровье данных — отдельный снимок data-health-cron.json; проверяет не только факт запуска, но и наличие свежих данных в реализации, рекламе, воронке, хранении, отгрузке, логистике и отзывах",
             "Auth-status — проверка WB API key и авторизации ЛК"
           ]
         },
@@ -955,6 +993,7 @@
             "public/data/monitor/monitor-registry.json — production-реестр 10 сервисов",
             "public/data/monitor/status.json — текущий снимок статусов",
             "public/data/monitor/data-health-cron.json — последний снимок здоровья данных",
+            "scripts/data-health-snapshot.js — production-проверки свежести данных и последних успешных cron-запусков",
             "public/data/monitor/repair-state.json — состояние watchdog/circuit breaker",
             "public/data/monitor/repair-log.json — история восстановлений",
             "src/app/api/monitor/status/route.ts — статус сервисов",
@@ -1604,7 +1643,7 @@
       "blocks": [
         {
           "type": "text",
-          "content": "Production хранит состояние в SQLite WAL и JSON-файлах внутри /home/makson/website/data и public/data. data/ никогда не синхронизируется с локальной машины при деплое."
+          "content": "Production хранит основное состояние в PostgreSQL. В /home/makson/website/data остаются JSON-секреты/логи и legacy SQLite-файлы; data/ никогда не синхронизируется с локальной машины при деплое."
         },
         {
           "type": "schema",
@@ -1614,8 +1653,8 @@
             "│              3 СЛОЯ ХРАНЕНИЯ                   │",
             "├─────────────────────────────────────────────────┤",
             "│                                                 │",
-            "│  1. SQLite (серверная БД)                       │",
-            "│     finance.db (1.5 ГБ) — 20 таблиц:          │",
+            "│  1. PostgreSQL (основная production БД)         │",
+            "│     mphub: финансы, склад, поставки, отзывы,    │",
             "│       Финансы: realization, advertising,        │",
             "│                orders_funnel, cogs, settings    │",
             "│       Отгрузка: shipment_orders, shipment_stock,│",
@@ -1627,8 +1666,8 @@
             "│                     product_overrides            │",
             "│       Настройки: settings, tax_settings          │",
             "│                                                 │",
-            "│     weekly_reports.db (294 МБ) — 2 таблицы:    │",
-            "│       reports, weekly_rows (86 колонок)         │",
+            "│     legacy SQLite-файлы в data/:                │",
+            "│       finance.db / weekly_reports.db — backup   │",
             "│                                                 │",
             "│  2. JSON-файлы (data/)                          │",
             "│     wb-tokens.json — токены WB Seller Portal    │",
@@ -1649,7 +1688,7 @@
         },
         {
           "type": "schema",
-          "title": "finance.db — 20 таблиц, связи",
+          "title": "PostgreSQL mphub — основные таблицы и связи",
           "lines": [
             "users ─────────→ user_settings (user_id)",
             "  │",
@@ -1671,7 +1710,7 @@
         },
         {
           "type": "list",
-          "title": "finance.db — Финансовые таблицы",
+          "title": "Финансовые таблицы",
           "items": [
             "realization — 40+ колонок, главная таблица. Построчные данные реализации WB. source: daily/weekly/weekly_final. 6 индексов + idx_real_source_dates",
             "advertising — рекламные расходы по дням. campaign_id, campaign_name, amount, nm_id (привязка к артикулу)",
@@ -1683,7 +1722,7 @@
         },
         {
           "type": "list",
-          "title": "finance.db — Таблицы отгрузки",
+          "title": "Таблицы отгрузки",
           "items": [
             "shipment_orders — 19 колонок. Заказы WB: дата, склад, регион, баркод, цены, отмены. UNIQUE(barcode, date, warehouse)",
             "shipment_stock — 8 колонок. Остатки: баркод × склад → количество. PRIMARY KEY(barcode, warehouse). Полная перезапись при синхронизации",
@@ -1693,7 +1732,7 @@
         },
         {
           "type": "list",
-          "title": "finance.db — Таблицы отзывов",
+          "title": "Таблицы отзывов",
           "items": [
             "review_accounts — 19 колонок. Аккаунты для модуля отзывов: API ключи, токены WB, настройки автожалоб (settings_json)",
             "reviews — 27 колонок. Отзывы: рейтинг, текст, плюсы/минусы, цена (обогащение), ПВЗ, статус жалобы. UNIQUE(wb_review_id)",
@@ -1704,7 +1743,7 @@
         },
         {
           "type": "list",
-          "title": "finance.db — Таблицы пользователей",
+          "title": "Таблицы пользователей",
           "items": [
             "users — 6 колонок. Авторизация: email UNIQUE, password_hash (pbkdf2-sha256; legacy salt:sha256 поддерживается для миграции), role (admin/user). Production не создаёт admin/admin.",
             "user_settings — 3 колонки. Настройки по user_id: buyoutMode, buyoutRate, regionMode, uploadDays, boxDimensions",
@@ -1713,7 +1752,7 @@
         },
         {
           "type": "list",
-          "title": "weekly_reports.db — Excel-отчёты из ЛК",
+          "title": "Excel-отчёты из ЛК",
           "items": [
             "reports — 7 колонок. Метаданные: report_id UNIQUE, период, количество строк, дата загрузки",
             "weekly_rows — 86 колонок (5 мета + 81 данные). Полный Excel-отчёт реализации WB. 6 индексов. Маппинг: русские заголовки Excel → snake_case колонки"
@@ -1723,22 +1762,18 @@
           "type": "schema",
           "title": "Подключение к БД (паттерн)",
           "lines": [
-            "// Singleton — одно подключение на процесс",
-            "import Database from 'better-sqlite3';",
+            "// Runtime использует src/lib/postgres.ts",
+            "import { pgRows, pgGet, withPgTransaction } from '@/lib/postgres';",
             "",
             "// Чтение (API routes)",
-            "const db = new Database('data/finance.db', { readonly: true });",
-            "db.pragma('journal_mode = WAL');",
-            "db.pragma('cache_size = -64000');  // 64 МБ кэш",
+            "const rows = await pgRows('SELECT * FROM realization WHERE sale_dt = ?', [date]);",
             "",
             "// Запись (импорт данных, скрипты)",
-            "const writeDb = new Database('data/finance.db');",
-            "writeDb.pragma('journal_mode = WAL');",
+            "await withPgTransaction(async (client) => {",
+            "  await client.query('INSERT ... ON CONFLICT ...', params);",
+            "});",
             "",
-            "// weekly_reports.db — только чтение",
-            "const weeklyDb = new Database('data/weekly_reports.db', { readonly: true });",
-            "weeklyDb.pragma('journal_mode = WAL');",
-            "// Возвращает null если файл не существует"
+            "// SQLite better-sqlite3 — только legacy/backup и локальная совместимость"
           ]
         },
         {
@@ -1817,10 +1852,10 @@
           "title": "Карта production-агентов и расписание",
           "lines": [
             "mphub-website        → PM2 process mphub, Next.js port 80, всегда online",
-            "daily-sync.js        → cron: каждый час",
+            "daily-sync-api.sh    → cron: каждый час",
             "sync-weekly-report.js → cron: Пн-Ср 10:00-23:00 МСК",
             "shipment-sync.sh     → cron: каждый час, days=28, lock от дублей",
-            "reviews-sync.js      → cron: каждый час на минуте 17",
+            "reviews-sync.js      → cron: каждые 15 минут",
             "reviews-complaints.js → cron: каждые 30 минут",
             "vps-watchdog.py      → cron: каждые 5 минут",
             "data-health-cron.sh  → cron: каждый час",
@@ -1836,10 +1871,10 @@
           "lines": [
             "Wildberries API / Seller Portal",
             "   ↓",
-            "daily-sync.js → finance.db: realization, advertising, orders_funnel, paid_storage",
-            "sync-weekly-report.js → weekly_reports.db + finance.db buyout_rates",
+            "daily-sync.js → PostgreSQL: realization, advertising, orders_funnel, paid_storage",
+            "sync-weekly-report.js → PostgreSQL weekly_reports/weekly_rows + buyout_rates",
             "shipment-sync.sh → POST /api/data/sync → shipment_products/stock/orders",
-            "reviews-sync.js → finance.db reviews + enrichment",
+            "reviews-sync.js → PostgreSQL reviews + reviews_archive_sync_state",
             "reviews-complaints.js → review_complaints + WB complaints API",
             "data-health-cron.sh → public/data/monitor/data-health-cron.json",
             "health-collector.py / monitor API → public/data/monitor/status.json",
@@ -1863,11 +1898,11 @@
           "type": "list",
           "title": "2. reviews-sync.js — Синхронизация отзывов",
           "items": [
-            "Расписание — каждый час на минуте 17 по production crontab",
-            "Задача — загружает новые отзывы + обогащает ценой и регионом",
+            "Расписание — каждые 15 минут по production crontab",
+            "Задача — slow archive tick: один WB archive request за запуск + DB retry state",
             "WB API — feedbacks-api и statistics/orders API",
             "Секреты аккаунтов — хранятся в review_accounts, наружу API отдаёт только has_* флаги",
-            "Таблицы — reviews, review_stats, sync_status",
+            "Таблицы — reviews, review_stats, sync_status, reviews_archive_sync_state",
             "Лог — data/reviews-sync.log"
           ]
         },
@@ -1960,10 +1995,10 @@
           "type": "list",
           "title": "Production crontab",
           "items": [
-            "0 * * * * daily-sync.js",
+            "0 * * * * daily-sync-api.sh",
             "0 7-20 * * 1-3 sync-weekly-report.js",
             "0 * * * * shipment-sync.sh",
-            "17 * * * * reviews-sync.js",
+            "*/15 * * * * reviews-sync.js",
             "*/30 * * * * reviews-complaints.js",
             "*/5 * * * * vps-watchdog.py",
             "0 * * * * data-health-cron.sh",
@@ -2053,10 +2088,10 @@
           "type": "list",
           "title": "Production cron-задачи",
           "items": [
-            "daily-sync.js — каждый час, тянет реализацию, рекламу, заказы, хранение из WB API",
+            "daily-sync-api.sh — каждый час, вызывает production API для реализации, рекламы, заказов и хранения",
             "sync-weekly-report.js — Пн-Ср 10:00-23:00 МСК, Excel-отчёты из ЛК WB",
             "shipment-sync.sh — каждый час, POST /api/data/sync с days=28; lock защищает от параллельного запуска",
-            "reviews-sync.js — каждый час на минуте 17, отзывы + обогащение",
+            "reviews-sync.js — каждые 15 минут, slow archive tick отзывов + DB retry state",
             "reviews-complaints.js — каждые 30 минут, автожалобы + статусы",
             "vps-watchdog.py — каждые 5 минут, PM2/cron/HTTP проверки и Telegram-алерты",
             "data-health-cron.sh — каждый час, снимок здоровья данных для мониторинга",
@@ -2068,13 +2103,13 @@
           "type": "list",
           "title": "Важные нюансы",
           "items": [
-            "Production data/ не синхронизировать и не удалять при деплое: там SQLite, токены и логи",
+            "Production data/ не синхронизировать и не удалять при деплое: там WB-токены, JSON-логи и legacy SQLite backup",
             "Внутренний health-check делать через http://127.0.0.1, не через https://hub.imaxprom.site с самого VPS",
             "PM2 error-log может содержать старые записи; проверять timestamp/size до и после диагностики",
             "Перед точечными правками на проде делать backup изменяемого файла/каталога в /home/makson",
             "Старый scripts/rebuild-server.sh относится к локальной/macOS схеме и не должен использоваться как production deploy",
             "Security headers задаются в next.config.ts: noindex, nosniff, X-Frame-Options DENY, Referrer-Policy, Permissions-Policy, HSTS и CSP в production",
-            "Login rate-limit хранится в SQLite auth_login_attempts и переживает рестарт PM2",
+            "Login rate-limit хранится в БД auth_login_attempts и переживает рестарт PM2",
             "Локальный nginx на VPS должен оставаться с server_tokens off, чтобы не раскрывать точную версию nginx",
             "Внешний HTTPS-прокси CT 105 proxy тоже должен оставаться с server_tokens off: /etc/nginx/conf.d/server-tokens.conf"
           ]
@@ -2130,7 +2165,7 @@
           "type": "list",
           "title": "Auth и настройки",
           "items": [
-            "POST /api/auth/login — вход (email + пароль -> httpOnly mphub-token), rate-limit хранится в SQLite auth_login_attempts",
+            "POST /api/auth/login — вход (email + пароль -> httpOnly mphub-token), rate-limit хранится в БД auth_login_attempts",
             "POST /api/auth/logout — выход (удаление cookie)",
             "GET /api/auth/me — текущий пользователь из JWT",
             "GET|PUT /api/settings — пользовательские настройки, требует mphub-token",
@@ -2337,10 +2372,10 @@
           "type": "list",
           "title": "Синхронизация данных",
           "items": [
-            "daily-sync.js — каждый час: реализация, реклама, заказы, платное хранение → finance.db",
-            "sync-weekly-report.js — Пн-Ср 10:00-23:00 МСК: Excel-отчёты ЛК WB → weekly_reports.db + buyout_rates",
+            "daily-sync-api.sh — каждый час: вызывает production API sync для реализации, рекламы, заказов и хранения → PostgreSQL",
+            "sync-weekly-report.js — Пн-Ср 10:00-23:00 МСК: Excel-отчёты ЛК WB → PostgreSQL weekly_reports/weekly_rows + buyout_rates; legacy weekly_reports.db остаётся источником импорта/сверки",
             "shipment-sync.sh — каждый час: POST /api/data/sync, days=28 по умолчанию, lock от дублей",
-            "reviews-sync.js — каждый час на минуте 17: отзывы + обогащение ценой/ПВЗ",
+            "reviews-sync.js — каждые 15 минут: slow archive tick отзывов + DB retry state",
             "reviews-complaints.js — каждые 30 мин: автожалобы + синхронизация статусов",
             "paid-storage-sync.js — ежедневный догон paid_storage за последние дни",
             "auth-check.js — ежедневная проверка WB API/auth и Telegram-алерт при проблемах"
@@ -2365,7 +2400,7 @@
             "test-api.sh — smoke/API проверки",
             "e2e-test.js — архивный E2E через Puppeteer; не входит в актуальный production-хвост",
             "screenshot.js — скриншот страницы",
-            "save-session-state.js — генерирует SESSION_STATE.md из local/prod SQLite, PM2 JSON/cron/health, rsync dry-run и scripts/session-state-notes.json",
+            "save-session-state.js — генерирует SESSION_STATE.md из local legacy SQLite, production PostgreSQL, PM2 JSON/cron/health, rsync dry-run и scripts/session-state-notes.json",
             "wb-seller-login.py — вспомогательная авторизация WB Seller",
             "wb-auth-sniffer.py / wb-sniff.mjs — диагностика WB auth/API через браузер/CDP",
             "docs-audit-checklist.md — чеклист актуализации базы знаний"
@@ -2462,7 +2497,7 @@
         },
         {
           "type": "code",
-          "title": "reviews-sync.js — Production cron: синхронизация отзывов каждый час на минуте 17",
+          "title": "reviews-sync.js — Production cron: slow archive tick каждые 15 минут",
           "file": "scripts/reviews-sync.js",
           "code": "#!/usr/bin/env node\n/**\n * Reviews auto-sync script — production cron currently runs hourly at minute 17.\n * 1. Fetches new reviews (incremental: unanswered + last 500 answered)\n * 2. Enriches with price & region from Orders API\n *\n * Usage: node scripts/reviews-sync.js\n * Or via production cron hourly at minute 17.\n */\n\nconst Database = require(\"better-sqlite3\");\nconst path = require(\"path\");\n\nconst PROJECT_DIR = path.join(__dirname, \"..\");\nconst DB_PATH = path.join(PROJECT_DIR, \"data\", \"finance.db\");\nconst LOG_PATH = path.join(PROJECT_DIR, \"data\", \"reviews-sync.log\");\nconst fs = require(\"fs\");\n\n// ─── Logging ────────────────────────────────────────────────\n\nfunction log(msg) {\n  const line = `[${new Date().toISOString()}] ${msg}`;\n  console.log(line);\n  try { fs.appendFileSync(LOG_PATH, line + \"\\n\"); } catch {}\n}\n\n// ─── DB helpers ─────────────────────────────────────────────\n\nfunction getDb() {\n  const db = new Database(DB_PATH, { readonly: false });\n  db.pragma(\"journal_mode = WAL\");\n  return db;\n}\n\nfunction getApiKey(db) {\n  const row = db.prepare(`SELECT api_key FROM review_accounts WHERE supplier_id = '1166225'`).get();\n  return row?.api_key || null;\n}\n\nfunction getAccountId(db) {\n  const row = db.prepare(`SELECT id FROM review_accounts WHERE supplier_id = '1166225'`).get();\n  return row?.id || null;\n}\n\n// ─── Fetch feedbacks ────────────────────────────────────────\n\nconst WB_FEEDBACKS_URL = \"https://feedbacks-api.wildberries.ru/api/v1/feedbacks\";\n\nasync function fetchFeedbacks(apiKey) {\n  const all = [];\n\n  // 1) Unanswered\n  for (let skip = 0; ; skip += 100) {\n    const res = await fetch(`${WB_FEEDBACKS_URL}?isAnswered=false&take=100&skip=${skip}`, {\n      headers: { Authorization: `Bearer ${apiKey}` },\n    });\n    if (!res.ok) break;\n    const data = await res.json();\n    const fbs = data.data?.feedbacks ?? [];\n    all.push(...fbs);\n    if (fbs.length < 100) break;\n    await new Promise(r => setTimeout(r, 350));\n  }\n\n  // 2) Last 500 answered\n  const res = await fetch(`${WB_FEEDBACKS_URL}?isAnswered=true&take=500&skip=0`, {\n    headers: { Authorization: `Bearer ${apiKey}` },\n  });\n  if (res.ok) {\n    const data = await res.json();\n    const fbs = data.data?.feedbacks ?? [];\n    all.push(...fbs);\n  }\n\n  return all;\n}\n\n// ─── Upsert reviews ────────────────────────────────────────\n\nfunction upsertReviews(db, accountId, feedbacks) {\n  const stmt = db.prepare(`\n    INSERT INTO reviews (account_id, wb_review_id, date, rating, product_name, product_article, brand, review_text, pros, cons, buyer_name, status, is_updated, purchase_type, shk_id, order_date, bables)\n    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n    ON CONFLICT(wb_review_id) DO UPDATE SET\n      review_text = excluded.review_text,\n      pros = excluded.pros,\n      cons = excluded.cons,\n      rating = excluded.rating,\n      purchase_type = excluded.purchase_type,\n      shk_id = excluded.shk_id,\n      order_date = excluded.order_date,\n      bables = excluded.bables,\n      is_updated = CASE WHEN reviews.review_text != excluded.review_text THEN 1 ELSE reviews.is_updated END\n  `);\n\n  let count = 0;\n  db.transaction(() => {\n    for (const fb of feedbacks) {\n      const status = fb.isAnswered ? \"replied\" : \"new\";\n      const purchaseType = fb.orderStatus === \"buyout\" ? \"buyout\"\n        : fb.orderStatus === \"rejected\" ? \"rejected\"\n        : fb.orderStatus === \"returned\" ? \"returned\"\n        : null;\n      stmt.run(\n        accountId,\n        fb.id,\n        fb.createdDate ? fb.createdDate.slice(0, 10) : new Date().toISOString().slice(0, 10),\n        fb.productValuation ?? 5,\n        fb.productDetails?.productName || null,\n        fb.productDetails?.nmId ? String(fb.productDetails.nmId) : fb.productDetails?.supplierArticle || null,\n        fb.productDetails?.brandName || null,\n        fb.text || null,\n        fb.pros || null,\n        fb.cons || null,\n        fb.userName || null,\n        status,\n        0,\n        purchaseType,\n        fb.lastOrderShkId || null,\n        fb.lastOrderCreatedAt ? fb.lastOrderCreatedAt.slice(0, 10) : null,\n        fb.bables && fb.bables.length > 0 ? JSON.stringify(fb.bables) : null,\n      );\n      count++;\n    }\n  })();\n  return count;\n}\n\n// ─── Enrich from Orders API ─────────────────────────────────\n\nasync function enrichFromOrders(db, apiKey, accountId) {\n  const reviews = db.prepare(`\n    SELECT id, shk_id FROM reviews\n    WHERE account_id = ? AND shk_id IS NOT NULL AND (price IS NULL OR pickup_point IS NULL)\n      AND order_date >= date('now', '-90 days')\n    LIMIT 50000\n  `).all(accountId);\n\n  if (reviews.length === 0) return 0;\n\n  const shkLookup = new Map();\n  for (const r of reviews) shkLookup.set(r.shk_id, r.id);\n\n  const dateFrom = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);\n  const res = await fetch(`https://statistics-api.wildberries.ru/api/v1/supplier/orders?dateFrom=${dateFrom}`, {\n    headers: { Authorization: apiKey },\n  });\n  if (!res.ok) return 0;\n\n  const orders = await res.json();\n  if (!Array.isArray(orders)) return 0;\n\n  const stmt = db.prepare(`UPDATE reviews SET price = ?, pickup_point = ? WHERE shk_id = ? AND (price IS NULL OR pickup_point IS NULL)`);\n  let enriched = 0;\n\n  db.transaction(() => {\n    for (const o of orders) {\n      const sticker = Number(o.sticker);\n      const price = Math.abs(o.finishedPrice || 0);\n      if (sticker && shkLookup.has(sticker) && price > 0) {\n        const res = stmt.run(price, o.regionName || \"\", sticker);\n        enriched += res.changes;\n        shkLookup.delete(sticker);\n      }\n    }\n  })();\n\n  return enriched;\n}\n\n// ─── Main ───────────────────────────────────────────────────\n\nasync function main() {\n  log(\"=== Reviews sync started ===\");\n\n  const db = getDb();\n  const apiKey = getApiKey(db);\n  if (!apiKey) {\n    log(\"ERROR: No API key found\");\n    db.close();\n    return;\n  }\n\n  const accountId = getAccountId(db);\n  if (!accountId) {\n    log(\"ERROR: No account found\");\n    db.close();\n    return;\n  }\n\n  // 1. Fetch & upsert reviews\n  const feedbacks = await fetchFeedbacks(apiKey);\n  log(`Fetched ${feedbacks.length} feedbacks from WB`);\n\n  if (feedbacks.length > 0) {\n    const before = db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE account_id = ?`).get(accountId).cnt;\n    const upserted = upsertReviews(db, accountId, feedbacks);\n    const after = db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE account_id = ?`).get(accountId).cnt;\n    const added = after - before;\n    log(`Upserted ${upserted}, new: ${added}, total: ${after}`);\n  }\n\n  // 2. Enrich from Orders API\n  const enriched = await enrichFromOrders(db, apiKey, accountId);\n  log(`Enriched ${enriched} reviews with price & region`);\n\n  // 3. Update sync status\n  const total = db.prepare(`SELECT COUNT(*) as cnt FROM reviews`).get().cnt;\n  const withPrice = db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE price > 0`).get().cnt;\n  db.prepare(`UPDATE sync_status SET status = 'done', loaded = ?, total = ?, message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1`)\n    .run(total, total, `В базе: ${total.toLocaleString(\"ru-RU\")} ✅ | Цена и ПВЗ: ${withPrice.toLocaleString(\"ru-RU\")}`);\n\n  log(`=== Done. Total: ${total}, with price: ${withPrice} ===`);\n  db.close();\n}\n\nmain().catch(e => {\n  log(`FATAL: ${e.message}`);\n  process.exit(1);\n});\n"
         },
@@ -2493,8 +2528,7 @@
         {
           "type": "code",
           "title": "vps-watchdog.py — Production watchdog для PM2/cron/HTTP",
-          "file": "scripts/vps-watchdog.py",
-          "code": "#!/usr/bin/env python3\n\"\"\"\nVPS Watchdog — мониторинг сервисов на VPS.\nПроверяет PM2 (website), cron-задачи (по логам), отправляет алерты в Telegram.\n\nЗапуск: каждые 5 мин через cron\n\"\"\"\n\nimport json\nimport os\nimport sys\nimport subprocess\nimport fcntl\nfrom pathlib import Path\nfrom datetime import datetime, timedelta\n\n# ─── Config ──────────────────────────────────────────────────\n\nPROJECT_DIR = Path(__file__).parent.parent\nDATA_DIR = PROJECT_DIR / \"data\"\nSTATE_PATH = DATA_DIR / \"vps-watchdog-state.json\"\nLOCK_PATH = Path(\"/tmp/vps-watchdog.lock\")\nLOG_PATH = DATA_DIR / \"watchdog.log\"\nNOTIFY_SH = PROJECT_DIR / \"scripts\" / \"notify.sh\"\n\n# Cron tasks and their expected intervals (minutes)\nCRON_TASKS = {\n    \"daily-sync\": {\"log\": DATA_DIR / \"daily-sync.log\", \"max_age_min\": 120, \"name\": \"Daily Sync\"},\n    \"reviews-sync\": {\"log\": DATA_DIR / \"reviews-sync.log\", \"max_age_min\": 15, \"name\": \"Reviews Sync\"},\n    \"reviews-complaints\": {\"log\": DATA_DIR / \"reviews-complaints.log\", \"max_age_min\": 45, \"name\": \"Reviews Complaints\"},\n    \"shipment-sync\": {\"log\": DATA_DIR / \"shipment-sync.log\", \"max_age_min\": 90, \"name\": \"Shipment Sync\"},\n    # Weekly-sync запускается Пн-Ср 10-23 МСК. В остальные дни и часы проверка пропускается.\n    \"weekly-sync\": {\"log\": DATA_DIR / \"weekly-sync.log\", \"max_age_min\": 90, \"name\": \"Weekly Sync\", \"only_dow_msk\": [1, 2, 3], \"only_hours_msk\": list(range(10, 24))},\n    # Paid-storage-sync гоняется 02:00 МСК. Проверка — только в окне 03-23 МСК (после запуска).\n    \"paid-storage-sync\": {\"log\": DATA_DIR / \"paid-storage-sync.log\", \"max_age_min\": 1440, \"name\": \"Paid Storage Sync\", \"only_hours_msk\": list(range(3, 24))},\n}\n\n# ─── Logging ─────────────────────────────────────────────────\n\ndef log(msg):\n    line = f\"[{datetime.now().isoformat(timespec='seconds')}] {msg}\"\n    try:\n        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)\n        with open(LOG_PATH, \"a\") as f:\n            f.write(line + \"\\n\")\n    except Exception:\n        pass\n\n\n# ─── Lock ────────────────────────────────────────────────────\n\ndef acquire_lock():\n    try:\n        fp = open(LOCK_PATH, \"w\")\n        fcntl.flock(fp, fcntl.LOCK_EX | fcntl.LOCK_NB)\n        return fp\n    except (IOError, OSError):\n        return None\n\n\n# ─── State ───────────────────────────────────────────────────\n\ndef load_state():\n    if STATE_PATH.exists():\n        try:\n            return json.loads(STATE_PATH.read_text())\n        except Exception:\n            pass\n    return {}\n\n\ndef save_state(state):\n    DATA_DIR.mkdir(parents=True, exist_ok=True)\n    STATE_PATH.write_text(json.dumps(state, indent=2, ensure_ascii=False))\n\n\n# ─── Telegram ────────────────────────────────────────────────\n\nLEVEL_EMOJI = {\"INFO\": \"\\u2705\", \"WARNING\": \"\\u26a0\\ufe0f\", \"CRITICAL\": \"\\U0001f6a8\"}\n\ndef send_telegram(level, message):\n    \"\"\"Отправка через notify.sh (SSH-туннель через claude-cli → Germany).\"\"\"\n    emoji = LEVEL_EMOJI.get(level, \"\\u2139\\ufe0f\")\n    # Конвертируем простой Markdown *bold* → HTML <b>bold</b> (notify.sh использует HTML)\n    import re as _re\n    html_message = _re.sub(r\"\\*([^*]+)\\*\", r\"<b>\\1</b>\", message)\n    text = f\"{emoji} <b>VPS Watchdog — {level}</b>\\n\\n{html_message}\"\n    try:\n        result = subprocess.run(\n            [\"bash\", str(NOTIFY_SH), text],\n            capture_output=True, text=True, timeout=30,\n        )\n        if result.returncode == 0:\n            log(f\"  Telegram [{level}] sent\")\n        else:\n            log(f\"  Telegram error: rc={result.returncode}, {result.stderr[:200]}\")\n    except Exception as e:\n        log(f\"  Telegram error: {e}\")\n\n\n# ─── Checks ──────────────────────────────────────────────────\n\ndef check_pm2():\n    \"\"\"Check PM2 mphub process.\"\"\"\n    try:\n        result = subprocess.run(\n            [\"sudo\", \"pm2\", \"jlist\"],\n            capture_output=True, text=True, timeout=10,\n        )\n        procs = json.loads(result.stdout)\n        for p in procs:\n            if p[\"name\"] == \"mphub\":\n                status = p[\"pm2_env\"][\"status\"]\n                pid = p[\"pid\"]\n                restarts = p[\"pm2_env\"][\"restart_time\"]\n                uptime = p[\"pm2_env\"].get(\"pm_uptime\", 0)\n                return {\n                    \"status\": status,\n                    \"pid\": pid,\n                    \"restarts\": restarts,\n                    \"uptime_ms\": int(datetime.now().timestamp() * 1000) - uptime if uptime else 0,\n                }\n        return {\"status\": \"not_found\", \"pid\": 0, \"restarts\": 0, \"uptime_ms\": 0}\n    except Exception as e:\n        return {\"status\": \"error\", \"pid\": 0, \"restarts\": 0, \"error\": str(e)}\n\n\ndef check_http():\n    \"\"\"Check if website responds.\"\"\"\n    try:\n        result = subprocess.run(\n            [\"curl\", \"-s\", \"-o\", \"/dev/null\", \"-w\", \"%{http_code}\", \"--max-time\", \"10\", \"http://localhost:80\"],\n            capture_output=True, text=True, timeout=15,\n        )\n        code = result.stdout.strip()\n        return {\"ok\": code in (\"200\", \"301\", \"302\", \"307\"), \"code\": code}\n    except Exception as e:\n        return {\"ok\": False, \"code\": \"000\", \"error\": str(e)}\n\n\ndef check_cron_task(task_id, config):\n    \"\"\"Check if cron task ran recently by log file modification time.\n    Если у задачи ограничено расписание (only_dow_msk / only_hours_msk),\n    вне этого окна проверка пропускается.\"\"\"\n    log_path = config[\"log\"]\n    max_age = config[\"max_age_min\"]\n\n    if not log_path.exists():\n        return {\"ok\": False, \"reason\": \"no log file\"}\n\n    mtime = datetime.fromtimestamp(log_path.stat().st_mtime)\n    age_min = (datetime.now() - mtime).total_seconds() / 60\n\n    # Расписание-aware check: если задача запускается только в определённые\n    # дни/часы (МСК), вне окна — skip.\n    now_utc = datetime.utcnow()\n    msk_hour = (now_utc.hour + 3) % 24\n    # ISO weekday: Пн=1..Вс=7\n    msk_dow = (now_utc.weekday() + 1) if (now_utc.hour + 3) < 24 else ((now_utc.weekday() + 1) % 7) + 1\n\n    only_dow = config.get(\"only_dow_msk\")\n    only_hours = config.get(\"only_hours_msk\")\n    if only_dow and msk_dow not in only_dow:\n        return {\"ok\": True, \"age_min\": round(age_min), \"note\": f\"out-of-schedule (dow={msk_dow})\"}\n    if only_hours and msk_hour not in only_hours:\n        return {\"ok\": True, \"age_min\": round(age_min), \"note\": f\"out-of-schedule (hour={msk_hour})\"}\n\n    return {\"ok\": age_min <= max_age, \"age_min\": round(age_min)}\n\n\ndef check_disk():\n    \"\"\"Check disk usage.\"\"\"\n    try:\n        result = subprocess.run(\n            [\"df\", \"--output=pcent\", \"/\"],\n            capture_output=True, text=True, timeout=5,\n        )\n        pct = int(result.stdout.strip().split(\"\\n\")[-1].strip().replace(\"%\", \"\"))\n        return {\"ok\": pct < 90, \"percent\": pct}\n    except Exception:\n        return {\"ok\": True, \"percent\": 0}\n\n\ndef restart_pm2():\n    \"\"\"Restart PM2 mphub process.\"\"\"\n    try:\n        log(\"  Restarting PM2 mphub...\")\n        result = subprocess.run(\n            [\"sudo\", \"pm2\", \"restart\", \"mphub\"],\n            capture_output=True, text=True, timeout=30,\n        )\n        time.sleep(5)\n        check = check_pm2()\n        ok = check[\"status\"] == \"online\"\n        log(f\"  Restart {'OK' if ok else 'FAILED'}\")\n        return ok\n    except Exception as e:\n        log(f\"  Restart error: {e}\")\n        return False\n\n\n# ─── Main ────────────────────────────────────────────────────\n\nimport time\n\ndef main():\n    log(\"=== VPS Watchdog started ===\")\n\n    state = load_state()\n    alerts = []\n\n    # 1. Check PM2\n    pm2 = check_pm2()\n    log(f\"PM2: {pm2['status']} (pid={pm2['pid']}, restarts={pm2['restarts']})\")\n\n    if pm2[\"status\"] != \"online\":\n        log(f\"ALERT: PM2 mphub is {pm2['status']}\")\n        prev_restarts = state.get(\"pm2_restart_count\", 0)\n        if prev_restarts < 3:\n            ok = restart_pm2()\n            state[\"pm2_restart_count\"] = prev_restarts + 1\n            if ok:\n                alerts.append((\"INFO\", \"*MpHub Website* — перезапущен и работает.\"))\n            else:\n                alerts.append((\"CRITICAL\", f\"*MpHub Website* — не удалось перезапустить! Status: {pm2['status']}\"))\n        else:\n            alerts.append((\"CRITICAL\", f\"*MpHub Website* — упал {prev_restarts}x. Требуется ручное вмешательство.\"))\n    else:\n        if state.get(\"pm2_restart_count\", 0) > 0:\n            state[\"pm2_restart_count\"] = 0\n\n    # 2. Check HTTP\n    http = check_http()\n    log(f\"HTTP: {http['code']} ({'OK' if http['ok'] else 'FAIL'})\")\n\n    if not http[\"ok\"] and pm2[\"status\"] == \"online\":\n        alerts.append((\"WARNING\", f\"*MpHub Website* — PM2 online, но HTTP не отвечает (code={http['code']}).\"))\n\n    # 3. Check cron tasks\n    for task_id, config in CRON_TASKS.items():\n        result = check_cron_task(task_id, config)\n        if not result[\"ok\"]:\n            age = result.get(\"age_min\", \"?\")\n            reason = result.get(\"reason\", f\"последний запуск {age} мин назад (макс {config['max_age_min']})\")\n            alert_key = f\"cron_{task_id}_alerted\"\n            if not state.get(alert_key):\n                alerts.append((\"WARNING\", f\"*{config['name']}* — не запускался вовремя. {reason}\"))\n                state[alert_key] = datetime.now().isoformat()\n        else:\n            alert_key = f\"cron_{task_id}_alerted\"\n            if state.get(alert_key):\n                del state[alert_key]\n\n    # 4. Check disk\n    disk = check_disk()\n    log(f\"Disk: {disk['percent']}%\")\n    if not disk[\"ok\"]:\n        alerts.append((\"WARNING\", f\"*Диск* — заполнен на {disk['percent']}%.\"))\n\n    # 5. Send alerts\n    for level, msg in alerts:\n        send_telegram(level, msg)\n\n    state[\"last_run\"] = datetime.now().isoformat()\n    save_state(state)\n\n    log(f\"Alerts: {len(alerts)} | === Watchdog done ===\\n\")\n\n\nif __name__ == \"__main__\":\n    lock = acquire_lock()\n    if not lock:\n        sys.exit(0)\n    try:\n        main()\n    finally:\n        lock.close()\n        try:\n            LOCK_PATH.unlink()\n        except Exception:\n            pass\n"
+          "file": "scripts/vps-watchdog.py"
         },
         {
           "type": "code",

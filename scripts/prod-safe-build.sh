@@ -62,7 +62,7 @@ echo "[deploy] stopping PM2 app"
 pm2 stop "$APP_NAME" || exit 1
 
 echo "[deploy] building"
-if ! npm run build; then
+if ! npm run build -- --webpack; then
   restore_previous_build "build failed"
 fi
 

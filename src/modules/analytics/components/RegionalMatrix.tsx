@@ -157,9 +157,10 @@ function getWarehouseDistrict(warehouse: string): string | null {
 
 interface RegionalMatrixProps {
   orders: OrderRecord[];
+  totalOrders?: number;
 }
 
-export function RegionalMatrix({ orders }: RegionalMatrixProps) {
+export function RegionalMatrix({ orders, totalOrders: fullOrders }: RegionalMatrixProps) {
   const { matrix, rowTotals, colTotals, grandTotal, localCount, nonLocalCount, totalOrders } = useMemo(() => {
     const m: Record<string, Record<string, number>> = {};
     const rt: Record<string, number> = {};
@@ -202,13 +203,21 @@ export function RegionalMatrix({ orders }: RegionalMatrixProps) {
   }, [orders]);
 
   if (grandTotal === 0) return null;
+  const hasPartialCoverage = typeof fullOrders === "number" && fullOrders > totalOrders;
 
   return (
     <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5 h-full">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-base font-medium text-[var(--text-muted)] uppercase tracking-wide">
-          Региональное распределение
-        </h3>
+        <div>
+          <h3 className="text-base font-medium text-[var(--text-muted)] uppercase tracking-wide">
+            Региональное распределение
+          </h3>
+          {hasPartialCoverage && (
+            <p className="text-xs text-[var(--text-muted)] mt-1">
+              Детализация: {totalOrders.toLocaleString("ru-RU")} из {fullOrders.toLocaleString("ru-RU")} заказов
+            </p>
+          )}
+        </div>
         <div className="flex items-center gap-1.5 text-xs" style={{ fontVariantNumeric: "tabular-nums" }}>
           <span className="text-green-400 font-medium">Локально: {totalOrders > 0 ? Math.round((localCount / totalOrders) * 100) : 0}%</span>
           <span className="text-[var(--text)] opacity-60">({localCount.toLocaleString("ru-RU")})</span>

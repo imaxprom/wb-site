@@ -21,15 +21,19 @@ const COLORS = ["#6366f1", "#22c55e", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4"
 
 interface ChartCardProps {
   title: string;
+  subtitle?: string;
   children: React.ReactNode;
 }
 
-function ChartCard({ title, children }: ChartCardProps) {
+function ChartCard({ title, subtitle, children }: ChartCardProps) {
   return (
     <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5 h-full">
-      <h3 className="text-base font-medium text-[var(--text-muted)] uppercase tracking-wide mb-4">
-        {title}
-      </h3>
+      <div className="mb-4">
+        <h3 className="text-base font-medium text-[var(--text-muted)] uppercase tracking-wide">
+          {title}
+        </h3>
+        {subtitle && <p className="text-xs text-[var(--text-muted)] mt-1">{subtitle}</p>}
+      </div>
       {children}
     </div>
   );
@@ -73,11 +77,11 @@ function shortRegion(name: string): string {
   return REGION_SHORT[name] || name.split(" ")[0];
 }
 
-export function RegionPieChart({ data }: { data: Record<string, number> }) {
+export function RegionPieChart({ data, subtitle }: { data: Record<string, number>; subtitle?: string }) {
   const chartData = Object.entries(data).map(([name, value]) => ({ name, value }));
 
   return (
-    <ChartCard title="Заказы по регионам">
+    <ChartCard title="Заказы по регионам" subtitle={subtitle}>
       <ResponsiveContainer width="100%" height={300}>
         <PieChart>
           <Pie

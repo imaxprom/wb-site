@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "fs";
 import { execFileSync } from "child_process";
 import { join } from "path";
 import { requireMonitorAdmin } from "@/lib/monitor-auth";
+import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 
 const REGISTRY_PATH = join(process.cwd(), "public/data/monitor/monitor-registry.json");
 const CHANGES_PATH = join(process.cwd(), "public/data/monitor/changes.json");
@@ -63,8 +64,10 @@ function startService(label: string): string {
 }
 
 export async function POST(req: NextRequest) {
-  const authError = requireMonitorAdmin(req);
+  const authError = await requireMonitorAdmin(req);
   if (authError) return authError;
+  const readonlyError = localReadonlyGuard("Monitor service actions");
+  if (readonlyError) return readonlyError;
 
   try {
     const { id, action } = await req.json();

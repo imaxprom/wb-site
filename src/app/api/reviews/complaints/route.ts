@@ -12,12 +12,14 @@ import {
   updateComplaintContent,
   updateReviewComplaintStatus,
   getComplaintsByAccount,
+  getComplaintsByAccountPg,
   getComplaintByReviewId,
   getTodayComplaintsCount,
   getLastComplaintByManager,
   shouldPauseByRecentRejections,
   type ReviewAccount,
 } from "@/lib/reviews-db";
+import { isPostgresEnabled, isPostgresReadonlyConnection } from "@/lib/postgres";
 
 export const maxDuration = 300;
 
@@ -390,10 +392,17 @@ function reasonErrorMessage(
 // ─── POST: Submit complaint(s) ─────────────────────────────
 
 export async function POST(req: NextRequest) {
-  const authError = requireAdmin(req);
+  const authError = await requireAdmin(req);
   if (authError) return authError;
 
   try {
+    if (isPostgresEnabled() && isPostgresReadonlyConnection()) {
+      return NextResponse.json(
+        { error: "Review complaint writes are disabled in local PostgreSQL readonly mode" },
+        { status: 403 }
+      );
+    }
+
     const json = await req.json();
 
     // Mode 1: Auto-submit for an account
@@ -704,7 +713,7 @@ async function syncComplaintStatuses(): Promise<number> {
 // ─── GET: Complaints history + sync ────────────────────────
 
 export async function GET(req: NextRequest) {
-  const authError = requireAdmin(req);
+  const authError = await requireAdmin(req);
   if (authError) return authError;
 
   try {
@@ -713,11 +722,20 @@ export async function GET(req: NextRequest) {
     const accountId = sp.get("account_id") ? Number(sp.get("account_id")) : undefined;
     const status = sp.get("status") || undefined;
 
+    if (shouldSync && isPostgresEnabled() && isPostgresReadonlyConnection()) {
+      return NextResponse.json(
+        { error: "Review complaint status sync is disabled in local PostgreSQL readonly mode" },
+        { status: 403 }
+      );
+    }
+
     if (shouldSync) {
       await syncComplaintStatuses();
     }
 
-    const complaints = getComplaintsByAccount(accountId, status);
+    const complaints = isPostgresEnabled()
+      ? await getComplaintsByAccountPg(accountId, status)
+      : getComplaintsByAccount(accountId, status);
     return NextResponse.json({ complaints });
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

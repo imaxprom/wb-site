@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Reviews auto-sync script — production cron currently runs hourly.
- * 1. Fetches new reviews (unanswered + recent answered + archive)
- * 2. Enriches with price & region from Orders API
+ * Reviews auto-sync script.
+ * Default mode is a slow archive tick: one WB archive request per run.
+ * Production cron should run it every 15 minutes.
  *
  * Usage: node scripts/reviews-sync.js
  * Or via production cron.
@@ -10,12 +10,59 @@
 
 const Database = require("better-sqlite3");
 const path = require("path");
+const fs = require("fs");
+const { Pool } = require("pg");
 
 const PROJECT_DIR = path.join(__dirname, "..");
 const DB_PATH = path.join(PROJECT_DIR, "data", "finance.db");
 const LOG_PATH = path.join(PROJECT_DIR, "data", "reviews-sync.log");
 const LOCK_PATH = path.join(PROJECT_DIR, "data", "reviews-sync.lock");
-const fs = require("fs");
+
+function loadEnvFile(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return;
+    for (const line of fs.readFileSync(filePath, "utf-8").split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+      const idx = trimmed.indexOf("=");
+      const key = trimmed.slice(0, idx).trim();
+      const value = trimmed.slice(idx + 1).trim().replace(/^['"]|['"]$/g, "");
+      if (key && process.env[key] === undefined) process.env[key] = value;
+    }
+  } catch { /* ignore */ }
+}
+
+loadEnvFile(path.join(PROJECT_DIR, ".env.production.local"));
+
+const USE_PG = process.env.MPHUB_DB_ENGINE === "postgres";
+let pgPool = null;
+
+function getPgPool() {
+  if (!pgPool) {
+    if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required when MPHUB_DB_ENGINE=postgres");
+    pgPool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      max: Number(process.env.PGPOOL_MAX || 5),
+      application_name: process.env.PGAPPNAME || "mphub-reviews-sync",
+    });
+  }
+  return pgPool;
+}
+
+async function withPgTransaction(fn) {
+  const client = await getPgPool().connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 
 // ─── Logging ────────────────────────────────────────────────
 
@@ -43,10 +90,23 @@ function getAccountId(db) {
   return row?.id || null;
 }
 
+async function getApiKeyPg() {
+  const result = await getPgPool().query(`SELECT api_key FROM review_accounts WHERE supplier_id = $1`, ["1166225"]);
+  return result.rows[0]?.api_key || null;
+}
+
+async function getAccountIdPg() {
+  const result = await getPgPool().query(`SELECT id FROM review_accounts WHERE supplier_id = $1`, ["1166225"]);
+  return result.rows[0]?.id || null;
+}
+
 // ─── Fetch feedbacks ────────────────────────────────────────
 
 const WB_FEEDBACKS_URL = "https://feedbacks-api.wildberries.ru/api/v1/feedbacks";
 const WB_FEEDBACKS_ARCHIVE_URL = "https://feedbacks-api.wildberries.ru/api/v1/feedbacks/archive";
+const ARCHIVE_TAKE = 5000;
+const ARCHIVE_MIN_INTERVAL_SECONDS = 15 * 60;
+const ARCHIVE_SUCCESS_COOLDOWN_SECONDS = 14 * 60;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -194,6 +254,76 @@ function upsertReviews(db, accountId, feedbacks) {
   return count;
 }
 
+function mapFeedback(fb, accountId) {
+  const purchaseType = fb.orderStatus === "buyout" ? "buyout"
+    : fb.orderStatus === "rejected" ? "rejected"
+    : fb.orderStatus === "returned" ? "returned"
+    : null;
+
+  return {
+    accountId,
+    wbReviewId: fb.id,
+    date: fb.createdDate ? fb.createdDate.slice(0, 10) : new Date().toISOString().slice(0, 10),
+    rating: fb.productValuation ?? 5,
+    productName: fb.productDetails?.productName || null,
+    productArticle: fb.productDetails?.nmId ? String(fb.productDetails.nmId) : fb.productDetails?.supplierArticle || null,
+    brand: fb.productDetails?.brandName || null,
+    reviewText: fb.text || null,
+    pros: fb.pros || null,
+    cons: fb.cons || null,
+    buyerName: fb.userName || null,
+    status: fb.isAnswered ? "replied" : "new",
+    purchaseType,
+    shkId: fb.lastOrderShkId || null,
+    orderDate: fb.lastOrderCreatedAt ? fb.lastOrderCreatedAt.slice(0, 10) : null,
+    bables: fb.bables && fb.bables.length > 0 ? JSON.stringify(fb.bables) : null,
+  };
+}
+
+async function upsertReviewsPg(accountId, feedbacks) {
+  if (feedbacks.length === 0) return 0;
+
+  await withPgTransaction(async (client) => {
+    for (const fb of feedbacks) {
+      const row = mapFeedback(fb, accountId);
+      await client.query(`
+        INSERT INTO reviews (account_id, wb_review_id, date, rating, product_name, product_article, brand, review_text, pros, cons, buyer_name, status, is_updated, purchase_type, shk_id, order_date, bables)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        ON CONFLICT(wb_review_id) DO UPDATE SET
+          review_text = excluded.review_text,
+          pros = excluded.pros,
+          cons = excluded.cons,
+          rating = excluded.rating,
+          purchase_type = excluded.purchase_type,
+          shk_id = excluded.shk_id,
+          order_date = excluded.order_date,
+          bables = excluded.bables,
+          is_updated = CASE WHEN reviews.review_text IS DISTINCT FROM excluded.review_text THEN 1 ELSE reviews.is_updated END
+      `, [
+        row.accountId,
+        row.wbReviewId,
+        row.date,
+        row.rating,
+        row.productName,
+        row.productArticle,
+        row.brand,
+        row.reviewText,
+        row.pros,
+        row.cons,
+        row.buyerName,
+        row.status,
+        0,
+        row.purchaseType,
+        row.shkId,
+        row.orderDate,
+        row.bables,
+      ]);
+    }
+  });
+
+  return feedbacks.length;
+}
+
 // ─── Enrich from Orders API ─────────────────────────────────
 
 async function enrichFromOrders(db, apiKey, accountId) {
@@ -236,45 +366,356 @@ async function enrichFromOrders(db, apiKey, accountId) {
   return enriched;
 }
 
+async function enrichFromOrdersPg(apiKey, accountId) {
+  const pending = await getPgPool().query(`
+    SELECT id, shk_id FROM reviews
+    WHERE account_id = $1 AND shk_id IS NOT NULL AND (price IS NULL OR pickup_point IS NULL)
+      AND order_date >= to_char(CURRENT_DATE - INTERVAL '90 days', 'YYYY-MM-DD')
+    LIMIT 50000
+  `, [accountId]);
+
+  if (pending.rows.length === 0) return 0;
+
+  const shkLookup = new Map();
+  for (const r of pending.rows) shkLookup.set(Number(r.shk_id), Number(r.id));
+
+  const dateFrom = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  const res = await fetch(`https://statistics-api.wildberries.ru/api/v1/supplier/orders?dateFrom=${dateFrom}`, {
+    headers: { Authorization: apiKey },
+  });
+  if (!res.ok) return 0;
+
+  const orders = await res.json();
+  if (!Array.isArray(orders)) return 0;
+
+  let enriched = 0;
+  await withPgTransaction(async (client) => {
+    for (const o of orders) {
+      const sticker = Number(o.sticker);
+      const price = Math.abs(o.finishedPrice || 0);
+      if (sticker && shkLookup.has(sticker) && price > 0) {
+        const result = await client.query(
+          `UPDATE reviews SET price = $1, pickup_point = $2 WHERE shk_id = $3 AND (price IS NULL OR pickup_point IS NULL)`,
+          [price, o.regionName || "", sticker],
+        );
+        enriched += result.rowCount || 0;
+        shkLookup.delete(sticker);
+      }
+    }
+  });
+
+  return enriched;
+}
+
+async function countReviews(db, accountId = null) {
+  if (USE_PG) {
+    const result = accountId
+      ? await getPgPool().query(`SELECT COUNT(*)::int AS cnt FROM reviews WHERE account_id = $1`, [accountId])
+      : await getPgPool().query(`SELECT COUNT(*)::int AS cnt FROM reviews`);
+    return result.rows[0]?.cnt || 0;
+  }
+
+  return accountId
+    ? db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE account_id = ?`).get(accountId).cnt
+    : db.prepare(`SELECT COUNT(*) as cnt FROM reviews`).get().cnt;
+}
+
+async function countReviewsWithPrice(db) {
+  if (USE_PG) {
+    const result = await getPgPool().query(`SELECT COUNT(*)::int AS cnt FROM reviews WHERE price > 0`);
+    return result.rows[0]?.cnt || 0;
+  }
+
+  return db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE price > 0`).get().cnt;
+}
+
+async function ensureArchiveSyncState(db) {
+  if (USE_PG) {
+    await getPgPool().query(`
+      CREATE TABLE IF NOT EXISTS reviews_archive_sync_state (
+        id INTEGER PRIMARY KEY,
+        archive_skip INTEGER NOT NULL DEFAULT 0,
+        retry_after_until TEXT,
+        last_request_at TEXT,
+        last_success_at TEXT,
+        last_status TEXT,
+        last_message TEXT,
+        fetched_count INTEGER NOT NULL DEFAULT 0,
+        upserted_count INTEGER NOT NULL DEFAULT 0,
+        inserted_count INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await getPgPool().query(`
+      INSERT INTO reviews_archive_sync_state (id)
+      VALUES (1)
+      ON CONFLICT(id) DO NOTHING
+    `);
+    return;
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS reviews_archive_sync_state (
+      id INTEGER PRIMARY KEY,
+      archive_skip INTEGER NOT NULL DEFAULT 0,
+      retry_after_until TEXT,
+      last_request_at TEXT,
+      last_success_at TEXT,
+      last_status TEXT,
+      last_message TEXT,
+      fetched_count INTEGER NOT NULL DEFAULT 0,
+      upserted_count INTEGER NOT NULL DEFAULT 0,
+      inserted_count INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  db.prepare(`INSERT OR IGNORE INTO reviews_archive_sync_state (id) VALUES (1)`).run();
+}
+
+async function getArchiveSyncState(db) {
+  await ensureArchiveSyncState(db);
+  if (USE_PG) {
+    const result = await getPgPool().query(`SELECT * FROM reviews_archive_sync_state WHERE id = 1`);
+    return result.rows[0];
+  }
+  return db.prepare(`SELECT * FROM reviews_archive_sync_state WHERE id = 1`).get();
+}
+
+async function updateArchiveSyncState(db, state) {
+  if (USE_PG) {
+    await getPgPool().query(`
+      UPDATE reviews_archive_sync_state
+      SET archive_skip = $1,
+          retry_after_until = $2,
+          last_request_at = $3,
+          last_success_at = $4,
+          last_status = $5,
+          last_message = $6,
+          fetched_count = $7,
+          upserted_count = $8,
+          inserted_count = $9,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = 1
+    `, [
+      state.archive_skip,
+      state.retry_after_until || null,
+      state.last_request_at || null,
+      state.last_success_at || null,
+      state.last_status || null,
+      state.last_message || null,
+      state.fetched_count || 0,
+      state.upserted_count || 0,
+      state.inserted_count || 0,
+    ]);
+    return;
+  }
+
+  db.prepare(`
+    UPDATE reviews_archive_sync_state
+    SET archive_skip = ?,
+        retry_after_until = ?,
+        last_request_at = ?,
+        last_success_at = ?,
+        last_status = ?,
+        last_message = ?,
+        fetched_count = ?,
+        upserted_count = ?,
+        inserted_count = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = 1
+  `).run(
+    state.archive_skip,
+    state.retry_after_until || null,
+    state.last_request_at || null,
+    state.last_success_at || null,
+    state.last_status || null,
+    state.last_message || null,
+    state.fetched_count || 0,
+    state.upserted_count || 0,
+    state.inserted_count || 0,
+  );
+}
+
+async function updateSyncStatus(db, loaded, total, message) {
+  if (USE_PG) {
+    await getPgPool().query(
+      `UPDATE sync_status SET status = 'done', loaded = $1, total = $2, message = $3, updated_at = CURRENT_TIMESTAMP WHERE id = 1`,
+      [loaded, total, message],
+    );
+    return;
+  }
+
+  db.prepare(`UPDATE sync_status SET status = 'done', loaded = ?, total = ?, message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1`)
+    .run(loaded, total, message);
+}
+
+function acquireLock() {
+  try {
+    if (fs.existsSync(LOCK_PATH)) {
+      const pid = Number(fs.readFileSync(LOCK_PATH, "utf-8"));
+      if (pid) {
+        try {
+          process.kill(pid, 0);
+          return false;
+        } catch {
+          // stale lock
+        }
+      }
+      fs.rmSync(LOCK_PATH, { force: true });
+    }
+    fs.writeFileSync(LOCK_PATH, String(process.pid), { flag: "wx" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function releaseLock() {
+  try { fs.rmSync(LOCK_PATH, { force: true }); } catch {}
+}
+
+async function fetchWbJsonOnce(url, apiKey) {
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  const text = await res.text().catch(() => "");
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
+  return { res, data, text };
+}
+
+function secondsFromRateLimit(res) {
+  const retry = Number(res.headers.get("x-ratelimit-retry") || res.headers.get("retry-after") || 0);
+  return Number.isFinite(retry) && retry > 0 ? retry : ARCHIVE_MIN_INTERVAL_SECONDS;
+}
+
+function addSecondsIso(seconds) {
+  return new Date(Date.now() + seconds * 1000).toISOString();
+}
+
+async function runArchiveTick(db, apiKey, accountId) {
+  const state = await getArchiveSyncState(db);
+  const nowIso = new Date().toISOString();
+
+  if (state.retry_after_until && new Date(state.retry_after_until).getTime() > Date.now()) {
+    const total = await countReviews(db);
+    const message = `Отзывы: ожидание лимита WB до ${state.retry_after_until}`;
+    await updateSyncStatus(db, total, total, message);
+    log(`Archive tick skipped: rate-limit wait until ${state.retry_after_until}`);
+    return;
+  }
+
+  const skip = Number(state.archive_skip || 0);
+  const url = `${WB_FEEDBACKS_ARCHIVE_URL}?take=${ARCHIVE_TAKE}&skip=${skip}&order=dateDesc`;
+  log(`Archive tick request: take=${ARCHIVE_TAKE}, skip=${skip}`);
+  const { res, data, text } = await fetchWbJsonOnce(url, apiKey);
+
+  if (res.status === 429) {
+    const waitSeconds = Math.max(secondsFromRateLimit(res), ARCHIVE_MIN_INTERVAL_SECONDS);
+    const retryAfterUntil = addSecondsIso(waitSeconds);
+    const total = await countReviews(db);
+    const message = `Отзывы: WB 429, следующий запрос после ${retryAfterUntil}`;
+    await updateArchiveSyncState(db, {
+      ...state,
+      archive_skip: skip,
+      retry_after_until: retryAfterUntil,
+      last_request_at: nowIso,
+      last_status: "rate_limited",
+      last_message: message,
+    });
+    await updateSyncStatus(db, total, total, message);
+    log(`Archive tick rate-limited: retry_after=${waitSeconds}s, body=${text.slice(0, 500)}`);
+    return;
+  }
+
+  if (!res.ok) {
+    const total = await countReviews(db);
+    const message = `Отзывы: WB archive ${res.status}: ${text.slice(0, 200)}`;
+    await updateArchiveSyncState(db, {
+      ...state,
+      archive_skip: skip,
+      retry_after_until: null,
+      last_request_at: nowIso,
+      last_status: `error_${res.status}`,
+      last_message: message,
+    });
+    await updateSyncStatus(db, total, total, message);
+    throw new Error(message);
+  }
+
+  const feedbacks = getFeedbacksFromResponse(data);
+  const before = await countReviews(db, accountId);
+  const upserted = feedbacks.length > 0
+    ? (USE_PG ? await upsertReviewsPg(accountId, feedbacks) : upsertReviews(db, accountId, feedbacks))
+    : 0;
+  const after = await countReviews(db, accountId);
+  const inserted = after - before;
+  const nextSkip = feedbacks.length < ARCHIVE_TAKE ? 0 : skip + ARCHIVE_TAKE;
+  const total = await countReviews(db);
+  const withPrice = await countReviewsWithPrice(db);
+  const message = `В базе: ${total.toLocaleString("ru-RU")} ✅ | Архив WB: skip ${skip}, получено ${feedbacks.length.toLocaleString("ru-RU")}, новых ${inserted.toLocaleString("ru-RU")} | Цена и ПВЗ: ${withPrice.toLocaleString("ru-RU")}`;
+
+  await updateArchiveSyncState(db, {
+    archive_skip: nextSkip,
+    retry_after_until: addSecondsIso(ARCHIVE_SUCCESS_COOLDOWN_SECONDS),
+    last_request_at: nowIso,
+    last_success_at: new Date().toISOString(),
+    last_status: "ok",
+    last_message: message,
+    fetched_count: Number(state.fetched_count || 0) + feedbacks.length,
+    upserted_count: Number(state.upserted_count || 0) + upserted,
+    inserted_count: Number(state.inserted_count || 0) + inserted,
+  });
+  await updateSyncStatus(db, total, total, message);
+  log(`Archive tick OK: skip=${skip}, fetched=${feedbacks.length}, upserted=${upserted}, new=${inserted}, next_skip=${nextSkip}, total=${total}`);
+}
+
 // ─── Main ───────────────────────────────────────────────────
 
 async function main() {
   log("=== Reviews sync started ===");
   const fullSync = process.argv.includes("--full");
   const archiveOnly = process.argv.includes("--archive-only");
-  let lockFd;
-  const releaseLock = () => {
-    try { if (lockFd !== undefined) fs.closeSync(lockFd); } catch {}
-    try { fs.rmSync(LOCK_PATH, { force: true }); } catch {}
-  };
-  try {
-    lockFd = fs.openSync(LOCK_PATH, "wx");
-    fs.writeFileSync(lockFd, String(process.pid));
-  } catch {
+  const legacySync = process.argv.includes("--legacy-sync") || fullSync;
+  if (!acquireLock()) {
     log("Another reviews sync is already running, exiting");
     return;
   }
 
-  const db = getDb();
-  const apiKey = getApiKey(db);
+  const db = USE_PG ? null : getDb();
+  const apiKey = USE_PG ? await getApiKeyPg() : getApiKey(db);
   if (!apiKey) {
     log("ERROR: No API key found");
-    db.close();
+    if (db) db.close();
+    if (pgPool) await pgPool.end();
     releaseLock();
     return;
   }
 
-  const accountId = getAccountId(db);
+  const accountId = USE_PG ? await getAccountIdPg() : getAccountId(db);
   if (!accountId) {
     log("ERROR: No account found");
-    db.close();
+    if (db) db.close();
+    if (pgPool) await pgPool.end();
+    releaseLock();
+    return;
+  }
+
+  if (!legacySync && !archiveOnly) {
+    await runArchiveTick(db, apiKey, accountId);
+    if (db) db.close();
+    if (pgPool) await pgPool.end();
     releaseLock();
     return;
   }
 
   if (archiveOnly) {
     const pageLimit = getArgNumber("archive-pages", 3);
-    const before = db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE account_id = ?`).get(accountId).cnt;
+    const before = await countReviews(db, accountId);
     let fetched = 0;
     let upserted = 0;
 
@@ -284,19 +725,19 @@ async function main() {
       const feedbacks = getFeedbacksFromResponse(data);
       fetched += feedbacks.length;
       if (feedbacks.length === 0) break;
-      upserted += upsertReviews(db, accountId, feedbacks);
-      const afterPage = db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE account_id = ?`).get(accountId).cnt;
+      upserted += USE_PG ? await upsertReviewsPg(accountId, feedbacks) : upsertReviews(db, accountId, feedbacks);
+      const afterPage = await countReviews(db, accountId);
       log(`Archive page ${page + 1}/${pageLimit} skip=${skip}: fetched=${feedbacks.length}, total=${afterPage}, new=${afterPage - before}`);
       if (feedbacks.length < 5000) break;
       await sleep(1000);
     }
 
-    const after = db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE account_id = ?`).get(accountId).cnt;
-    const withPrice = db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE price > 0`).get().cnt;
-    db.prepare(`UPDATE sync_status SET status = 'done', loaded = ?, total = ?, message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1`)
-      .run(after, after, `В базе: ${after.toLocaleString("ru-RU")} ✅ | Архив: +${(after - before).toLocaleString("ru-RU")} | Цена и ПВЗ: ${withPrice.toLocaleString("ru-RU")}`);
+    const after = await countReviews(db, accountId);
+    const withPrice = await countReviewsWithPrice(db);
+    await updateSyncStatus(db, after, after, `В базе: ${after.toLocaleString("ru-RU")} ✅ | Архив: +${(after - before).toLocaleString("ru-RU")} | Цена и ПВЗ: ${withPrice.toLocaleString("ru-RU")}`);
     log(`=== Archive done. Fetched: ${fetched}, upserted: ${upserted}, new: ${after - before}, total: ${after} ===`);
-    db.close();
+    if (db) db.close();
+    if (pgPool) await pgPool.end();
     releaseLock();
     return;
   }
@@ -306,25 +747,25 @@ async function main() {
   log(`Fetched ${feedbacks.length} feedbacks from WB${fullSync ? " (full with archive)" : ""}`);
 
   if (feedbacks.length > 0) {
-    const before = db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE account_id = ?`).get(accountId).cnt;
-    const upserted = upsertReviews(db, accountId, feedbacks);
-    const after = db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE account_id = ?`).get(accountId).cnt;
+    const before = await countReviews(db, accountId);
+    const upserted = USE_PG ? await upsertReviewsPg(accountId, feedbacks) : upsertReviews(db, accountId, feedbacks);
+    const after = await countReviews(db, accountId);
     const added = after - before;
     log(`Upserted ${upserted}, new: ${added}, total: ${after}`);
   }
 
   // 2. Enrich from Orders API
-  const enriched = await enrichFromOrders(db, apiKey, accountId);
+  const enriched = USE_PG ? await enrichFromOrdersPg(apiKey, accountId) : await enrichFromOrders(db, apiKey, accountId);
   log(`Enriched ${enriched} reviews with price & region`);
 
   // 3. Update sync status
-  const total = db.prepare(`SELECT COUNT(*) as cnt FROM reviews`).get().cnt;
-  const withPrice = db.prepare(`SELECT COUNT(*) as cnt FROM reviews WHERE price > 0`).get().cnt;
-  db.prepare(`UPDATE sync_status SET status = 'done', loaded = ?, total = ?, message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1`)
-    .run(total, total, `В базе: ${total.toLocaleString("ru-RU")} ✅ | Цена и ПВЗ: ${withPrice.toLocaleString("ru-RU")}`);
+  const total = await countReviews(db);
+  const withPrice = await countReviewsWithPrice(db);
+  await updateSyncStatus(db, total, total, `В базе: ${total.toLocaleString("ru-RU")} ✅ | Цена и ПВЗ: ${withPrice.toLocaleString("ru-RU")}`);
 
   log(`=== Done. Total: ${total}, with price: ${withPrice} ===`);
-  db.close();
+  if (db) db.close();
+  if (pgPool) await pgPool.end();
   releaseLock();
 }
 

@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { playwrightSelectSupplier } from "@/lib/wb-auth-playwright";
+import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 
 /**
  * POST /api/wb/auth/select-supplier — Choose supplier (юрлицо)
  */
 export async function POST(req: NextRequest) {
-  const authError = requireAdmin(req);
+  const authError = await requireAdmin(req);
   if (authError) return authError;
+  const readonlyError = localReadonlyGuard("WB cabinet supplier selection");
+  if (readonlyError) return readonlyError;
 
   try {
     const { supplier } = await req.json();

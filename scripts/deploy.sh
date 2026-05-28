@@ -12,6 +12,8 @@ rsync -az --delete \
   --exclude='.next' \
   --exclude='.deploy-backups' \
   --exclude='.git' \
+  --exclude='.env.production.local' \
+  --exclude='.env.production.local.*' \
   --exclude='/data/' \
   --exclude='public/data/monitor/status.json' \
   --exclude='public/data/monitor/repair-state.json' \

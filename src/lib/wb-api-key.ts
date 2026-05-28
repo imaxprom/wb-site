@@ -19,6 +19,14 @@ export function getWbApiKey(): string | null {
   return null;
 }
 
+/** Resolve WB API key for proxy routes: explicit request header wins, then stored server key. */
+export function getWbApiKeyFromRequest(
+  headers: { get(name: string): string | null },
+  headerName = "x-wb-api-key"
+): string | null {
+  return headers.get(headerName) || getWbApiKey();
+}
+
 /** Save WB API key. */
 export function setWbApiKey(key: string): void {
   writeSecretFileSync(KEY_PATH, key.trim());

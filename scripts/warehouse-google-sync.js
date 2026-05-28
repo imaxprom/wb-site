@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Sync ready warehouse stock from Google Sheets into local SQLite.
+ * Sync ready warehouse stock from Google Sheets into the active warehouse DB.
  *
  * The script reads the warehouse workbook through Google Sheets API and writes
  * a fresh snapshot into warehouse_ready_stock. It does not write back to Google.
@@ -17,6 +17,22 @@ const KEY_PATH = process.env.GOOGLE_SERVICE_ACCOUNT_KEY || path.join(ROOT, "data
 const SPREADSHEET_ID = process.env.WAREHOUSE_SPREADSHEET_ID || "1BXtl8hX_mp2sbde9lzkF_uS43WCnnSn_wNNxcse9daM";
 const RANGE = "A1:N120";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
+const USE_PG = process.env.MPHUB_DB_ENGINE === "postgres";
+
+let pgPool = null;
+
+function getPgPool() {
+  if (!pgPool) {
+    const { Pool } = require("pg");
+    if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required when MPHUB_DB_ENGINE=postgres");
+    pgPool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      max: Number(process.env.PGPOOL_MAX || 5),
+      application_name: process.env.PGAPPNAME || "mphub-warehouse-google-sync",
+    });
+  }
+  return pgPool;
+}
 
 function base64Url(value) {
   return Buffer.from(typeof value === "string" ? value : JSON.stringify(value)).toString("base64url");
@@ -198,6 +214,52 @@ function ensureSchema(db) {
   `);
 }
 
+async function ensureSchemaPg(pool) {
+  const existing = await pool.query(`
+    SELECT to_regclass('public.warehouse_sync_runs') AS sync_runs,
+           to_regclass('public.warehouse_ready_stock') AS ready_stock
+  `);
+  if (existing.rows[0]?.sync_runs && existing.rows[0]?.ready_stock) return;
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS warehouse_sync_runs (
+      id BIGSERIAL PRIMARY KEY,
+      spreadsheet_id TEXT NOT NULL,
+      spreadsheet_title TEXT,
+      status TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      sheets_count BIGINT NOT NULL DEFAULT 0,
+      rows_count BIGINT NOT NULL DEFAULT 0,
+      total_units DOUBLE PRECISION NOT NULL DEFAULT 0,
+      total_boxes DOUBLE PRECISION NOT NULL DEFAULT 0,
+      message TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS warehouse_ready_stock (
+      id BIGSERIAL PRIMARY KEY,
+      spreadsheet_id TEXT NOT NULL,
+      spreadsheet_title TEXT,
+      sheet_name TEXT NOT NULL,
+      article_wb TEXT NOT NULL,
+      size_label TEXT NOT NULL,
+      size_range TEXT NOT NULL,
+      source_column TEXT NOT NULL,
+      color_column TEXT,
+      per_box DOUBLE PRECISION,
+      filled_cells BIGINT NOT NULL DEFAULT 0,
+      units_qty DOUBLE PRECISION NOT NULL DEFAULT 0,
+      boxes_qty DOUBLE PRECISION,
+      synced_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_warehouse_ready_stock_article
+      ON warehouse_ready_stock(article_wb);
+    CREATE INDEX IF NOT EXISTS idx_warehouse_ready_stock_synced
+      ON warehouse_ready_stock(synced_at);
+  `);
+}
+
 async function readWarehouseSheets() {
   const accessToken = await getAccessToken();
   const meta = await sheetsGet(accessToken, "", new URLSearchParams({
@@ -220,6 +282,15 @@ async function readWarehouseSheets() {
 
 async function main() {
   const startedAt = new Date().toISOString();
+  if (USE_PG) {
+    await syncPostgres(startedAt);
+    return;
+  }
+
+  await syncSqlite(startedAt);
+}
+
+async function syncSqlite(startedAt) {
   const db = new Database(DB_PATH);
   db.pragma("busy_timeout = 5000");
   ensureSchema(db);
@@ -294,6 +365,100 @@ async function main() {
     throw error;
   } finally {
     db.close();
+  }
+}
+
+async function syncPostgres(startedAt) {
+  const pool = getPgPool();
+  await ensureSchemaPg(pool);
+
+  const runResult = await pool.query(
+    `
+      INSERT INTO warehouse_sync_runs (spreadsheet_id, status, started_at, message)
+      VALUES ($1, 'running', $2, '')
+      RETURNING id
+    `,
+    [SPREADSHEET_ID, startedAt],
+  );
+  const runId = runResult.rows[0].id;
+
+  try {
+    const data = await readWarehouseSheets();
+    const syncedAt = new Date().toISOString();
+    const warehouseRows = data.rows.filter((row) => row.articleWB);
+    const totalUnits = warehouseRows.reduce((sum, row) => sum + row.unitsQty, 0);
+    const totalBoxes = warehouseRows.reduce((sum, row) => sum + (row.boxesQty || 0), 0);
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("DELETE FROM warehouse_ready_stock WHERE spreadsheet_id = $1", [SPREADSHEET_ID]);
+      const insertSql = `
+        INSERT INTO warehouse_ready_stock (
+          spreadsheet_id, spreadsheet_title, sheet_name, article_wb,
+          size_label, size_range, source_column, color_column,
+          per_box, filled_cells, units_qty, boxes_qty, synced_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      `;
+      for (const row of warehouseRows) {
+        await client.query(insertSql, [
+          SPREADSHEET_ID,
+          data.title,
+          row.sheetName,
+          row.articleWB,
+          row.sizeLabel,
+          row.sizeRange,
+          row.sourceColumn,
+          row.colorColumn,
+          row.perBox,
+          row.filledCells,
+          row.unitsQty,
+          row.boxesQty,
+          syncedAt,
+        ]);
+      }
+      await client.query(
+        `
+          UPDATE warehouse_sync_runs
+          SET spreadsheet_title = $1, status = 'done', finished_at = $2, sheets_count = $3,
+              rows_count = $4, total_units = $5, total_boxes = $6, message = $7
+          WHERE id = $8
+        `,
+        [
+          data.title,
+          syncedAt,
+          data.sheetTitles.length,
+          warehouseRows.length,
+          Math.round(totalUnits * 100) / 100,
+          Math.round(totalBoxes * 100) / 100,
+          `Imported ${warehouseRows.length} warehouse size rows`,
+          runId,
+        ],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    console.log(`Imported ${warehouseRows.length} rows from ${data.sheetTitles.length} sheets`);
+    console.log(`Total units: ${Math.round(totalUnits * 100) / 100}`);
+    console.log(`Total boxes: ${Math.round(totalBoxes * 100) / 100}`);
+  } catch (error) {
+    await pool.query(
+      `
+        UPDATE warehouse_sync_runs
+        SET status = 'error', finished_at = $1, message = $2
+        WHERE id = $3
+      `,
+      [new Date().toISOString(), error.message, runId],
+    );
+    throw error;
+  } finally {
+    await pool.end();
+    pgPool = null;
   }
 }
 

@@ -12,6 +12,7 @@
 const Database = require("better-sqlite3");
 const path = require("path");
 const fs = require("fs");
+const { Pool } = require("pg");
 
 const PROJECT_DIR = path.join(__dirname, "..");
 const DB_PATH = path.join(PROJECT_DIR, "data", "finance.db");
@@ -39,12 +40,32 @@ function loadEnvFile(filePath) {
       const index = trimmed.indexOf("=");
       const key = trimmed.slice(0, index).trim();
       const value = trimmed.slice(index + 1).trim().replace(/^['"]|['"]$/g, "");
-      if (key) env[key] = value;
+      if (key) {
+        env[key] = value;
+        if (process.env[key] === undefined) process.env[key] = value;
+      }
     }
     return env;
   } catch {
     return {};
   }
+}
+
+loadEnvFile(path.join(PROJECT_DIR, ".env.production.local"));
+
+const USE_PG = process.env.MPHUB_DB_ENGINE === "postgres";
+let pgPool = null;
+
+function getPgPool() {
+  if (!pgPool) {
+    if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required when MPHUB_DB_ENGINE=postgres");
+    pgPool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      max: Number(process.env.PGPOOL_MAX || 5),
+      application_name: process.env.PGAPPNAME || "mphub-reviews-complaints",
+    });
+  }
+  return pgPool;
 }
 
 function getCodexGatewayConfig() {
@@ -66,6 +87,7 @@ function getDb() {
 }
 
 function initComplaintsTable(db) {
+  if (USE_PG) return;
   db.exec(`
     CREATE TABLE IF NOT EXISTS review_complaints (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,6 +106,15 @@ function initComplaintsTable(db) {
 }
 
 function getAutoComplaintAccounts(db) {
+  if (USE_PG) {
+    return getPgPool().query(`
+      SELECT * FROM review_accounts
+      WHERE auto_complaints = 1
+        AND wb_authorize_v3 IS NOT NULL
+        AND wb_authorize_v3 != ''
+    `).then(result => result.rows);
+  }
+
   return db.prepare(`
     SELECT * FROM review_accounts
     WHERE auto_complaints = 1
@@ -134,12 +165,85 @@ function getEligibleReviews(db, accountId, ratings, excludedArticles) {
   `).all(...params);
 }
 
+async function getEligibleReviewsPg(accountId, ratings, excludedArticles) {
+  const params = [accountId, ...ratings];
+  const ratingPlaceholders = ratings.map((_, index) => `$${index + 2}`).join(",");
+
+  let excludeClause = "";
+  if (excludedArticles.length > 0) {
+    const offset = params.length;
+    const artPlaceholders = excludedArticles.map((_, index) => `$${offset + index + 1}`).join(",");
+    excludeClause = `AND product_article NOT IN (${artPlaceholders})`;
+    params.push(...excludedArticles);
+  }
+
+  const result = await getPgPool().query(`
+    SELECT * FROM reviews
+    WHERE account_id = $1
+      AND rating IN (${ratingPlaceholders})
+      AND complaint_status IS NULL
+      AND is_hidden = 0
+      AND is_excluded_rating = 0
+      AND wb_review_id IS NOT NULL
+      ${excludeClause}
+    ORDER BY date DESC
+  `, params);
+  return result.rows;
+}
+
 function getTodayCount(db, accountId) {
+  if (USE_PG) {
+    return getPgPool().query(`
+      SELECT COUNT(*)::int as cnt FROM review_complaints
+      WHERE account_id = $1 AND created_at::date = CURRENT_DATE
+    `, [accountId]).then(result => result.rows[0]?.cnt || 0);
+  }
+
   const row = db.prepare(`
     SELECT COUNT(*) as cnt FROM review_complaints
     WHERE account_id = ? AND date(created_at) = date('now')
   `).get(accountId);
   return row.cnt;
+}
+
+async function getRecentComplaintStatusesPg(accountId) {
+  const result = await getPgPool().query(`
+    SELECT status FROM review_complaints
+    WHERE account_id = $1 AND status IN ('approved','rejected')
+    ORDER BY COALESCE(resolved_at, submitted_at) DESC
+    LIMIT 5
+  `, [accountId]);
+  return result.rows;
+}
+
+async function getLastComplaintTextPg(accountId, managerName) {
+  const result = await getPgPool().query(`
+    SELECT explanation FROM review_complaints
+    WHERE account_id = $1 AND manager_name = $2 AND explanation IS NOT NULL
+    ORDER BY id DESC LIMIT 1
+  `, [accountId, managerName]);
+  return result.rows[0] || null;
+}
+
+async function insertComplaintPg(reviewId, accountId, wbReviewId, reasonId, explanation, managerName) {
+  const result = await getPgPool().query(`
+    INSERT INTO review_complaints (review_id, account_id, wb_review_id, complaint_reason_id, explanation, manager_name)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING id
+  `, [reviewId, accountId, wbReviewId, reasonId, explanation || null, managerName || null]);
+  return result.rows[0].id;
+}
+
+async function markComplaintSubmittedPg(id) {
+  await getPgPool().query(`UPDATE review_complaints SET status = 'submitted', submitted_at = CURRENT_TIMESTAMP WHERE id = $1`, [id]);
+}
+
+async function markComplaintErrorPg(id, errorMessage) {
+  await getPgPool().query(`UPDATE review_complaints SET status = 'error', error_message = $1 WHERE id = $2`, [errorMessage, id]);
+}
+
+async function updateReviewComplaintStatusPg(reviewId, status) {
+  await getPgPool().query(`UPDATE reviews SET complaint_status = $1 WHERE id = $2`, [status, reviewId]);
 }
 
 // ─── AI text generation via Codex gateway ───────────────────
@@ -395,6 +499,53 @@ function reasonErrorMessage(wbReviewId, availableReasons, preferredReasonIds) {
 // ─── Sync complaint statuses from WB ────────────────────────
 
 async function syncComplaintStatuses(db, account) {
+  if (USE_PG) {
+    const pendingResult = await getPgPool().query(
+      "SELECT id, wb_review_id, review_id FROM review_complaints WHERE account_id = $1 AND status = 'submitted'",
+      [account.id],
+    );
+    const pending = pendingResult.rows;
+    if (pending.length === 0) return;
+
+    log(`  Checking ${pending.length} pending complaint statuses...`);
+    const headers = buildHeaders(account);
+    const pendingMap = new Map(pending.map(p => [p.wb_review_id, p]));
+    let updated = 0;
+
+    let nextCursor = "";
+    for (let page = 0; page < 30 && pendingMap.size > 0; page++) {
+      const cursorParam = nextCursor ? `cursor=${encodeURIComponent(nextCursor)}` : "cursor=";
+      const url = `https://seller-reviews.wildberries.ru/ns/fa-seller-api/reviews-ext-seller-portal/api/v2/feedbacks?${cursorParam}&isAnswered=true&limit=100&sortOrder=dateDesc`;
+      const res = await fetch(url, { headers, signal: AbortSignal.timeout(15000) }).catch(() => null);
+      if (!res || !res.ok) break;
+
+      const data = await res.json().catch(() => null);
+      if (!data || data.error) break;
+      const feedbacks = data.data?.feedbacks || [];
+      if (feedbacks.length === 0) break;
+
+      for (const fb of feedbacks) {
+        if (!pendingMap.has(fb.id)) continue;
+        const status = fb.supplierComplaints?.feedbackComplaint?.status;
+        if (status === 'approved' || status === 'rejected') {
+          const complaint = pendingMap.get(fb.id);
+          await getPgPool().query("UPDATE review_complaints SET status = $1, resolved_at = CURRENT_TIMESTAMP WHERE id = $2", [status, complaint.id]);
+          await getPgPool().query("UPDATE reviews SET complaint_status = $1 WHERE wb_review_id = $2", [status, fb.id]);
+          pendingMap.delete(fb.id);
+          updated++;
+          log(`  ${fb.id}: ${status}`);
+        }
+      }
+
+      nextCursor = data.data?.pages?.next || "";
+      if (!nextCursor) break;
+      await new Promise(r => setTimeout(r, 150));
+    }
+
+    log(`  Status sync: ${updated} updated, ${pendingMap.size} still pending`);
+    return;
+  }
+
   const pending = db.prepare("SELECT id, wb_review_id, review_id FROM review_complaints WHERE account_id = ? AND status = 'submitted'").all(account.id);
   if (pending.length === 0) return;
 
@@ -442,29 +593,30 @@ async function syncComplaintStatuses(db, account) {
 async function main() {
   log("=== Auto-complaints started ===");
 
-  const db = getDb();
-  initComplaintsTable(db);
+  const db = USE_PG ? null : getDb();
+  if (db) initComplaintsTable(db);
 
-  const accounts = getAutoComplaintAccounts(db);
+  const accounts = await getAutoComplaintAccounts(db);
   if (accounts.length === 0) {
     log("No accounts with auto_complaints enabled");
-    db.close();
+    if (db) db.close();
+    if (pgPool) await pgPool.end();
     return;
   }
 
-  const stmtInsert = db.prepare(`
+  const stmtInsert = db ? db.prepare(`
     INSERT INTO review_complaints (review_id, account_id, wb_review_id, complaint_reason_id, explanation, manager_name)
     VALUES (?, ?, ?, ?, ?, ?)
-  `);
-  const stmtSubmitted = db.prepare(`
+  `) : null;
+  const stmtSubmitted = db ? db.prepare(`
     UPDATE review_complaints SET status = 'submitted', submitted_at = CURRENT_TIMESTAMP WHERE id = ?
-  `);
-  const stmtError = db.prepare(`
+  `) : null;
+  const stmtError = db ? db.prepare(`
     UPDATE review_complaints SET status = 'error', error_message = ? WHERE id = ?
-  `);
-  const stmtReviewStatus = db.prepare(`
+  `) : null;
+  const stmtReviewStatus = db ? db.prepare(`
     UPDATE reviews SET complaint_status = ? WHERE id = ?
-  `);
+  `) : null;
 
   // Часовое окно подачи по МСК: 18, 19, 20 (анализ показал лучшую конверсию).
   const mskHour = (new Date().getUTCHours() + 3) % 24;
@@ -487,7 +639,7 @@ async function main() {
     if (!ALLOWED_HOURS.includes(mskHour)) continue;
 
     const config = getComplaintsConfig(account);
-    const todayCount = getTodayCount(db, account.id);
+    const todayCount = await getTodayCount(db, account.id);
     const remaining = Math.max(0, config.daily_limit - todayCount);
 
     if (remaining === 0) {
@@ -496,12 +648,14 @@ async function main() {
     }
 
     // Эффективность-чек: если последние 5 обработанных WB — все rejected → пауза до завтра
-    const recent = db.prepare(`
-      SELECT status FROM review_complaints
-      WHERE account_id = ? AND status IN ('approved','rejected')
-      ORDER BY COALESCE(resolved_at, submitted_at) DESC
-      LIMIT 5
-    `).all(account.id);
+    const recent = USE_PG
+      ? await getRecentComplaintStatusesPg(account.id)
+      : db.prepare(`
+        SELECT status FROM review_complaints
+        WHERE account_id = ? AND status IN ('approved','rejected')
+        ORDER BY COALESCE(resolved_at, submitted_at) DESC
+        LIMIT 5
+      `).all(account.id);
     const approved = recent.filter(r => r.status === 'approved').length;
     const rejected = recent.filter(r => r.status === 'rejected').length;
     if (recent.length >= 5 && approved === 0) {
@@ -516,7 +670,9 @@ async function main() {
       ? config.excluded_articles.split(/[,\n]/).map(s => s.trim()).filter(Boolean)
       : [];
 
-    const reviews = getEligibleReviews(db, account.id, config.ratings, excludedArticles);
+    const reviews = USE_PG
+      ? await getEligibleReviewsPg(account.id, config.ratings, excludedArticles)
+      : getEligibleReviews(db, account.id, config.ratings, excludedArticles);
     const toSubmit = reviews.slice(0, remaining);
 
     log(`  Eligible: ${reviews.length}, today used: ${todayCount}/${config.daily_limit}, will submit: ${toSubmit.length}`);
@@ -528,12 +684,19 @@ async function main() {
       const available = await fetchAvailableComplaintReasons(account, review.wb_review_id);
       const textReasons = available.ok ? getTextComplaintReasons(available.reasons, config.allowed_reasons) : [];
       if (!available.ok || textReasons.length === 0) {
-        const result = stmtInsert.run(review.id, account.id, review.wb_review_id, 0, "", "");
+        const complaintId = USE_PG
+          ? await insertComplaintPg(review.id, account.id, review.wb_review_id, 0, "", "")
+          : stmtInsert.run(review.id, account.id, review.wb_review_id, 0, "", "").lastInsertRowid;
         const errMsg = available.ok
           ? reasonErrorMessage(review.wb_review_id, available.reasons, config.allowed_reasons)
           : `WB reasons HTTP ${available.status}: ${available.body.slice(0, 200)}`;
-        stmtError.run(errMsg, result.lastInsertRowid);
-        stmtReviewStatus.run("error", review.id);
+        if (USE_PG) {
+          await markComplaintErrorPg(complaintId, errMsg);
+          await updateReviewComplaintStatusPg(review.id, "error");
+        } else {
+          stmtError.run(errMsg, complaintId);
+          stmtReviewStatus.run("error", review.id);
+        }
         errors++;
         log(`  ERROR on review ${review.wb_review_id}: ${errMsg}`);
         continue;
@@ -543,7 +706,9 @@ async function main() {
       // Pick random manager
       const managers = config.managers && config.managers.length > 0 ? config.managers : [{ name: "Default", style: "" }];
       const manager = managers[Math.floor(Math.random() * managers.length)];
-      const previousText = db.prepare("SELECT explanation FROM review_complaints WHERE account_id = ? AND manager_name = ? AND explanation IS NOT NULL ORDER BY id DESC LIMIT 1").get(account.id, manager.name);
+      const previousText = USE_PG
+        ? await getLastComplaintTextPg(account.id, manager.name)
+        : db.prepare("SELECT explanation FROM review_complaints WHERE account_id = ? AND manager_name = ? AND explanation IS NOT NULL ORDER BY id DESC LIMIT 1").get(account.id, manager.name);
 
       // AI selects reason + generates complaint text
       const ai = await generateComplaint(review, reasonIds, config, manager, previousText?.explanation || null);
@@ -555,19 +720,29 @@ async function main() {
       if (!reasonIds.includes(reasonId)) reasonId = defaultReasonId(reasonIds);
       log(`  [${manager.name}] ${review.wb_review_id}: reason=${reasonId}, text="${(explanation || "").slice(0, 80)}..."`);
 
-      const result = stmtInsert.run(review.id, account.id, review.wb_review_id, reasonId, explanation, manager.name);
-      const complaintId = result.lastInsertRowid;
+      const complaintId = USE_PG
+        ? await insertComplaintPg(review.id, account.id, review.wb_review_id, reasonId, explanation, manager.name)
+        : stmtInsert.run(review.id, account.id, review.wb_review_id, reasonId, explanation, manager.name).lastInsertRowid;
 
       try {
         const res = await submitComplaint(account, review.wb_review_id, reasonId, explanation);
 
         if (res.ok) {
-          stmtSubmitted.run(complaintId);
-          stmtReviewStatus.run("submitted", review.id);
+          if (USE_PG) {
+            await markComplaintSubmittedPg(complaintId);
+            await updateReviewComplaintStatusPg(review.id, "submitted");
+          } else {
+            stmtSubmitted.run(complaintId);
+            stmtReviewStatus.run("submitted", review.id);
+          }
           submitted++;
         } else {
           const errMsg = `HTTP ${res.status}: ${res.body.slice(0, 200)}`;
-          stmtError.run(errMsg, complaintId);
+          if (USE_PG) {
+            await markComplaintErrorPg(complaintId, errMsg);
+          } else {
+            stmtError.run(errMsg, complaintId);
+          }
           errors++;
           log(`  ERROR on review ${review.wb_review_id}: ${errMsg}`);
 
@@ -578,7 +753,11 @@ async function main() {
           }
         }
       } catch (e) {
-        stmtError.run(e.message, complaintId);
+        if (USE_PG) {
+          await markComplaintErrorPg(complaintId, e.message);
+        } else {
+          stmtError.run(e.message, complaintId);
+        }
         errors++;
         log(`  EXCEPTION on review ${review.wb_review_id}: ${e.message}`);
       }
@@ -596,7 +775,8 @@ async function main() {
   }
 
   log("=== Auto-complaints finished ===");
-  db.close();
+  if (db) db.close();
+  if (pgPool) await pgPool.end();
 }
 
 main().catch(e => {

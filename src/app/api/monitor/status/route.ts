@@ -9,7 +9,7 @@ const COLLECTOR_PATH = join(process.cwd(), "scripts/health-collector.py");
 const MAX_AGE_MS = 30_000; // 30 seconds
 
 export async function GET(req: NextRequest) {
-  const authError = requireMonitorAdmin(req);
+  const authError = await requireMonitorAdmin(req);
   if (authError) return authError;
 
   try {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { getWbApiKey } from "@/lib/wb-api-key";
+import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 
 /** All WB API scopes with a lightweight test endpoint for each */
 const SCOPES = [
@@ -81,8 +82,10 @@ const SCOPES = [
 ];
 
 export async function GET(req: NextRequest) {
-  const authError = requireAdmin(req);
+  const authError = await requireAdmin(req);
   if (authError) return authError;
+  const readonlyError = localReadonlyGuard("WB API online scope test");
+  if (readonlyError) return readonlyError;
 
   // Read API key from header or server file
   let apiKey = req.headers.get("x-wb-api-key") || getWbApiKey();

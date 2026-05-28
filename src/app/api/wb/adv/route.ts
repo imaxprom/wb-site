@@ -3,6 +3,8 @@ import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import Database from "better-sqlite3";
 import path from "path";
+import { localReadonlyGuard } from "@/lib/local-readonly-guard";
+import { getWbApiKeyFromRequest } from "@/lib/wb-api-key";
 
 const DB_PATH = path.join(process.cwd(), "data", "finance.db");
 
@@ -44,10 +46,12 @@ interface WbAdvExpense {
  */
 
 export async function POST(req: NextRequest) {
-  const authError = requireAdmin(req);
+  const authError = await requireAdmin(req);
   if (authError) return authError;
+  const readonlyError = localReadonlyGuard("WB advertising sync");
+  if (readonlyError) return readonlyError;
 
-  const apiKey = req.headers.get("x-wb-api-key");
+  const apiKey = getWbApiKeyFromRequest(req.headers);
   if (!apiKey) return NextResponse.json({ error: "API key missing" }, { status: 401 });
 
   try {
@@ -193,7 +197,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const authError = requireAdmin(req);
+  const authError = await requireAdmin(req);
   if (authError) return authError;
 
   const dateFrom = req.nextUrl.searchParams.get("from") || "2026-03-01";

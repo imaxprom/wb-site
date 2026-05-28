@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 
 interface Summary {
   overall: "ok" | "warn" | "crit";
+  mode?: "local_postgres_readonly";
+  message?: string;
   sync: {
     lastRun: string | null;
     lastRunHoursAgo: number | null;
@@ -51,6 +53,7 @@ export function SummaryStatusCard() {
 
   if (loading || !data) return null;
   const style = OVERALL_STYLE[data.overall];
+  const isReadonlyLocal = data.mode === "local_postgres_readonly";
 
   const fmtValue = (n: number) => n.toLocaleString("ru-RU");
   const fmtDate = (iso: string | null) => {
@@ -68,10 +71,18 @@ export function SummaryStatusCard() {
           {style.icon}
         </div>
         <div>
-          <h3 className="font-semibold text-white">{style.label}</h3>
-          <p className="text-xs text-[var(--text-muted)]">Сводный статус сервиса</p>
+          <h3 className="font-semibold text-white">{isReadonlyLocal ? "Локальный readonly-режим" : style.label}</h3>
+          <p className="text-xs text-[var(--text-muted)]">
+            {isReadonlyLocal ? "Runtime-мониторинг prod здесь не отображается" : "Сводный статус сервиса"}
+          </p>
         </div>
       </div>
+
+      {isReadonlyLocal && (
+        <div className="mb-4 rounded-lg border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-3 py-2 text-xs text-[var(--warning)]">
+          Localhost читает production-данные из PostgreSQL. Cron, sync и runtime-статусы на local отключены.
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
         {/* Sync status */}

@@ -1,8 +1,31 @@
 #!/usr/bin/env node
 const Database = require("better-sqlite3");
 const path = require("path");
+const fs = require("fs");
+
+function loadEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return;
+  for (const line of fs.readFileSync(filePath, "utf-8").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+    const idx = trimmed.indexOf("=");
+    const key = trimmed.slice(0, idx).trim();
+    const value = trimmed.slice(idx + 1).trim().replace(/^['"]|['"]$/g, "");
+    if (key && process.env[key] === undefined) process.env[key] = value;
+  }
+}
+
+loadEnvFile(path.join(process.cwd(), ".env.production.local"));
 
 const dbPath = process.env.FINANCE_DB_PATH || path.join(process.cwd(), "data", "finance.db");
+if (process.env.MPHUB_DB_ENGINE === "postgres") {
+  console.log("[migrate-cogs-history] PostgreSQL mode; SQLite migration skipped");
+  process.exit(0);
+}
+if (!fs.existsSync(dbPath)) {
+  console.log(`[migrate-cogs-history] SQLite database is absent; nothing to migrate: ${dbPath}`);
+  process.exit(0);
+}
 const db = new Database(dbPath);
 db.pragma("busy_timeout = 5000");
 db.pragma("journal_mode = WAL");

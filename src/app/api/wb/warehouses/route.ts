@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
-import { getWbApiKey } from "@/lib/wb-api-key";
+import { getWbApiKeyFromRequest } from "@/lib/wb-api-key";
+import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 
 export async function GET(req: NextRequest) {
-  const authError = requireAdmin(req);
+  const authError = await requireAdmin(req);
   if (authError) return authError;
+  const readonlyError = localReadonlyGuard("WB warehouses proxy");
+  if (readonlyError) return readonlyError;
 
-  const apiKey = req.headers.get("x-wb-api-key") || getWbApiKey();
+  const apiKey = getWbApiKeyFromRequest(req.headers);
   if (!apiKey) return NextResponse.json({ error: "API key missing" }, { status: 401 });
 
   try {

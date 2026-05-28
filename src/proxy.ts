@@ -71,6 +71,15 @@ export async function proxy(req: NextRequest) {
     });
   }
 
+  // Cron-triggered sync endpoints validate x-mphub-cron-secret in their route
+  // handlers. Let them reach Node.js instead of redirecting to /login.
+  if (
+    req.method === "POST" &&
+    (pathname === "/api/wb/daily-sync" || pathname === "/api/data/sync")
+  ) {
+    return NextResponse.next();
+  }
+
   // Always allow login page and auth API
   if (pathname === "/login" || pathname.startsWith("/api/auth/")) {
     return NextResponse.next();

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { initShipmentTables, getDb } from "@/lib/shipment-db";
+import { isPostgresEnabled, pgGet, pgRows } from "@/lib/postgres";
 
 interface ProductRow {
   article_wb: string;
@@ -369,6 +370,16 @@ function tableExists(tableName: string): boolean {
   return Boolean(row);
 }
 
+async function tableExistsPg(tableName: string): Promise<boolean> {
+  const row = await pgGet<{ exists: boolean }>(`
+    SELECT EXISTS (
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = ?
+    ) AS exists
+  `, [tableName]);
+  return Boolean(row?.exists);
+}
+
 function calculateLocalizationMetrics() {
   const db = getDb();
   if (!tableExists("shipment_orders")) {
@@ -503,19 +514,154 @@ function calculateLocalizationMetrics() {
   };
 }
 
+async function calculateLocalizationMetricsPg() {
+  if (!await tableExistsPg("shipment_orders")) {
+    return {
+      byArticle: new Map<string, LocalizationMetrics>(),
+      meta: null,
+    };
+  }
+
+  const maxDateRow = await pgGet<{ max_date: string | null }>("SELECT MAX(SUBSTR(date, 1, 10)) AS max_date FROM shipment_orders");
+  const maxDate = maxDateRow?.max_date || null;
+  if (!maxDate) {
+    return {
+      byArticle: new Map<string, LocalizationMetrics>(),
+      meta: null,
+    };
+  }
+
+  const window = getFullWeekWindow(maxDate);
+  const rows = await pgRows<LocalizationOrderRow>(`
+    SELECT
+      CAST(article_wb AS TEXT) AS article_wb,
+      TRIM(COALESCE(warehouse, '')) AS warehouse,
+      TRIM(COALESCE(federal_district, '')) AS federal_district,
+      TRIM(COALESCE(region, '')) AS region
+    FROM shipment_orders
+    WHERE SUBSTR(date, 1, 10) >= ?
+      AND SUBSTR(date, 1, 10) <= ?
+      AND TRIM(COALESCE(CAST(article_wb AS TEXT), '')) != ''
+  `, [window.startDate, window.endDate]);
+
+  const reportDraft = new Map<string, { orderQty: number; localOrderQty: number; unmappedWarehouseQty: number }>();
+  const tariffDraft = new Map<string, { orderQty: number; localOrderQty: number; unmappedWarehouseQty: number }>();
+  let reportTotalOrders = 0;
+  let reportTotalLocalOrders = 0;
+  let reportUnmappedWarehouseOrders = 0;
+  let tariffTotalOrders = 0;
+  let tariffTotalLocalOrders = 0;
+  let tariffUnmappedWarehouseOrders = 0;
+  let unmappedBuyerOrders = 0;
+
+  for (const row of rows) {
+    const article = clean(row.article_wb);
+    const buyerZone = getBuyerLocalizationZone(clean(row.federal_district), clean(row.region));
+    if (!article) continue;
+    if (!buyerZone) {
+      unmappedBuyerOrders++;
+      continue;
+    }
+
+    const warehouseZone = getWarehouseLocalizationZone(clean(row.warehouse));
+    const isLocal = Boolean(warehouseZone && warehouseZone === buyerZone);
+    const reportItem = reportDraft.get(article) || { orderQty: 0, localOrderQty: 0, unmappedWarehouseQty: 0 };
+    reportItem.orderQty++;
+    if (isLocal) reportItem.localOrderQty++;
+    if (!warehouseZone) {
+      reportItem.unmappedWarehouseQty++;
+      reportUnmappedWarehouseOrders++;
+    }
+    reportDraft.set(article, reportItem);
+
+    reportTotalOrders++;
+    if (isLocal) reportTotalLocalOrders++;
+
+    if (buyerZone.startsWith("cis-")) continue;
+
+    const tariffItem = tariffDraft.get(article) || { orderQty: 0, localOrderQty: 0, unmappedWarehouseQty: 0 };
+    tariffItem.orderQty++;
+    if (isLocal) tariffItem.localOrderQty++;
+    if (!warehouseZone) {
+      tariffItem.unmappedWarehouseQty++;
+      tariffUnmappedWarehouseOrders++;
+    }
+    tariffDraft.set(article, tariffItem);
+
+    tariffTotalOrders++;
+    if (isLocal) tariffTotalLocalOrders++;
+  }
+
+  const byArticle = new Map<string, LocalizationMetrics>();
+  let weightedKtr = 0;
+  let weightedKrp = 0;
+  for (const [article, item] of reportDraft) {
+    const tariffItem = tariffDraft.get(article) || { orderQty: 0, localOrderQty: 0, unmappedWarehouseQty: 0 };
+    const reportShare = item.orderQty > 0 ? item.localOrderQty / item.orderQty * 100 : 0;
+    const tariffShare = tariffItem.orderQty > 0 ? tariffItem.localOrderQty / tariffItem.orderQty * 100 : 0;
+    const localizationIndex = tariffItem.orderQty > 0 ? ktrByLocalizationShare(tariffShare) : 0;
+    const salesDistributionIndexPercent = tariffItem.orderQty > 0 ? krpByLocalizationShare(tariffShare) : 0;
+    weightedKtr += tariffItem.orderQty * localizationIndex;
+    weightedKrp += tariffItem.orderQty * salesDistributionIndexPercent;
+    byArticle.set(article, {
+      orderQty: item.orderQty,
+      localOrderQty: item.localOrderQty,
+      localizationSharePercent: round(reportShare, 2),
+      localizationIndex,
+      salesDistributionIndexPercent,
+      unmappedWarehouseQty: item.unmappedWarehouseQty,
+      tariffOrderQty: tariffItem.orderQty,
+      tariffLocalOrderQty: tariffItem.localOrderQty,
+      tariffLocalizationSharePercent: round(tariffShare, 2),
+    });
+  }
+
+  const localizationIndexRaw = tariffTotalOrders > 0 ? weightedKtr / tariffTotalOrders : 0;
+  const salesDistributionIndexRaw = tariffTotalOrders > 0 ? weightedKrp / tariffTotalOrders : 0;
+
+  return {
+    byArticle,
+    meta: {
+      orderWindowDays: LOCALIZATION_WINDOW_DAYS,
+      orderWindowWeeks: LOCALIZATION_WINDOW_WEEKS,
+      orderWindowEndDate: window.endDate,
+      orderWindowStartDate: window.startDate,
+      eligibleOrderQty: reportTotalOrders,
+      localOrderQty: reportTotalLocalOrders,
+      localizationSharePercent: reportTotalOrders > 0 ? round(reportTotalLocalOrders / reportTotalOrders * 100, 2) : 0,
+      tariffEligibleOrderQty: tariffTotalOrders,
+      tariffLocalOrderQty: tariffTotalLocalOrders,
+      tariffLocalizationSharePercent: tariffTotalOrders > 0 ? round(tariffTotalLocalOrders / tariffTotalOrders * 100, 2) : 0,
+      localizationIndex: floor(localizationIndexRaw, 2),
+      localizationIndexRaw: round(localizationIndexRaw, 4),
+      salesDistributionIndexPercent: floor(salesDistributionIndexRaw, 2),
+      salesDistributionIndexPercentRaw: round(salesDistributionIndexRaw, 4),
+      unmappedWarehouseOrderQty: reportUnmappedWarehouseOrders,
+      tariffUnmappedWarehouseOrderQty: tariffUnmappedWarehouseOrders,
+      excludedForeignOrderQty: unmappedBuyerOrders,
+      exceptionOrderQty: 0,
+      model: "report_locality_all_regions_tariff_indices_rf_only_13_full_weeks_without_current_week_or_exception_categories",
+      ktrSource: "WB table copied from Tariffs -> Warehouse tariffs -> Localization index",
+      krpSource: "WB sales-distribution-index instruction",
+    },
+  };
+}
+
 export async function GET(request: NextRequest) {
-  const authError = requireAdmin(request);
+  const authError = await requireAdmin(request);
   if (authError) return authError;
 
   try {
     initShipmentTables();
-    const db = getDb();
-    const localization = calculateLocalizationMetrics();
+    const pgMode = isPostgresEnabled();
+    const db = pgMode ? null : getDb();
+    const localization = pgMode ? await calculateLocalizationMetricsPg() : calculateLocalizationMetrics();
 
     const volumeByBarcode = new Map<string, number>();
     const volumeByNm = new Map<number, number>();
-    if (tableExists("paid_storage")) {
-      const volumeRows = db.prepare(`
+    const hasPaidStorage = pgMode ? await tableExistsPg("paid_storage") : tableExists("paid_storage");
+    if (hasPaidStorage) {
+      const volumeSql = `
         SELECT
           TRIM(COALESCE(barcode, '')) AS barcode,
           nm_id,
@@ -523,7 +669,10 @@ export async function GET(request: NextRequest) {
         FROM paid_storage
         WHERE volume > 0
         GROUP BY TRIM(COALESCE(barcode, '')), nm_id
-      `).all() as VolumeRow[];
+      `;
+      const volumeRows = pgMode
+        ? await pgRows<VolumeRow>(volumeSql)
+        : db!.prepare(volumeSql).all() as VolumeRow[];
 
       for (const row of volumeRows) {
         const volume = Number(row.volume) || 0;
@@ -535,13 +684,17 @@ export async function GET(request: NextRequest) {
     }
 
     const stockByBarcode = new Map<string, number>();
-    if (tableExists("shipment_stock")) {
-      const stockRows = db.prepare(`
+    const hasShipmentStock = pgMode ? await tableExistsPg("shipment_stock") : tableExists("shipment_stock");
+    if (hasShipmentStock) {
+      const stockSql = `
         SELECT TRIM(COALESCE(barcode, '')) AS barcode, SUM(quantity) AS quantity
         FROM shipment_stock
         WHERE TRIM(COALESCE(barcode, '')) != ''
         GROUP BY TRIM(COALESCE(barcode, ''))
-      `).all() as StockRow[];
+      `;
+      const stockRows = pgMode
+        ? await pgRows<StockRow>(stockSql)
+        : db!.prepare(stockSql).all() as StockRow[];
       for (const row of stockRows) {
         stockByBarcode.set(row.barcode, Number(row.quantity) || 0);
       }
@@ -549,8 +702,9 @@ export async function GET(request: NextRequest) {
 
     const remainsVolumeByBarcode = new Map<string, number>();
     const remainsVolumeByNm = new Map<string, number>();
-    if (tableExists("warehouse_remains_volume")) {
-      const remainsRows = db.prepare(`
+    const hasWarehouseRemainsVolume = pgMode ? await tableExistsPg("warehouse_remains_volume") : tableExists("warehouse_remains_volume");
+    if (hasWarehouseRemainsVolume) {
+      const remainsSql = `
         SELECT
           TRIM(COALESCE(barcode, '')) AS barcode,
           article_wb,
@@ -558,7 +712,10 @@ export async function GET(request: NextRequest) {
         FROM warehouse_remains_volume
         WHERE volume > 0
         GROUP BY TRIM(COALESCE(barcode, '')), article_wb
-      `).all() as RemainsVolumeRow[];
+      `;
+      const remainsRows = pgMode
+        ? await pgRows<RemainsVolumeRow>(remainsSql)
+        : db!.prepare(remainsSql).all() as RemainsVolumeRow[];
 
       for (const row of remainsRows) {
         const volume = Number(row.volume) || 0;
@@ -580,8 +737,9 @@ export async function GET(request: NextRequest) {
       };
       measuredAt: string;
     }>>();
-    if (tableExists("warehouse_measurements")) {
-      const measurementRows = db.prepare(`
+    const hasWarehouseMeasurements = pgMode ? await tableExistsPg("warehouse_measurements") : tableExists("warehouse_measurements");
+    if (hasWarehouseMeasurements) {
+      const measurementSql = `
         SELECT
           article_wb,
           dim_id,
@@ -592,8 +750,11 @@ export async function GET(request: NextRequest) {
           measured_at
         FROM warehouse_measurements
         WHERE TRIM(COALESCE(article_wb, '')) != ''
-        ORDER BY article_wb, datetime(measured_at), dim_id
-      `).all() as MeasurementRow[];
+        ORDER BY article_wb, measured_at, dim_id
+      `;
+      const measurementRows = pgMode
+        ? await pgRows<MeasurementRow>(measurementSql)
+        : db!.prepare(measurementSql).all() as MeasurementRow[];
 
       for (const row of measurementRows) {
         const article = clean(row.article_wb);
@@ -613,11 +774,14 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const rows = db.prepare(`
+    const productsSql = `
       SELECT article_wb, name, brand, category, length_cm, width_cm, height_cm, sizes_json
       FROM shipment_products
       ORDER BY article_wb
-    `).all() as ProductRow[];
+    `;
+    const rows = pgMode
+      ? await pgRows<ProductRow>(productsSql)
+      : db!.prepare(productsSql).all() as ProductRow[];
 
     const products = rows.flatMap((row) => {
       const nmId = Number(row.article_wb) || 0;

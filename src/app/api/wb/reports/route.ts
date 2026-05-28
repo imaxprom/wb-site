@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/api-auth";
 import { getWeeklyReports, downloadReportById } from "@/lib/wb-seller-api";
 import { listReports } from "@/lib/wb-scraper";
 import fs from "fs";
+import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 
 /**
  * GET /api/wb/reports — List weekly reports from WB API
@@ -12,8 +13,10 @@ import fs from "fs";
  */
 
 export async function GET(req: NextRequest) {
-  const authError = requireAdmin(req);
+  const authError = await requireAdmin(req);
   if (authError) return authError;
+  const readonlyError = localReadonlyGuard("WB report download");
+  if (readonlyError) return readonlyError;
 
   try {
     const fileName = req.nextUrl.searchParams.get("file");
@@ -36,6 +39,9 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    const readonlyError = localReadonlyGuard("WB reports listing");
+    if (readonlyError) return readonlyError;
+
     // Fetch weekly reports list from WB API
     const dateFrom = req.nextUrl.searchParams.get("dateFrom") || undefined;
     const dateTo = req.nextUrl.searchParams.get("dateTo") || undefined;
@@ -51,7 +57,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const authError = requireAdmin(req);
+  const authError = await requireAdmin(req);
   if (authError) return authError;
 
   try {

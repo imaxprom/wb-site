@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
-import { getDb, getExcludeDailyFilter } from "@/modules/analytics/lib/db";
+import { getDb, getExcludeDailyFilter, getPgExcludeDailyFilter } from "@/modules/analytics/lib/db";
+import { isPostgresEnabled, pgGet, pgRows } from "@/lib/postgres";
 
 /**
  * GET /api/data/order-stats?from=YYYY-MM-DD&to=YYYY-MM-DD
@@ -13,7 +14,7 @@ import { getDb, getExcludeDailyFilter } from "@/modules/analytics/lib/db";
  * - buyouts: продажи (quantity из Продажи)
  */
 export async function GET(request: NextRequest) {
-  const authError = requireAdmin(request);
+  const authError = await requireAdmin(request);
   if (authError) return authError;
 
   const { searchParams } = new URL(request.url);
@@ -24,41 +25,128 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    if (isPostgresEnabled()) {
+      const dedup = await getPgExcludeDailyFilter("rr_dt", "r");
+
+      const funnelRows = await pgRows<{ date: string; orders: number }>(`
+        SELECT date, COALESCE(SUM(order_count), 0) as orders
+        FROM orders_funnel
+        WHERE date >= ? AND date <= ? AND order_count > 0
+        GROUP BY date
+        ORDER BY date
+      `, [from, to]);
+
+      const dailyOrders: Record<string, number> = {};
+      let orders = 0;
+      for (const row of funnelRows) {
+        dailyOrders[row.date] = row.orders;
+        orders += row.orders;
+      }
+
+      if (orders === 0) {
+        const fallbackRows = await pgRows<{ date: string; orders: number }>(`
+          SELECT SUBSTR(date, 1, 10) as date, COUNT(*) as orders FROM shipment_orders
+          WHERE date >= ? AND date <= ? || 'T23:59:59'
+          GROUP BY SUBSTR(date, 1, 10)
+          ORDER BY date
+        `, [from, to]);
+        for (const row of fallbackRows) {
+          dailyOrders[row.date] = row.orders;
+          orders += row.orders;
+        }
+      } else {
+        const totalDays = Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86400000) + 1;
+        if (funnelRows.length < totalDays) {
+          const missingRows = await pgRows<{ date: string; orders: number }>(`
+            SELECT SUBSTR(date, 1, 10) as date, COUNT(*) as orders FROM shipment_orders
+            WHERE date >= ? AND date <= ? || 'T23:59:59'
+            AND SUBSTR(date, 1, 10) NOT IN (
+              SELECT date FROM orders_funnel WHERE date >= ? AND date <= ? AND order_count > 0
+            )
+            GROUP BY SUBSTR(date, 1, 10)
+            ORDER BY date
+          `, [from, to, from, to]);
+          for (const row of missingRows) {
+            dailyOrders[row.date] = row.orders;
+            orders += row.orders;
+          }
+        }
+      }
+
+      const realRow = await pgGet<{ deliveries: number; returns: number; buyouts: number }>(`
+        SELECT
+          COALESCE(SUM(CASE WHEN r.supplier_oper_name = 'Логистика' THEN r.delivery_amount ELSE 0 END), 0) as deliveries,
+          COALESCE(SUM(CASE WHEN r.supplier_oper_name = 'Логистика' THEN r.return_amount ELSE 0 END), 0) as returns,
+          COALESCE(SUM(CASE WHEN r.supplier_oper_name = 'Продажа' THEN r.quantity ELSE 0 END), 0) as buyouts
+        FROM realization r
+        WHERE r.rr_dt >= ? AND r.rr_dt <= ?
+        AND r.supplier_oper_name IN ('Логистика', 'Продажа')
+        ${dedup.sql}
+      `, [from, to, ...dedup.params]);
+
+      const deliveries = realRow?.deliveries || 0;
+      const returns = realRow?.returns || 0;
+      return NextResponse.json({
+        orders,
+        dailyOrders,
+        deliveries,
+        returns,
+        returnRate: deliveries > 0 ? returns / deliveries : 0,
+        buyouts: realRow?.buyouts || 0,
+      });
+    }
+
     const db = getDb();
     const dedup = getExcludeDailyFilter(db, "rr_dt", "r");
 
-    // Заказы из воронки продаж (приоритет), fallback на shipment_orders
-    const funnelRow = db.prepare(`
-      SELECT COALESCE(SUM(order_count), 0) as orders
+    // Заказы из воронки продаж (приоритет), fallback на shipment_orders.
+    // Воронка даёт полный дневной объём заказов WB без фильтра отмен.
+    const funnelRows = db.prepare(`
+      SELECT date, COALESCE(SUM(order_count), 0) as orders
       FROM orders_funnel
       WHERE date >= ? AND date <= ? AND order_count > 0
-    `).get(from, to) as { orders: number };
+      GROUP BY date
+      ORDER BY date
+    `).all(from, to) as { date: string; orders: number }[];
 
-    // Если funnel пуст или частичен — дополняем из shipment_orders
-    let orders = funnelRow.orders;
+    const dailyOrders: Record<string, number> = {};
+    let orders = 0;
+    for (const row of funnelRows) {
+      dailyOrders[row.date] = row.orders;
+      orders += row.orders;
+    }
+
+    // Если funnel пуст или частичен — дополняем пропущенные дни из shipment_orders.
+    // Здесь тоже считаем все строки, без фильтра is_cancel, чтобы не занижать спрос.
     if (orders === 0) {
-      const fallback = db.prepare(`
-        SELECT COUNT(*) as cnt FROM shipment_orders
+      const fallbackRows = db.prepare(`
+        SELECT SUBSTR(date, 1, 10) as date, COUNT(*) as orders FROM shipment_orders
         WHERE date >= ? AND date <= ? || 'T23:59:59'
-      `).get(from, to) as { cnt: number };
-      orders = fallback.cnt;
+        GROUP BY SUBSTR(date, 1, 10)
+        ORDER BY date
+      `).all(from, to) as { date: string; orders: number }[];
+      for (const row of fallbackRows) {
+        dailyOrders[row.date] = row.orders;
+        orders += row.orders;
+      }
     } else {
       // Проверяем: все ли дни покрыты funnel
-      const funnelDays = db.prepare(`
-        SELECT COUNT(*) as cnt FROM orders_funnel
-        WHERE date >= ? AND date <= ? AND order_count > 0
-      `).get(from, to) as { cnt: number };
       const totalDays = Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86400000) + 1;
-      if (funnelDays.cnt < totalDays) {
+      if (funnelRows.length < totalDays) {
         // Дополняем пропущенные дни из shipment_orders
-        const missingDates = db.prepare(`
-          SELECT COUNT(*) as cnt FROM shipment_orders
+        const missingRows = db.prepare(`
+          SELECT SUBSTR(date, 1, 10) as date, COUNT(*) as orders FROM shipment_orders
           WHERE date >= ? AND date <= ? || 'T23:59:59'
           AND SUBSTR(date, 1, 10) NOT IN (
             SELECT date FROM orders_funnel WHERE date >= ? AND date <= ? AND order_count > 0
           )
-        `).get(from, to, from, to) as { cnt: number };
-        orders += missingDates.cnt;
+          GROUP BY SUBSTR(date, 1, 10)
+          ORDER BY date
+        `).all(from, to, from, to) as { date: string; orders: number }[];
+        for (const row of missingRows) {
+          dailyOrders[row.date] = row.orders;
+          orders += row.orders;
+        }
       }
     }
 
@@ -78,6 +166,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       orders,
+      dailyOrders,
       deliveries: realRow.deliveries,
       returns: realRow.returns,
       returnRate,

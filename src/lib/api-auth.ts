@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyToken } from "@/lib/auth";
-import { getUserById, initShipmentTables } from "@/lib/shipment-db";
+import { getUserById, getUserByIdPg, initShipmentTables, initShipmentTablesPg } from "@/lib/shipment-db";
+import { isPostgresEnabled } from "@/lib/postgres";
 
-export function requireAdmin(req: NextRequest): NextResponse | null {
+export async function requireAdmin(req: NextRequest): Promise<NextResponse | null> {
   const token = req.cookies.get("mphub-token")?.value;
   if (!token) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -13,8 +14,9 @@ export function requireAdmin(req: NextRequest): NextResponse | null {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  initShipmentTables();
-  const user = getUserById(payload.userId);
+  const user = isPostgresEnabled()
+    ? (await initShipmentTablesPg(), await getUserByIdPg(payload.userId))
+    : (initShipmentTables(), getUserById(payload.userId));
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

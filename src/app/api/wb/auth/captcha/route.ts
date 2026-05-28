@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { cdpSubmitCaptcha } from "@/lib/wb-auth-cdp";
+import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 
 /**
  * POST /api/wb/auth/captcha — Submit captcha solution (CDP approach)
  */
 
 export async function POST(req: NextRequest) {
-  const authError = requireAdmin(req);
+  const authError = await requireAdmin(req);
   if (authError) return authError;
+  const readonlyError = localReadonlyGuard("WB cabinet captcha submission");
+  if (readonlyError) return readonlyError;
 
   try {
     const { captcha } = await req.json();

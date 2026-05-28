@@ -5,6 +5,7 @@
 
 import Database from "better-sqlite3";
 import path from "path";
+import { isPostgresEnabled, pgGet, pgRows } from "@/lib/postgres";
 
 const DB_PATH = path.join(process.cwd(), "data", "finance.db");
 
@@ -111,6 +112,8 @@ export interface ReviewStat {
 // ─── Init ────────────────────────────────────────────────────
 
 export function initReviewTables(): void {
+  if (isPostgresEnabled()) return;
+
   const d = getDb();
 
   d.exec(`
@@ -270,6 +273,18 @@ export function getSyncStatusDb(): SyncStatus {
   return row;
 }
 
+export async function getSyncStatusDbPg(): Promise<SyncStatus> {
+  try {
+    const row = await pgGet<SyncStatus>(`SELECT status, total, loaded, message FROM sync_status WHERE id = 1`);
+    return row || { status: "idle", total: 0, loaded: 0, message: "" };
+  } catch (error) {
+    if (error instanceof Error && /relation .* does not exist/i.test(error.message)) {
+      return { status: "idle", total: 0, loaded: 0, message: "" };
+    }
+    throw error;
+  }
+}
+
 // ─── Accounts CRUD ───────────────────────────────────────────
 
 export function getReviewAccounts(): ReviewAccount[] {
@@ -278,10 +293,18 @@ export function getReviewAccounts(): ReviewAccount[] {
   return d.prepare(`SELECT * FROM review_accounts ORDER BY id`).all() as ReviewAccount[];
 }
 
+export async function getReviewAccountsPg(): Promise<ReviewAccount[]> {
+  return await pgRows<ReviewAccount>(`SELECT * FROM review_accounts ORDER BY id`);
+}
+
 export function getReviewAccountById(id: number): ReviewAccount | null {
   const d = getDb();
 
   return (d.prepare(`SELECT * FROM review_accounts WHERE id = ?`).get(id) as ReviewAccount) || null;
+}
+
+export async function getReviewAccountByIdPg(id: number): Promise<ReviewAccount | null> {
+  return await pgGet<ReviewAccount>(`SELECT * FROM review_accounts WHERE id = ?`, [id]) || null;
 }
 
 export function createReviewAccount(data: { name: string; api_key: string; store_name?: string; inn?: string; supplier_id?: string }): number {
@@ -403,9 +426,61 @@ export function getReviews(filters: ReviewFilters): { rows: Review[]; total: num
 
   const rows = d.prepare(`
     SELECT * FROM reviews WHERE ${whereClause}
-    ORDER BY ${sortBy} ${sortDir}
+    ORDER BY ${sortBy} ${sortDir}, id ${sortDir}
     LIMIT ? OFFSET ?
   `).all(...params, perPage, offset) as Review[];
+
+  return { rows, total };
+}
+
+function buildReviewsWhere(filters: ReviewFilters, ilike: boolean): { whereClause: string; params: unknown[] } {
+  const where: string[] = ["1=1"];
+  const params: unknown[] = [];
+
+  if (filters.account_id) { where.push("account_id = ?"); params.push(filters.account_id); }
+  if (filters.date_from) { where.push("date >= ?"); params.push(filters.date_from); }
+  if (filters.date_to) { where.push("date <= ?"); params.push(filters.date_to); }
+  if (filters.rating) {
+    const ratings = String(filters.rating).split(",").map(Number).filter(Boolean);
+    if (ratings.length === 1) { where.push("rating = ?"); params.push(ratings[0]); }
+    else if (ratings.length > 1) { where.push(`rating IN (${ratings.map(() => "?").join(",")})`); params.push(...ratings); }
+  }
+  if (filters.status) { where.push("status = ?"); params.push(filters.status); }
+  if (filters.complaint_status) { where.push("complaint_status = ?"); params.push(filters.complaint_status); }
+  if (filters.is_hidden !== undefined) { where.push("is_hidden = ?"); params.push(filters.is_hidden); }
+  if (filters.is_updated !== undefined) { where.push("is_updated = ?"); params.push(filters.is_updated); }
+  if (filters.is_excluded_rating !== undefined) { where.push("is_excluded_rating = ?"); params.push(filters.is_excluded_rating); }
+  if (filters.purchase_type) { where.push("purchase_type = ?"); params.push(filters.purchase_type); }
+  if (filters.wb_review_id) { where.push("wb_review_id = ?"); params.push(filters.wb_review_id); }
+  if (filters.buyer_chat_id) { where.push("buyer_chat_id = ?"); params.push(filters.buyer_chat_id); }
+
+  const likeOperator = ilike ? "ILIKE" : "LIKE";
+  if (filters.search_product) { where.push(`product_name ${likeOperator} ?`); params.push(`%${filters.search_product}%`); }
+  if (filters.search_article) { where.push(`product_article ${likeOperator} ?`); params.push(`%${filters.search_article}%`); }
+  if (filters.search_text) { where.push(`review_text ${likeOperator} ?`); params.push(`%${filters.search_text}%`); }
+  if (filters.search_buyer) { where.push(`buyer_name ${likeOperator} ?`); params.push(`%${filters.search_buyer}%`); }
+  if (filters.search_comment) { where.push(`comment ${likeOperator} ?`); params.push(`%${filters.search_comment}%`); }
+
+  return { whereClause: where.join(" AND "), params };
+}
+
+export async function getReviewsPg(filters: ReviewFilters): Promise<{ rows: Review[]; total: number }> {
+  const { whereClause, params } = buildReviewsWhere(filters, true);
+  const countRow = await pgGet<{ cnt: number }>(`SELECT COUNT(*) as cnt FROM reviews WHERE ${whereClause}`, params);
+  const total = countRow?.cnt || 0;
+
+  const allowedSort = ["date", "rating", "price", "status", "product_name", "buyer_name", "store_name", "pickup_point"];
+  const sortBy = allowedSort.includes(filters.sort_by || "") ? filters.sort_by : "date";
+  const sortDir = filters.sort_dir === "asc" ? "ASC" : "DESC";
+  const perPage = filters.per_page || 25;
+  const page = filters.page || 1;
+  const offset = (page - 1) * perPage;
+
+  const rows = await pgRows<Review>(`
+    SELECT * FROM reviews WHERE ${whereClause}
+    ORDER BY ${sortBy} ${sortDir}, id ${sortDir}
+    LIMIT ? OFFSET ?
+  `, [...params, perPage, offset]);
 
   return { rows, total };
 }
@@ -419,6 +494,13 @@ export function getReviewsCount(accountId?: number): number {
   }
   const row = d.prepare(`SELECT COUNT(*) as cnt FROM reviews`).get() as { cnt: number };
   return row.cnt;
+}
+
+export async function getReviewsCountPg(accountId?: number): Promise<number> {
+  const row = accountId
+    ? await pgGet<{ cnt: number }>(`SELECT COUNT(*) as cnt FROM reviews WHERE account_id = ?`, [accountId])
+    : await pgGet<{ cnt: number }>(`SELECT COUNT(*) as cnt FROM reviews`);
+  return row?.cnt || 0;
 }
 
 export function getReviewById(id: number): Review | null {
@@ -471,6 +553,37 @@ export function getReviewStats(accountId?: number, period?: string): ReviewStat[
   return rows;
 }
 
+export async function getReviewStatsPg(accountId?: number, period?: string): Promise<ReviewStat[]> {
+  let dateFrom: string;
+  let groupExpr: string;
+
+  if (period === "year") {
+    dateFrom = "CURRENT_DATE - INTERVAL '365 days'";
+    groupExpr = "TO_CHAR(date::date, 'IYYY-IW')";
+  } else if (period === "half") {
+    dateFrom = "CURRENT_DATE - INTERVAL '180 days'";
+    groupExpr = "TO_CHAR(date::date, 'IYYY-IW')";
+  } else {
+    dateFrom = "CURRENT_DATE - INTERVAL '30 days'";
+    groupExpr = "date::date";
+  }
+
+  const accountFilter = accountId ? "AND account_id = ?" : "";
+  const params = accountId ? [accountId] : [];
+
+  return await pgRows<ReviewStat>(`
+    SELECT
+      MIN(date::date)::text as date,
+      COUNT(*) as total_reviews,
+      SUM(CASE WHEN rating <= 3 THEN 1 ELSE 0 END) as negative_reviews,
+      SUM(CASE WHEN complaint_status IS NOT NULL THEN 1 ELSE 0 END) as complaints
+    FROM reviews
+    WHERE date::date >= ${dateFrom} ${accountFilter}
+    GROUP BY ${groupExpr}
+    ORDER BY date
+  `, params);
+}
+
 export interface ComplaintStat {
   date: string;
   submitted: number;
@@ -510,6 +623,36 @@ export function getComplaintStats(accountId?: number, period?: string): Complain
   `).all(...params) as ComplaintStat[];
 
   return rows;
+}
+
+export async function getComplaintStatsPg(accountId?: number, period?: string): Promise<ComplaintStat[]> {
+  let dateFrom: string;
+  let groupExpr: string;
+
+  if (period === "year") {
+    dateFrom = "CURRENT_DATE - INTERVAL '365 days'";
+    groupExpr = "TO_CHAR(created_at::date, 'IYYY-IW')";
+  } else if (period === "half") {
+    dateFrom = "CURRENT_DATE - INTERVAL '180 days'";
+    groupExpr = "TO_CHAR(created_at::date, 'IYYY-IW')";
+  } else {
+    dateFrom = "CURRENT_DATE - INTERVAL '30 days'";
+    groupExpr = "created_at::date";
+  }
+
+  const accountFilter = accountId ? "AND account_id = ?" : "";
+  const params = accountId ? [accountId] : [];
+
+  return await pgRows<ComplaintStat>(`
+    SELECT
+      MIN(created_at::date)::text as date,
+      COUNT(DISTINCT wb_review_id) as submitted,
+      COUNT(DISTINCT CASE WHEN status = 'approved' THEN wb_review_id END) as approved
+    FROM review_complaints
+    WHERE status IN ('submitted', 'approved', 'rejected') AND created_at::date >= ${dateFrom} ${accountFilter}
+    GROUP BY ${groupExpr}
+    ORDER BY date
+  `, params);
 }
 
 // ─── Ensure real account ─────────────────────────────────────
@@ -805,10 +948,30 @@ export function getComplaintsByAccount(accountId?: number, status?: string): Rev
   `).all(...params) as ReviewComplaint[];
 }
 
+export async function getComplaintsByAccountPg(accountId?: number, status?: string): Promise<ReviewComplaint[]> {
+  const where: string[] = ["1=1"];
+  const params: unknown[] = [];
+  if (accountId) { where.push("account_id = ?"); params.push(accountId); }
+  if (status) { where.push("status = ?"); params.push(status); }
+  return await pgRows<ReviewComplaint>(`
+    SELECT * FROM review_complaints
+    WHERE ${where.join(" AND ")}
+    ORDER BY created_at DESC
+    LIMIT 500
+  `, params);
+}
+
 export function getComplaintByReviewId(reviewId: number): ReviewComplaint | null {
   const d = getDb();
 
   return (d.prepare(`SELECT * FROM review_complaints WHERE review_id = ? ORDER BY created_at DESC LIMIT 1`).get(reviewId) as ReviewComplaint) || null;
+}
+
+export async function getComplaintByReviewIdPg(reviewId: number): Promise<ReviewComplaint | null> {
+  return await pgGet<ReviewComplaint>(
+    `SELECT * FROM review_complaints WHERE review_id = ? ORDER BY created_at DESC LIMIT 1`,
+    [reviewId]
+  ) || null;
 }
 
 export function getTodayComplaintsCount(accountId: number): number {

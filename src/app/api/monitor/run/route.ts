@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireMonitorAdmin } from "@/lib/monitor-auth";
 
 export async function POST(req: NextRequest) {
-  const authError = requireMonitorAdmin(req);
+  const authError = await requireMonitorAdmin(req);
   if (authError) return authError;
 
   return NextResponse.json({

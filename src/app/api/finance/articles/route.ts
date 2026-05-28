@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { getDb } from "@/modules/finance/lib/queries";
+import { isPostgresEnabled, pgRows } from "@/lib/postgres";
 
 function cogsCostSql(alias: string, dateColumn: string): string {
   return `COALESCE((
@@ -19,7 +20,7 @@ function cogsCostSql(alias: string, dateColumn: string): string {
  * Returns per-article P&L breakdown for the given period.
  */
 export async function GET(request: NextRequest) {
-  const authError = requireAdmin(request);
+  const authError = await requireAdmin(request);
   if (authError) return authError;
 
   const { searchParams } = new URL(request.url);
@@ -27,10 +28,8 @@ export async function GET(request: NextRequest) {
   const dateTo = searchParams.get("to") || "2026-03-22";
 
   try {
-    const d = getDb();
-
     // Get all articles with sales in period
-    const articles = d.prepare(`
+    const articlesSql = `
       SELECT nm_id, sa_name,
         SUM(CASE WHEN supplier_oper_name = 'Продажа' THEN quantity ELSE 0 END) as sales_qty,
         SUM(CASE WHEN supplier_oper_name = 'Возврат' THEN quantity ELSE 0 END) as returns_qty,
@@ -44,27 +43,36 @@ export async function GET(request: NextRequest) {
       WHERE supplier_oper_name IN ('Продажа', 'Возврат')
         AND sale_dt >= ? AND sale_dt <= ?
         AND nm_id > 0
-      GROUP BY nm_id
+      GROUP BY nm_id, sa_name
       ORDER BY sales_rpwd DESC
-    `).all(dateFrom, dateTo) as Record<string, number>[];
+    `;
+    const articles = isPostgresEnabled()
+      ? await pgRows<Record<string, number>>(articlesSql, [dateFrom, dateTo])
+      : getDb().prepare(articlesSql).all(dateFrom, dateTo) as Record<string, number>[];
 
     // Logistics by nm_id (from rr_dt)
-    const logistics = d.prepare(`
+    const logisticsSql = `
       SELECT nm_id,
         SUM(CASE WHEN supplier_oper_name = 'Логистика' THEN delivery_rub ELSE 0 END) as logistics
       FROM realization
       WHERE rr_dt >= ? AND rr_dt <= ? AND nm_id > 0
       GROUP BY nm_id
-    `).all(dateFrom, dateTo) as Record<string, number>[];
+    `;
+    const logistics = isPostgresEnabled()
+      ? await pgRows<Record<string, number>>(logisticsSql, [dateFrom, dateTo])
+      : getDb().prepare(logisticsSql).all(dateFrom, dateTo) as Record<string, number>[];
     const logMap = Object.fromEntries(logistics.map(r => [r.nm_id, r.logistics]));
 
     // Ad spend per article (точные данные из advertising с nm_id)
-    const adsByArticle = d.prepare(`
+    const adsByArticleSql = `
       SELECT nm_id, SUM(amount) as total
       FROM advertising
       WHERE date >= ? AND date <= ? AND nm_id > 0
       GROUP BY nm_id
-    `).all(dateFrom, dateTo) as { nm_id: number; total: number }[];
+    `;
+    const adsByArticle = isPostgresEnabled()
+      ? await pgRows<{ nm_id: number; total: number }>(adsByArticleSql, [dateFrom, dateTo])
+      : getDb().prepare(adsByArticleSql).all(dateFrom, dateTo) as { nm_id: number; total: number }[];
     const adMap = Object.fromEntries(adsByArticle.map(r => [r.nm_id, r.total]));
 
     const result = articles.map(a => {

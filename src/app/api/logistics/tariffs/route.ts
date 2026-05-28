@@ -4,6 +4,7 @@ import path from "path";
 import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { getWbApiKey } from "@/lib/wb-api-key";
+import { isPostgresEnabled, isPostgresReadonlyConnection, pgGet, pgRows } from "@/lib/postgres";
 
 const DB_PATH = path.join(process.cwd(), "data", "finance.db");
 const ORDER_WINDOW_DAYS = 90;
@@ -84,6 +85,20 @@ function readCache(date: string, cargoType: string): TariffCacheRow | null {
   return row || null;
 }
 
+async function readCachePg(date: string, cargoType: string): Promise<TariffCacheRow | null> {
+  try {
+    const row = await pgGet<TariffCacheRow>(`
+      SELECT date, cargo_type, payload_json, synced_at
+      FROM logistics_tariff_cache
+      WHERE date = ? AND cargo_type = ?
+    `, [date, cargoType]);
+    return row || null;
+  } catch (error) {
+    if (error instanceof Error && /relation .* does not exist/i.test(error.message)) return null;
+    throw error;
+  }
+}
+
 function writeCache(date: string, cargoType: string, payload: unknown) {
   const db = getDb();
   db.prepare(`
@@ -94,6 +109,19 @@ function writeCache(date: string, cargoType: string, payload: unknown) {
       synced_at = excluded.synced_at
   `).run(date, cargoType, JSON.stringify(payload), new Date().toISOString());
   db.close();
+}
+
+async function writeCachePg(date: string, cargoType: string, payload: unknown): Promise<void> {
+  if (isPostgresReadonlyConnection()) return;
+
+  await pgGet(`
+    INSERT INTO logistics_tariff_cache (date, cargo_type, payload_json, synced_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(date, cargo_type) DO UPDATE SET
+      payload_json = EXCLUDED.payload_json,
+      synced_at = EXCLUDED.synced_at
+    RETURNING date
+  `, [date, cargoType, JSON.stringify(payload), new Date().toISOString()]);
 }
 
 function num(value: unknown): number | null {
@@ -259,6 +287,39 @@ function getSalesByWarehouse(): SalesMaps {
   return { exact, family };
 }
 
+async function getSalesByWarehousePg(): Promise<SalesMaps> {
+  const rows = await pgRows<WarehouseOrderRow>(`
+    WITH latest AS (
+      SELECT MAX(SUBSTR(date, 1, 10)) AS max_order_date
+      FROM shipment_orders
+    ),
+    orders AS (
+      SELECT
+        TRIM(COALESCE(warehouse, '')) AS warehouse,
+        SUBSTR(date, 1, 10) AS order_date
+      FROM shipment_orders
+      WHERE TRIM(COALESCE(warehouse, '')) != ''
+    )
+    SELECT warehouse, COUNT(*) AS order_qty
+    FROM orders, latest
+    WHERE latest.max_order_date IS NOT NULL
+      AND order_date::date >= latest.max_order_date::date - (? || ' days')::interval
+    GROUP BY warehouse
+  `, [ORDER_WINDOW_DAYS]);
+
+  const exact = new Map<string, number>();
+  const family = new Map<string, number>();
+  for (const row of rows) {
+    const qty = Number(row.order_qty) || 0;
+    if (qty <= 0) continue;
+    const exactKey = normalizeWarehouseName(row.warehouse);
+    const familyKey = getWarehouseFamilyKey(row.warehouse);
+    exact.set(exactKey, (exact.get(exactKey) || 0) + qty);
+    family.set(familyKey, (family.get(familyKey) || 0) + qty);
+  }
+  return { exact, family };
+}
+
 function normalizeWarehouse(row: unknown, cargoType: "box" | "pallet") {
   const source = row && typeof row === "object" ? row as Record<string, unknown> : {};
   if (cargoType === "pallet") {
@@ -315,8 +376,7 @@ function normalizeTariffWarehouse(row: WbAcceptanceRow) {
   };
 }
 
-function withSalesRanking<T extends { warehouseName: string }>(rows: T[]) {
-  const salesByWarehouse = getSalesByWarehouse();
+function withSalesRanking<T extends { warehouseName: string }>(rows: T[], salesByWarehouse: SalesMaps) {
   const rankedRows = rows
     .filter((row) => row.warehouseName)
     .map((row) => {
@@ -381,7 +441,7 @@ function withSalesRanking<T extends { warehouseName: string }>(rows: T[]) {
     })
 }
 
-function normalizeAcceptancePayload(payload: WbAcceptanceRow[], date: string, cargoType: "box" | "pallet", source: string, syncedAt?: string) {
+function normalizeAcceptancePayload(payload: WbAcceptanceRow[], date: string, cargoType: "box" | "pallet", source: string, syncedAt: string | undefined, salesByWarehouse: SalesMaps) {
   const boxTypeID = cargoType === "pallet" ? 5 : 2;
   const byWarehouse = new Map<string, ReturnType<typeof normalizeTariffWarehouse>>();
 
@@ -414,16 +474,16 @@ function normalizeAcceptancePayload(payload: WbAcceptanceRow[], date: string, ca
     salesWindowDays: ORDER_WINDOW_DAYS,
     dtNext: null,
     dtTillMax: null,
-    warehouses: withSalesRanking(Array.from(byWarehouse.values())),
+    warehouses: withSalesRanking(Array.from(byWarehouse.values()), salesByWarehouse),
   };
 }
 
-function normalizeStockPayload(payload: WbTariffsResponse, date: string, cargoType: "box" | "pallet", source: string, syncedAt?: string) {
+function normalizeStockPayload(payload: WbTariffsResponse, date: string, cargoType: "box" | "pallet", source: string, syncedAt: string | undefined, salesByWarehouse: SalesMaps) {
   const data = payload.response?.data || {};
   const warehouses = Array.isArray(data.warehouseList)
     ? withSalesRanking(data.warehouseList
       .map((row) => normalizeWarehouse(row, cargoType))
-      .filter((row) => row.warehouseName))
+      .filter((row) => row.warehouseName), salesByWarehouse)
     : [];
 
   return {
@@ -440,7 +500,7 @@ function normalizeStockPayload(payload: WbTariffsResponse, date: string, cargoTy
 }
 
 export async function GET(request: NextRequest) {
-  const authError = requireAdmin(request);
+  const authError = await requireAdmin(request);
   if (authError) return authError;
 
   try {
@@ -448,21 +508,30 @@ export async function GET(request: NextRequest) {
     const date = searchParams.get("date") || todayMsk();
     const cargoType = searchParams.get("cargoType") === "pallet" ? "pallet" : "box";
     const refresh = searchParams.get("refresh") === "1";
+    const pgMode = isPostgresEnabled();
+    const salesByWarehouse = pgMode ? await getSalesByWarehousePg() : getSalesByWarehouse();
 
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       return NextResponse.json({ error: "date must be YYYY-MM-DD" }, { status: 400 });
     }
 
-    const cached = refresh ? null : readCache(date, cargoType);
+    const cached = refresh ? null : (pgMode ? await readCachePg(date, cargoType) : readCache(date, cargoType));
     if (cached) {
-      return NextResponse.json(normalizeAcceptancePayload(JSON.parse(cached.payload_json), date, cargoType, "cache", cached.synced_at));
+      return NextResponse.json(normalizeAcceptancePayload(JSON.parse(cached.payload_json), date, cargoType, "cache", cached.synced_at, salesByWarehouse));
+    }
+
+    if (pgMode && isPostgresReadonlyConnection()) {
+      return NextResponse.json(
+        { error: "WB tariff live fetch is disabled in local PostgreSQL readonly mode. Localhost reads cached production data only." },
+        { status: 403 }
+      );
     }
 
     const apiKey = getWbApiKey();
     if (!apiKey) {
-      const fallback = readCache(date, cargoType);
+      const fallback = pgMode ? await readCachePg(date, cargoType) : readCache(date, cargoType);
       if (fallback) {
-        return NextResponse.json(normalizeAcceptancePayload(JSON.parse(fallback.payload_json), date, cargoType, "cache", fallback.synced_at));
+        return NextResponse.json(normalizeAcceptancePayload(JSON.parse(fallback.payload_json), date, cargoType, "cache", fallback.synced_at, salesByWarehouse));
       }
       return NextResponse.json({ error: "WB API key missing" }, { status: 401 });
     }
@@ -473,9 +542,9 @@ export async function GET(request: NextRequest) {
     });
 
     if (!res.ok) {
-      const fallback = readCache(date, cargoType);
+      const fallback = pgMode ? await readCachePg(date, cargoType) : readCache(date, cargoType);
       if (fallback) {
-        const normalized = normalizeAcceptancePayload(JSON.parse(fallback.payload_json), date, cargoType, "cache", fallback.synced_at);
+        const normalized = normalizeAcceptancePayload(JSON.parse(fallback.payload_json), date, cargoType, "cache", fallback.synced_at, salesByWarehouse);
         return NextResponse.json({ ...normalized, warning: `WB API ${res.status}` });
       }
       const body = await res.text().catch(() => "");
@@ -483,8 +552,12 @@ export async function GET(request: NextRequest) {
     }
 
     const payload = await res.json() as WbAcceptanceRow[];
-    writeCache(date, cargoType, payload);
-    return NextResponse.json(normalizeAcceptancePayload(payload, date, cargoType, "wb"));
+    if (pgMode) {
+      await writeCachePg(date, cargoType, payload);
+    } else {
+      writeCache(date, cargoType, payload);
+    }
+    return NextResponse.json(normalizeAcceptancePayload(payload, date, cargoType, "wb", undefined, salesByWarehouse));
   } catch (error) {
     return apiError(error);
   }

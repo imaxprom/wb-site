@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { getDb } from "@/modules/finance/lib/queries";
+import { isPostgresEnabled, pgGet, pgRows } from "@/lib/postgres";
 
 interface RealizationBarcodeRow {
   barcode: string;
@@ -53,6 +54,17 @@ function tableExists(db: ReturnType<typeof getDb>, tableName: string): boolean {
   return Boolean(row);
 }
 
+async function pgTableExists(tableName: string): Promise<boolean> {
+  const row = await pgGet<{ exists: boolean }>(`
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = ?
+    ) AS exists
+  `, [tableName]);
+  return Boolean(row?.exists);
+}
+
 function isBetterCandidate(
   candidate: BarcodeCandidate,
   current: BarcodeCandidate | undefined
@@ -84,19 +96,22 @@ function isBetterCandidate(
  * GET /api/finance/barcodes — unique barcodes with nm_id, sa_name, ts_name
  */
 export async function GET(request: NextRequest) {
-  const authError = requireAdmin(request);
+  const authError = await requireAdmin(request);
   if (authError) return authError;
 
   try {
-    const d = getDb();
+    const d = isPostgresEnabled() ? null : getDb();
 
     const stockByNmBarcode = new Map<string, ShipmentStockRow>();
-    if (tableExists(d, "shipment_stock")) {
-      const stockRows = d.prepare(`
+    if (isPostgresEnabled() ? await pgTableExists("shipment_stock") : tableExists(d!, "shipment_stock")) {
+      const stockSql = `
         SELECT article_wb, barcode, article_seller, size
         FROM shipment_stock
         WHERE barcode != '' AND article_wb != ''
-      `).all() as ShipmentStockRow[];
+      `;
+      const stockRows = isPostgresEnabled()
+        ? await pgRows<ShipmentStockRow>(stockSql)
+        : d!.prepare(stockSql).all() as ShipmentStockRow[];
 
       for (const row of stockRows) {
         const articleWb = clean(row.article_wb);
@@ -109,12 +124,15 @@ export async function GET(request: NextRequest) {
     }
 
     const productSizeByNmBarcode = new Map<string, string>();
-    if (tableExists(d, "shipment_products")) {
-      const productRows = d.prepare(`
+    if (isPostgresEnabled() ? await pgTableExists("shipment_products") : tableExists(d!, "shipment_products")) {
+      const productsSql = `
         SELECT article_wb, sizes_json
         FROM shipment_products
         WHERE article_wb != '' AND sizes_json IS NOT NULL AND sizes_json != ''
-      `).all() as ShipmentProductRow[];
+      `;
+      const productRows = isPostgresEnabled()
+        ? await pgRows<ShipmentProductRow>(productsSql)
+        : d!.prepare(productsSql).all() as ShipmentProductRow[];
 
       for (const product of productRows) {
         let sizes: unknown;
@@ -134,7 +152,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const realizationRows = d.prepare(`
+    const realizationSql = `
       SELECT
         barcode,
         nm_id,
@@ -152,7 +170,10 @@ export async function GET(request: NextRequest) {
       FROM realization
       WHERE barcode != '' AND nm_id > 0
       GROUP BY barcode, nm_id, TRIM(COALESCE(sa_name, '')), TRIM(COALESCE(ts_name, ''))
-    `).all() as RealizationBarcodeRow[];
+    `;
+    const realizationRows = isPostgresEnabled()
+      ? await pgRows<RealizationBarcodeRow>(realizationSql)
+      : d!.prepare(realizationSql).all() as RealizationBarcodeRow[];
 
     const byBarcode = new Map<string, BarcodeCandidate>();
     for (const row of realizationRows) {

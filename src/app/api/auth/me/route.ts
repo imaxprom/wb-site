@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { initShipmentTables, getUserById } from "@/lib/shipment-db";
+import { getUserById, getUserByIdPg, initShipmentTables, initShipmentTablesPg } from "@/lib/shipment-db";
 import { verifyToken } from "@/lib/auth";
+import { isPostgresEnabled } from "@/lib/postgres";
 
 initShipmentTables();
 
@@ -15,7 +16,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const user = getUserById(payload.userId);
+  const user = isPostgresEnabled()
+    ? (await initShipmentTablesPg(), await getUserByIdPg(payload.userId))
+    : getUserById(payload.userId);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

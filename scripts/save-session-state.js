@@ -3,8 +3,8 @@
  * Generate SESSION_STATE.md for a quick restart map.
  *
  * This file is intentionally a snapshot, not the source of truth.
- * It reads local SQLite directly and, when SSH is available, verifies
- * production SQLite/runtime state on wb-site.
+ * It reads local legacy SQLite directly and, when SSH is available, verifies
+ * production PostgreSQL/runtime state on wb-site.
  */
 
 const Database = require("better-sqlite3");
@@ -67,6 +67,7 @@ function dbSnapshot(dbPath) {
 
   const snapshot = {
     ok: true,
+    engine: "sqlite-legacy",
     shipment_products: countTable(db, "shipment_products"),
     shipment_stock: countTable(db, "shipment_stock"),
     shipment_orders: tableExists(db, "shipment_orders")
@@ -75,6 +76,7 @@ function dbSnapshot(dbPath) {
     paid_storage: tableExists(db, "paid_storage")
       ? safeGet(db, "SELECT COUNT(*) AS c, MAX(date) AS max_date FROM paid_storage")
       : null,
+    warehouse_ready_stock: countTable(db, "warehouse_ready_stock"),
     warehouse_remains_volume: tableExists(db, "warehouse_remains_volume")
       ? safeGet(db, "SELECT COUNT(*) AS c, MAX(synced_at) AS max_synced FROM warehouse_remains_volume")
       : null,
@@ -96,13 +98,57 @@ function dbSnapshot(dbPath) {
 }
 
 const REMOTE_DB_SCRIPT = `
-const Database = require("better-sqlite3");
 const fs = require("fs");
+${dash.toString()}
+async function pgSnapshot() {
+  const { Pool } = require("pg");
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    max: 2,
+    application_name: "mphub-session-state",
+  });
+  const one = async (sql) => {
+    const result = await pool.query(sql);
+    return result.rows[0] || null;
+  };
+  try {
+    return {
+      ok: true,
+      engine: "postgres",
+      shipment_products: Number((await one("SELECT COUNT(*) AS c FROM shipment_products")).c),
+      shipment_stock: Number((await one("SELECT COUNT(*) AS c FROM shipment_stock")).c),
+      shipment_orders: await one("SELECT COUNT(*)::int AS c, MAX(date) AS max_date FROM shipment_orders"),
+      paid_storage: await one("SELECT COUNT(*)::int AS c, MAX(date) AS max_date FROM paid_storage"),
+      warehouse_ready_stock: Number((await one("SELECT COUNT(*) AS c FROM warehouse_ready_stock")).c),
+      warehouse_remains_volume: await one("SELECT COUNT(*)::int AS c, MAX(synced_at) AS max_synced FROM warehouse_remains_volume"),
+      warehouse_measurements: await one("SELECT COUNT(*)::int AS c, MAX(synced_at) AS max_synced, MAX(measured_at) AS max_measured FROM warehouse_measurements"),
+      logistics_tariff_cache: await one("SELECT COUNT(*)::int AS c, MAX(synced_at) AS max_synced FROM logistics_tariff_cache"),
+      reviews: Number((await one("SELECT COUNT(*) AS c FROM reviews")).c),
+      review_complaints: Number((await one("SELECT COUNT(*) AS c FROM review_complaints")).c),
+      sync_status: await one("SELECT status, total, loaded, message, updated_at FROM sync_status WHERE id = 1"),
+      reviews_archive_sync_state: await one("SELECT archive_skip, retry_after_until, last_request_at, last_success_at, last_status, last_message, fetched_count, upserted_count, inserted_count FROM reviews_archive_sync_state WHERE id = 1").catch(() => null),
+    };
+  } finally {
+    await pool.end();
+  }
+}
+const Database = require("better-sqlite3");
 ${tableExists.toString()}
 ${safeGet.toString()}
 ${countTable.toString()}
 ${dbSnapshot.toString()}
-console.log(JSON.stringify(dbSnapshot("data/finance.db")));
+(async () => {
+  if (process.env.MPHUB_DB_ENGINE === "postgres") {
+    console.log(JSON.stringify(await pgSnapshot()));
+    return;
+  }
+  const snap = dbSnapshot("data/finance.db");
+  snap.engine = "sqlite";
+  console.log(JSON.stringify(snap));
+})().catch((error) => {
+  console.log(JSON.stringify({ ok: false, error: error.message }));
+  process.exitCode = 1;
+});
 `;
 
 function tryExec(label, fn) {
@@ -122,7 +168,7 @@ function tryExec(label, fn) {
 function productionDbSnapshot() {
   const result = tryExec("production DB snapshot", () => execFileSync(
     "ssh",
-    ["wb-site", `cd ${PROD_DIR} && node`],
+    ["wb-site", `cd ${PROD_DIR} && set -a && . ./.env.production.local && set +a && node`],
     { input: REMOTE_DB_SCRIPT, encoding: "utf8", timeout: 15000 },
   ));
   if (!result.ok) return { ok: false, error: result.error };
@@ -190,6 +236,10 @@ function rsyncDryRunStatus() {
     "--exclude=.npm-cache",
     "--exclude=.deploy-backups",
     "--exclude=.git",
+    "--exclude=.env.production.local",
+    "--exclude=.env.production.local.*",
+    "--exclude=__pycache__/",
+    "--exclude=*.pyc",
     "--exclude=/data/",
     "--exclude=public/data/monitor/status.json",
     "--exclude=public/data/monitor/repair-state.json",
@@ -326,17 +376,20 @@ function formatSnapshot(name, snap) {
   if (!snap?.ok) return `### ${name}\n\n- unavailable: ${dash(snap?.error)}`;
   return `### ${name}
 
+- engine: ${dash(snap.engine || (name.startsWith("Local") ? "sqlite-legacy" : "-"))}
 - shipment_products: ${dash(snap.shipment_products)}
 - shipment_stock: ${dash(snap.shipment_stock)}
 - shipment_orders: ${dash(snap.shipment_orders?.c)}, max date ${dash(snap.shipment_orders?.max_date)}
 - paid_storage: ${dash(snap.paid_storage?.c)}, max date ${dash(snap.paid_storage?.max_date)}
+- warehouse_ready_stock: ${dash(snap.warehouse_ready_stock)}
 - warehouse_remains_volume: ${dash(snap.warehouse_remains_volume?.c)}, max synced ${dash(snap.warehouse_remains_volume?.max_synced)}
 - warehouse_measurements: ${dash(snap.warehouse_measurements?.c)}, max synced ${dash(snap.warehouse_measurements?.max_synced)}, max measured ${dash(snap.warehouse_measurements?.max_measured)}
 - logistics_tariff_cache: ${dash(snap.logistics_tariff_cache?.c)}, max synced ${dash(snap.logistics_tariff_cache?.max_synced)}
 - reviews: ${dash(snap.reviews)}
 - review_complaints: ${dash(snap.review_complaints)}
 - sync_status: ${dash(snap.sync_status?.status)}, total=${dash(snap.sync_status?.total)}, loaded=${dash(snap.sync_status?.loaded)}, updated_at=${dash(snap.sync_status?.updated_at)}
-- sync message: ${dash(snap.sync_status?.message)}`;
+- sync message: ${dash(snap.sync_status?.message)}
+- reviews archive state: skip=${dash(snap.reviews_archive_sync_state?.archive_skip)}, status=${dash(snap.reviews_archive_sync_state?.last_status)}, retry_after=${dash(snap.reviews_archive_sync_state?.retry_after_until)}, last_success=${dash(snap.reviews_archive_sync_state?.last_success_at)}`;
 }
 
 function main() {
@@ -366,7 +419,7 @@ function main() {
 
 Updated: ${now.date} ${now.time} MSK
 
-Purpose: short starting map for a new session. This file is generated by \`npm run save-session-state\`. It is not the source of truth. Always verify with code, production \`ssh wb-site\`, and SQLite before changing behavior.
+Purpose: short starting map for a new session. This file is generated by \`npm run save-session-state\`. It is not the source of truth. Always verify with code, production \`ssh wb-site\`, and the active DB before changing behavior.
 
 ## Read First
 
@@ -381,8 +434,8 @@ Purpose: short starting map for a new session. This file is generated by \`npm r
 
 - Workspace: \`/Users/octopus/Projects/website\`
 - Production: \`ssh wb-site\`, \`${PROD_DIR}\`, public \`https://hub.imaxprom.site\`
-- Stack: Next.js 16, TypeScript, Tailwind CSS 4, SQLite (\`better-sqlite3\`)
-- Main DB: \`data/finance.db\`; production DB is the source of truth for runtime data.
+- Stack: Next.js 16, TypeScript, Tailwind CSS 4, PostgreSQL in production; SQLite remains as legacy/local fallback for specific imports and old snapshots.
+- Main runtime DB: production PostgreSQL on VM 107; local/dev reads it through the configured tunnel when needed. Legacy \`data/finance.db\` is not the production source of truth.
 - Deploy: \`bash scripts/deploy.sh\` → rsync → \`scripts/prod-safe-build.sh\`.
 - Editable handoff notes: \`scripts/session-state-notes.json\` feeds Current Focus and Continue From Here.
 

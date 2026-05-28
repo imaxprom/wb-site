@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { getWbApiKey } from "@/lib/wb-api-key";
+import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 
 /**
  * GET — map of WB warehouses to their federal districts.
@@ -22,8 +23,10 @@ let cache: { data: WarehouseRegion[]; ts: number } | null = null;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 export async function GET(request: NextRequest) {
-  const authError = requireAdmin(request);
+  const authError = await requireAdmin(request);
   if (authError) return authError;
+  const readonlyError = localReadonlyGuard("WB warehouse regions lookup");
+  if (readonlyError) return readonlyError;
 
   if (cache && Date.now() - cache.ts < CACHE_TTL_MS) {
     return NextResponse.json({ warehouses: cache.data, source: "cache" });

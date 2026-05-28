@@ -12,7 +12,7 @@ import sys
 import subprocess
 import fcntl
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # ─── Config ──────────────────────────────────────────────────
 
@@ -26,9 +26,7 @@ NOTIFY_SH = PROJECT_DIR / "scripts" / "notify.sh"
 # Cron tasks and their expected intervals (minutes)
 CRON_TASKS = {
     "daily-sync": {"log": DATA_DIR / "daily-sync.log", "max_age_min": 120, "name": "Daily Sync"},
-    # Production reviews cron is intentionally hourly at minute 17 because WB feedbacks API is rate-limited.
-    # With watchdog running every 5 minutes, 60 min alerts on the first check after a missed hourly run.
-    "reviews-sync": {"log": DATA_DIR / "reviews-sync.log", "max_age_min": 60, "name": "Reviews Sync"},
+    "reviews-sync": {"log": DATA_DIR / "reviews-sync.log", "max_age_min": 45, "name": "Reviews Sync"},
     "reviews-complaints": {"log": DATA_DIR / "reviews-complaints.log", "max_age_min": 45, "name": "Reviews Complaints"},
     "shipment-sync": {"log": DATA_DIR / "shipment-sync.log", "max_age_min": 90, "name": "Shipment Sync"},
     # Weekly-sync запускается Пн-Ср 10-23 МСК. В остальные дни и часы проверка пропускается.
@@ -158,7 +156,7 @@ def check_cron_task(task_id, config):
 
     # Расписание-aware check: если задача запускается только в определённые
     # дни/часы (МСК), вне окна — skip.
-    now_utc = datetime.utcnow()
+    now_utc = datetime.now(timezone.utc)
     msk_hour = (now_utc.hour + 3) % 24
     # ISO weekday: Пн=1..Вс=7
     msk_dow = (now_utc.weekday() + 1) if (now_utc.hour + 3) < 24 else ((now_utc.weekday() + 1) % 7) + 1

@@ -81,13 +81,13 @@ export function DataHealthCard() {
         </button>
       </div>
 
-      {/* Compact: только ошибки и предупреждения */}
-      {!expanded && errors.length > 0 && (
+      {/* Compact: ошибки и предупреждения */}
+      {!expanded && (errors.length > 0 || warns.length > 0) && (
         <div className="space-y-1 mt-2">
-          {errors.map(c => (
+          {[...errors, ...warns].slice(0, 8).map(c => (
             <div key={c.id} className="flex items-center gap-2 text-sm">
-              <span>🔴</span>
-              <span className="text-[var(--danger)] font-medium">{c.name}</span>
+              <span>{STATUS_ICON[c.status]}</span>
+              <span className={`${c.status === "error" ? "text-[var(--danger)]" : "text-[var(--warning)]"} font-medium`}>{c.name}</span>
               <span className="text-[var(--text-muted)]">{c.value}</span>
             </div>
           ))}

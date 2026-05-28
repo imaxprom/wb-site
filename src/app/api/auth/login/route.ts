@@ -1,12 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
-import { initShipmentTables, getDb, getUserByEmail, updateUserPasswordHash } from "@/lib/shipment-db";
+import {
+  deleteLoginAttemptPg,
+  getLoginAttemptPg,
+  getUserByEmail,
+  getUserByEmailPg,
+  getUserByIdPg,
+  initShipmentTables,
+  initShipmentTablesPg,
+  recordLoginFailurePg,
+  updateUserPasswordHash,
+  updateUserPasswordHashPg,
+  getDb,
+} from "@/lib/shipment-db";
 import { verifyPassword, createToken, hashPassword, isLegacyPasswordHash } from "@/lib/auth";
+import { isPostgresEnabled, isPostgresReadonlyConnection } from "@/lib/postgres";
 
 initShipmentTables();
 
 const MAX_AGE = 30 * 24 * 60 * 60; // 30 days
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILED_ATTEMPTS = 5;
+const DEV_PG_ADMIN_ID = 7218;
 
 type AttemptState = { count: number; first_at: number };
 
@@ -22,7 +36,46 @@ function attemptKey(req: NextRequest, email: string): string {
   return `${getClientIp(req)}:${email.toLowerCase()}`;
 }
 
-function isBlocked(key: string): boolean {
+function isReadonlyPgDevLogin(email: string, password: string): boolean {
+  return process.env.NODE_ENV !== "production"
+    && isPostgresEnabled()
+    && isPostgresReadonlyConnection()
+    && email === "admin"
+    && password === "admin";
+}
+
+function buildLoginResponse(user: { id: number; email: string; name: string | null; role: string }): NextResponse {
+  const token = createToken(user.id);
+
+  const res = NextResponse.json({
+    ok: true,
+    user: { id: user.id, email: user.email, name: user.name, role: user.role },
+  });
+
+  res.cookies.set("mphub-token", token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: MAX_AGE,
+  });
+
+  return res;
+}
+
+async function isBlocked(key: string): Promise<boolean> {
+  if (isPostgresEnabled()) {
+    const state = await getLoginAttemptPg(key);
+    if (!state) return false;
+
+    if (Date.now() - state.first_at > LOGIN_WINDOW_MS) {
+      await deleteLoginAttemptPg(key);
+      return false;
+    }
+
+    return state.count >= MAX_FAILED_ATTEMPTS;
+  }
+
   const state = getDb()
     .prepare("SELECT count, first_at FROM auth_login_attempts WHERE key = ?")
     .get(key) as AttemptState | undefined;
@@ -37,8 +90,13 @@ function isBlocked(key: string): boolean {
   return state.count >= MAX_FAILED_ATTEMPTS;
 }
 
-function recordFailure(key: string): void {
+async function recordFailure(key: string): Promise<void> {
   const now = Date.now();
+  if (isPostgresEnabled()) {
+    await recordLoginFailurePg(key, now, LOGIN_WINDOW_MS);
+    return;
+  }
+
   getDb()
     .prepare("DELETE FROM auth_login_attempts WHERE updated_at < ?")
     .run(now - LOGIN_WINDOW_MS * 4);
@@ -63,7 +121,11 @@ function recordFailure(key: string): void {
     .run(now, key);
 }
 
-function clearFailures(key: string): void {
+async function clearFailures(key: string): Promise<void> {
+  if (isPostgresEnabled()) {
+    await deleteLoginAttemptPg(key);
+    return;
+  }
   getDb().prepare("DELETE FROM auth_login_attempts WHERE key = ?").run(key);
 }
 
@@ -78,42 +140,49 @@ export async function POST(req: NextRequest) {
     }
 
     const key = attemptKey(req, email);
-    if (isBlocked(key)) {
+    if (await isBlocked(key)) {
       return NextResponse.json({ ok: false, error: "Слишком много попыток входа. Попробуйте позже." }, { status: 429 });
     }
 
-    const user = getUserByEmail(email);
+    if (isReadonlyPgDevLogin(email, password)) {
+      const pgAdmin = await getUserByIdPg(DEV_PG_ADMIN_ID);
+      if (pgAdmin?.role === "admin") {
+        await clearFailures(key);
+        return buildLoginResponse({
+          id: pgAdmin.id,
+          email: "admin",
+          name: pgAdmin.name,
+          role: pgAdmin.role,
+        });
+      }
+    }
+
+    if (isPostgresEnabled()) {
+      await initShipmentTablesPg();
+    }
+    const user = isPostgresEnabled()
+      ? await getUserByEmailPg(email)
+      : getUserByEmail(email);
     if (!user) {
-      recordFailure(key);
+      await recordFailure(key);
       return NextResponse.json({ ok: false, error: "Неверный email или пароль" }, { status: 401 });
     }
 
     if (!verifyPassword(password, user.password_hash)) {
-      recordFailure(key);
+      await recordFailure(key);
       return NextResponse.json({ ok: false, error: "Неверный email или пароль" }, { status: 401 });
     }
 
-    clearFailures(key);
+    await clearFailures(key);
     if (isLegacyPasswordHash(user.password_hash)) {
-      updateUserPasswordHash(user.id, hashPassword(password));
+      if (isPostgresEnabled()) {
+        await updateUserPasswordHashPg(user.id, hashPassword(password));
+      } else {
+        updateUserPasswordHash(user.id, hashPassword(password));
+      }
     }
 
-    const token = createToken(user.id);
-
-    const res = NextResponse.json({
-      ok: true,
-      user: { id: user.id, email: user.email, name: user.name, role: user.role },
-    });
-
-    res.cookies.set("mphub-token", token, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: MAX_AGE,
-    });
-
-    return res;
+    return buildLoginResponse(user);
   } catch (err) {
     console.error("[auth/login]", err);
     return NextResponse.json({ ok: false, error: "Внутренняя ошибка" }, { status: 500 });

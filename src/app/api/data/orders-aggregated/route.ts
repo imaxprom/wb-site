@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
-import { getDb, getLastWeekCorrection, initShipmentTables } from "@/lib/shipment-db";
+import { getDb, getLastWeekCorrection, getLastWeekCorrectionPg, initShipmentTables } from "@/lib/shipment-db";
 import { apiError } from "@/lib/api-utils";
 import type { OrderAggregates } from "@/types";
+import { isPostgresEnabled, pgRows } from "@/lib/postgres";
 
 /**
  * GET /api/data/orders-aggregated?days=28
@@ -36,7 +37,7 @@ function fmtDDMM(d: Date): string {
 }
 
 export async function GET(req: NextRequest) {
-  const authError = requireAdmin(req);
+  const authError = await requireAdmin(req);
   if (authError) return authError;
 
   try {
@@ -62,13 +63,25 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    const db = getDb();
-    const rows = db.prepare(`
+    const rowsSql = `
       SELECT date, warehouse, federal_district, region, article_seller, article_wb,
         barcode, size, is_cancel
       FROM shipment_orders
       WHERE date >= ? AND date < ?
-    `).all(dateFrom, dateTo) as {
+    `;
+    const rows = isPostgresEnabled()
+      ? await pgRows<{
+        date: string;
+        warehouse: string | null;
+        federal_district: string | null;
+        region: string | null;
+        article_seller: string | null;
+        article_wb: number | null;
+        barcode: string | null;
+        size: string | null;
+        is_cancel: number;
+      }>(rowsSql, [dateFrom, dateTo])
+      : getDb().prepare(rowsSql).all(dateFrom, dateTo) as {
       date: string;
       warehouse: string | null;
       federal_district: string | null;
@@ -81,7 +94,9 @@ export async function GET(req: NextRequest) {
     }[];
 
     // Correction multiplier: клонируем заказы последних 7 дней
-    const corrections = getLastWeekCorrection();
+    const corrections = isPostgresEnabled()
+      ? await getLastWeekCorrectionPg()
+      : getLastWeekCorrection();
     const globalCoeff = corrections.get("__global__") || 1;
     const sevenDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
     const sevenDaysAgoISO = toLocalISO(sevenDaysAgo);

@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
-import { initShipmentTables, getOrders, getLastWeekCorrection } from "@/lib/shipment-db";
+import { getLastWeekCorrection, getLastWeekCorrectionPg, getOrders, getOrdersPg, initShipmentTables } from "@/lib/shipment-db";
 import { apiError } from "@/lib/api-utils";
+import { isPostgresEnabled } from "@/lib/postgres";
 
 export async function GET(req: NextRequest) {
-  const authError = requireAdmin(req);
+  const authError = await requireAdmin(req);
   if (authError) return authError;
 
   try {
@@ -26,10 +27,14 @@ export async function GET(req: NextRequest) {
     endDate.setDate(endDate.getDate() + 1);
     const todayDate = fmt(endDate);
 
-    const orders = getOrders(cutoffDate, todayDate);
+    const orders = isPostgresEnabled()
+      ? await getOrdersPg(cutoffDate, todayDate)
+      : getOrders(cutoffDate, todayDate);
 
     // Apply last-week correction only for default range (no explicit from/to)
-    const corrections = getLastWeekCorrection();
+    const corrections = isPostgresEnabled()
+      ? await getLastWeekCorrectionPg()
+      : getLastWeekCorrection();
     const globalCoeff = corrections.get("__global__") || 1;
 
     if (globalCoeff > 1 && !fromParam && !toParam) {

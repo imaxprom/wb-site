@@ -15,6 +15,7 @@
 const fs = require("fs");
 const path = require("path");
 const Database = require("better-sqlite3");
+const { Pool } = require("pg");
 
 const PROJECT_DIR = path.join(__dirname, "..");
 const DB_PATH = path.join(PROJECT_DIR, "data", "finance.db");
@@ -26,6 +27,52 @@ const POLL_DELAY_MS = 3000;
 const POLL_MAX_ATTEMPTS = 60;
 const RATE_LIMIT_WAIT_MS = 60000;
 const MAX_RETRIES_429 = 2;
+
+function loadEnvFile(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return;
+    for (const line of fs.readFileSync(filePath, "utf-8").split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+      const idx = trimmed.indexOf("=");
+      const key = trimmed.slice(0, idx).trim();
+      const value = trimmed.slice(idx + 1).trim().replace(/^['"]|['"]$/g, "");
+      if (key && process.env[key] === undefined) process.env[key] = value;
+    }
+  } catch { /* ignore */ }
+}
+
+loadEnvFile(path.join(PROJECT_DIR, ".env.production.local"));
+
+const USE_PG = process.env.MPHUB_DB_ENGINE === "postgres";
+let pgPool = null;
+
+function getPgPool() {
+  if (!pgPool) {
+    if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required when MPHUB_DB_ENGINE=postgres");
+    pgPool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      max: Number(process.env.PGPOOL_MAX || 5),
+      application_name: process.env.PGAPPNAME || "mphub-logistics-volume-sync",
+    });
+  }
+  return pgPool;
+}
+
+async function withPgTransaction(fn) {
+  const client = await getPgPool().connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -180,30 +227,53 @@ async function syncRemains(apiKey) {
   const rows = listFromPayload(payload);
   const syncedAt = todayIso();
 
-  const db = new Database(DB_PATH);
-  db.pragma("busy_timeout = 5000");
-  ensureTables(db);
-  const ins = db.prepare(`
-    INSERT INTO warehouse_remains_volume (article_wb, barcode, tech_size, volume, synced_at)
-    VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(article_wb, barcode, tech_size) DO UPDATE SET
-      volume = excluded.volume,
-      synced_at = excluded.synced_at
-  `);
   let written = 0;
-  db.transaction(() => {
-    for (const row of rows) {
-      const article = String(row.nmId || row.nmid || row.article_wb || row.articleWB || "").trim();
-      const barcode = text(row.barcode || row.Barcode || row.sku);
-      const techSize = text(row.techSize || row.size || row.tsName || row.tech_size);
-      const volume = numberOrNull(row.volume);
-      if (!article || !barcode || !techSize || !volume || volume <= 0) continue;
-      ins.run(article, barcode, techSize, volume, syncedAt);
-      written++;
-    }
-  })();
-  const total = db.prepare("SELECT COUNT(*) as cnt FROM warehouse_remains_volume").get().cnt;
-  db.close();
+  let total = 0;
+  if (USE_PG) {
+    total = await withPgTransaction(async (client) => {
+      for (const row of rows) {
+        const article = String(row.nmId || row.nmid || row.article_wb || row.articleWB || "").trim();
+        const barcode = text(row.barcode || row.Barcode || row.sku);
+        const techSize = text(row.techSize || row.size || row.tsName || row.tech_size);
+        const volume = numberOrNull(row.volume);
+        if (!article || !barcode || !techSize || !volume || volume <= 0) continue;
+        await client.query(`
+          INSERT INTO warehouse_remains_volume (article_wb, barcode, tech_size, volume, synced_at)
+          VALUES ($1, $2, $3, $4, $5)
+          ON CONFLICT(article_wb, barcode, tech_size) DO UPDATE SET
+            volume = EXCLUDED.volume,
+            synced_at = EXCLUDED.synced_at
+        `, [article, barcode, techSize, volume, syncedAt]);
+        written++;
+      }
+      const result = await client.query("SELECT COUNT(*)::int as cnt FROM warehouse_remains_volume");
+      return result.rows[0].cnt;
+    });
+  } else {
+    const db = new Database(DB_PATH);
+    db.pragma("busy_timeout = 5000");
+    ensureTables(db);
+    const ins = db.prepare(`
+      INSERT INTO warehouse_remains_volume (article_wb, barcode, tech_size, volume, synced_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(article_wb, barcode, tech_size) DO UPDATE SET
+        volume = excluded.volume,
+        synced_at = excluded.synced_at
+    `);
+    db.transaction(() => {
+      for (const row of rows) {
+        const article = String(row.nmId || row.nmid || row.article_wb || row.articleWB || "").trim();
+        const barcode = text(row.barcode || row.Barcode || row.sku);
+        const techSize = text(row.techSize || row.size || row.tsName || row.tech_size);
+        const volume = numberOrNull(row.volume);
+        if (!article || !barcode || !techSize || !volume || volume <= 0) continue;
+        ins.run(article, barcode, techSize, volume, syncedAt);
+        written++;
+      }
+    })();
+    total = db.prepare("SELECT COUNT(*) as cnt FROM warehouse_remains_volume").get().cnt;
+    db.close();
+  }
 
   log(source, `Done: payload=${rows.length}, written=${written}, table_total=${total}`);
   return { rows: rows.length, written, total };
@@ -239,45 +309,83 @@ async function syncMeasurements(apiKey) {
     await sleep(RATE_LIMIT_WAIT_MS);
   }
 
-  const db = new Database(DB_PATH);
-  db.pragma("busy_timeout = 5000");
-  ensureTables(db);
-  const ins = db.prepare(`
-    INSERT INTO warehouse_measurements
-      (article_wb, dim_id, volume, length_cm, width_cm, height_cm, measured_at, photo_urls_json, synced_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(article_wb, dim_id) DO UPDATE SET
-      volume = excluded.volume,
-      length_cm = excluded.length_cm,
-      width_cm = excluded.width_cm,
-      height_cm = excluded.height_cm,
-      measured_at = excluded.measured_at,
-      photo_urls_json = excluded.photo_urls_json,
-      synced_at = excluded.synced_at
-  `);
   let written = 0;
-  db.transaction(() => {
-    for (const row of allRows) {
-      const article = String(row.nmId || row.nmid || row.article_wb || row.articleWB || "").trim();
-      const dimId = Number(row.dimId || row.dim_id || 0);
-      const measuredAt = text(row.dt || row.measuredAt || row.measured_at);
-      if (!article || !dimId || !measuredAt) continue;
-      ins.run(
-        article,
-        dimId,
-        numberOrNull(row.volume),
-        numberOrNull(row.length),
-        numberOrNull(row.width),
-        numberOrNull(row.height),
-        measuredAt,
-        JSON.stringify(Array.isArray(row.photoUrls) ? row.photoUrls : []),
-        syncedAt
-      );
-      written++;
-    }
-  })();
-  const total = db.prepare("SELECT COUNT(*) as cnt FROM warehouse_measurements").get().cnt;
-  db.close();
+  let total = 0;
+  if (USE_PG) {
+    total = await withPgTransaction(async (client) => {
+      for (const row of allRows) {
+        const article = String(row.nmId || row.nmid || row.article_wb || row.articleWB || "").trim();
+        const dimId = Number(row.dimId || row.dim_id || 0);
+        const measuredAt = text(row.dt || row.measuredAt || row.measured_at);
+        if (!article || !dimId || !measuredAt) continue;
+        await client.query(`
+          INSERT INTO warehouse_measurements
+            (article_wb, dim_id, volume, length_cm, width_cm, height_cm, measured_at, photo_urls_json, synced_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          ON CONFLICT(article_wb, dim_id) DO UPDATE SET
+            volume = EXCLUDED.volume,
+            length_cm = EXCLUDED.length_cm,
+            width_cm = EXCLUDED.width_cm,
+            height_cm = EXCLUDED.height_cm,
+            measured_at = EXCLUDED.measured_at,
+            photo_urls_json = EXCLUDED.photo_urls_json,
+            synced_at = EXCLUDED.synced_at
+        `, [
+          article,
+          dimId,
+          numberOrNull(row.volume),
+          numberOrNull(row.length),
+          numberOrNull(row.width),
+          numberOrNull(row.height),
+          measuredAt,
+          JSON.stringify(Array.isArray(row.photoUrls) ? row.photoUrls : []),
+          syncedAt,
+        ]);
+        written++;
+      }
+      const result = await client.query("SELECT COUNT(*)::int as cnt FROM warehouse_measurements");
+      return result.rows[0].cnt;
+    });
+  } else {
+    const db = new Database(DB_PATH);
+    db.pragma("busy_timeout = 5000");
+    ensureTables(db);
+    const ins = db.prepare(`
+      INSERT INTO warehouse_measurements
+        (article_wb, dim_id, volume, length_cm, width_cm, height_cm, measured_at, photo_urls_json, synced_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(article_wb, dim_id) DO UPDATE SET
+        volume = excluded.volume,
+        length_cm = excluded.length_cm,
+        width_cm = excluded.width_cm,
+        height_cm = excluded.height_cm,
+        measured_at = excluded.measured_at,
+        photo_urls_json = excluded.photo_urls_json,
+        synced_at = excluded.synced_at
+    `);
+    db.transaction(() => {
+      for (const row of allRows) {
+        const article = String(row.nmId || row.nmid || row.article_wb || row.articleWB || "").trim();
+        const dimId = Number(row.dimId || row.dim_id || 0);
+        const measuredAt = text(row.dt || row.measuredAt || row.measured_at);
+        if (!article || !dimId || !measuredAt) continue;
+        ins.run(
+          article,
+          dimId,
+          numberOrNull(row.volume),
+          numberOrNull(row.length),
+          numberOrNull(row.width),
+          numberOrNull(row.height),
+          measuredAt,
+          JSON.stringify(Array.isArray(row.photoUrls) ? row.photoUrls : []),
+          syncedAt
+        );
+        written++;
+      }
+    })();
+    total = db.prepare("SELECT COUNT(*) as cnt FROM warehouse_measurements").get().cnt;
+    db.close();
+  }
 
   log(source, `Done: fetched=${allRows.length}, written=${written}, table_total=${total}`);
   return { rows: allRows.length, written, total };
@@ -316,4 +424,6 @@ main().catch((err) => {
   const targets = source === "all" ? ["remains", "measurements"] : [source];
   for (const target of targets) log(target, `CRASH: ${err.message || err}`);
   process.exit(1);
+}).finally(async () => {
+  if (pgPool) await pgPool.end().catch(() => {});
 });

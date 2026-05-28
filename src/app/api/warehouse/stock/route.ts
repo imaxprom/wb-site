@@ -2,9 +2,23 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { verifyToken } from "@/lib/auth";
-import { getDb, getLastWeekCorrection, getUserOverrides, getUserSettings, initShipmentTables } from "@/lib/shipment-db";
-import { getExcludeDailyFilter } from "@/modules/analytics/lib/db";
+import {
+  getDb,
+  getLastWeekCorrection,
+  getLastWeekCorrectionPg,
+  getUserOverrides,
+  getUserOverridesPg,
+  getUserSettings,
+  getUserSettingsPg,
+  initShipmentTables,
+} from "@/lib/shipment-db";
+import { getExcludeDailyFilter, getPgExcludeDailyFilter } from "@/modules/analytics/lib/db";
 import { calculateTrend, type WeeklyData } from "@/modules/shipment/lib/trend-engine";
+import { isPostgresEnabled, isPostgresReadonlyConnection, pgGet, pgQuery, pgRows } from "@/lib/postgres";
+import { getWbApiKey } from "@/lib/wb-api-key";
+
+const SUPPLIES_API = "https://supplies-api.wildberries.ru/api/v1";
+const SUPPLY_CONTENT_CACHE_TTL_MS = 15 * 60 * 1000;
 
 interface StockRow {
   article_wb: string;
@@ -24,6 +38,11 @@ interface StockRow {
   target_sales_qty: number;
   target_sales_45d: number;
   wb_stock_qty: number;
+  supply_packed_qty: number;
+  supply_accepted_qty: number;
+  supply_unloading_qty: number;
+  supply_ready_for_sale_qty: number;
+  supply_plan_deduct_qty: number;
   warehouse_required_units: number;
   plan_pack_units: number;
   plan_pack_boxes: number | null;
@@ -80,12 +99,64 @@ interface TrendSummary {
   totalOrders: number;
 }
 
+interface SupplySnapshotRow {
+  supply_id: number;
+  status_id: number | null;
+  virtual_type_id: number | null;
+  detail_json: string | null;
+}
+
+interface WbPackageBarcode {
+  barcode: string;
+  quantity: number;
+}
+
+interface WbPackage {
+  packageCode: string;
+  quantity: number;
+  barcodes: WbPackageBarcode[];
+}
+
+interface WbSupplyGood {
+  barcode: string;
+  quantity?: number;
+  readyForSaleQuantity?: number;
+  unloadingQuantity?: number;
+  acceptedQuantity?: number;
+}
+
+interface SupplyContentPayload {
+  source: "package" | "goods";
+  packages?: WbPackage[];
+  goods?: WbSupplyGood[];
+  fetchedAt?: string;
+}
+
+interface SupplyStageQty {
+  packed: number;
+  accepted: number;
+  unloading: number;
+  readyForSale: number;
+}
+
+const supplyContentCache = new Map<number, { ts: number; payload: SupplyContentPayload }>();
+
 function tableExists(tableName: string): boolean {
   const db = getDb();
   const row = db
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
     .get(tableName);
   return Boolean(row);
+}
+
+async function tableExistsPg(tableName: string): Promise<boolean> {
+  const row = await pgGet<{ exists: boolean }>(`
+    SELECT EXISTS (
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = ?
+    ) AS exists
+  `, [tableName]);
+  return Boolean(row?.exists);
 }
 
 function pad2(n: number): string {
@@ -142,6 +213,40 @@ function buildProductSizesByArticle(db: ReturnType<typeof getDb>): Map<string, P
     FROM shipment_products
     WHERE article_wb != '' AND sizes_json IS NOT NULL AND sizes_json != ''
   `).all() as ProductRow[];
+
+  const byArticle = new Map<string, ProductSizeCandidate[]>();
+  for (const product of productRows) {
+    let sizes: ProductSize[] = [];
+    try {
+      const parsed = JSON.parse(product.sizes_json || "[]");
+      if (Array.isArray(parsed)) sizes = parsed as ProductSize[];
+    } catch {
+      sizes = [];
+    }
+
+    byArticle.set(
+      String(product.article_wb),
+      sizes
+        .filter((size) => String(size.barcode || "").trim())
+        .map((size) => ({
+          ...size,
+          normalizedRange: extractRange(size.size),
+          labelTokens: extractSizeTokens(size.size),
+        })),
+    );
+  }
+
+  return byArticle;
+}
+
+async function buildProductSizesByArticlePg(): Promise<Map<string, ProductSizeCandidate[]>> {
+  if (!await tableExistsPg("shipment_products")) return new Map();
+
+  const productRows = await pgRows<ProductRow>(`
+    SELECT article_wb, sizes_json
+    FROM shipment_products
+    WHERE article_wb != '' AND sizes_json IS NOT NULL AND sizes_json != ''
+  `);
 
   const byArticle = new Map<string, ProductSizeCandidate[]>();
   for (const product of productRows) {
@@ -243,6 +348,223 @@ function buildNumberMap(rows: Array<{ barcode: string | null; value: number | nu
   return map;
 }
 
+function addSupplyStage(map: Map<string, SupplyStageQty>, barcode: string, patch: Partial<SupplyStageQty>) {
+  const code = String(barcode || "").trim();
+  if (!code) return;
+  const current = map.get(code) || { packed: 0, accepted: 0, unloading: 0, readyForSale: 0 };
+  current.packed += Number(patch.packed || 0);
+  current.accepted += Number(patch.accepted || 0);
+  current.unloading += Number(patch.unloading || 0);
+  current.readyForSale += Number(patch.readyForSale || 0);
+  map.set(code, current);
+}
+
+function safeJson<T>(value: string | null | undefined): T | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return null;
+  }
+}
+
+function isRelevantSupplyStatus(statusID: number | null | undefined): boolean {
+  return statusID === 3 || statusID === 4 || statusID === 6;
+}
+
+function getSupplyStatus(snapshot: SupplySnapshotRow): number | null {
+  const detail = safeJson<Record<string, unknown>>(snapshot.detail_json);
+  const status = Number(detail?.statusID ?? snapshot.status_id);
+  return Number.isFinite(status) ? status : null;
+}
+
+function getSupplyVirtualType(snapshot: SupplySnapshotRow): number | null {
+  const detail = safeJson<Record<string, unknown>>(snapshot.detail_json);
+  const virtualType = Number(detail?.virtualTypeID ?? snapshot.virtual_type_id);
+  return Number.isFinite(virtualType) ? virtualType : null;
+}
+
+function ensureSupplyContentTableSqlite(db: ReturnType<typeof getDb>) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS wb_supply_contents (
+      supply_id INTEGER PRIMARY KEY,
+      source TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      saved_at TEXT NOT NULL,
+      refreshed_at TEXT NOT NULL
+    )
+  `);
+}
+
+async function ensureSupplyContentTablePg() {
+  if (!isPostgresEnabled() || isPostgresReadonlyConnection()) return;
+  await pgQuery(`
+    CREATE TABLE IF NOT EXISTS wb_supply_contents (
+      supply_id BIGINT PRIMARY KEY,
+      source TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      saved_at TEXT NOT NULL,
+      refreshed_at TEXT NOT NULL
+    )
+  `);
+}
+
+async function readStoredSupplyContentPg(supplyID: number): Promise<SupplyContentPayload | null> {
+  const exists = await tableExistsPg("wb_supply_contents");
+  if (!exists) return null;
+  const row = await pgGet<{ payload_json: string }>(`
+    SELECT payload_json
+    FROM wb_supply_contents
+    WHERE supply_id = ?
+  `, [supplyID]);
+  return safeJson<SupplyContentPayload>(row?.payload_json);
+}
+
+function readStoredSupplyContentSqlite(db: ReturnType<typeof getDb>, supplyID: number): SupplyContentPayload | null {
+  if (!tableExists("wb_supply_contents")) return null;
+  const row = db.prepare(`
+    SELECT payload_json
+    FROM wb_supply_contents
+    WHERE supply_id = ?
+  `).get(supplyID) as { payload_json: string } | undefined;
+  return safeJson<SupplyContentPayload>(row?.payload_json);
+}
+
+async function saveSupplyContentPg(supplyID: number, payload: SupplyContentPayload) {
+  if (isPostgresReadonlyConnection()) return;
+  await ensureSupplyContentTablePg();
+  const now = new Date().toISOString();
+  await pgQuery(`
+    INSERT INTO wb_supply_contents (supply_id, source, payload_json, saved_at, refreshed_at)
+    VALUES ($1, $2, $3, $4, $4)
+    ON CONFLICT (supply_id) DO UPDATE SET
+      source = EXCLUDED.source,
+      payload_json = EXCLUDED.payload_json,
+      refreshed_at = EXCLUDED.refreshed_at
+  `, [supplyID, payload.source, JSON.stringify(payload), now]);
+}
+
+function saveSupplyContentSqlite(db: ReturnType<typeof getDb>, supplyID: number, payload: SupplyContentPayload) {
+  ensureSupplyContentTableSqlite(db);
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO wb_supply_contents (supply_id, source, payload_json, saved_at, refreshed_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(supply_id) DO UPDATE SET
+      source = excluded.source,
+      payload_json = excluded.payload_json,
+      refreshed_at = excluded.refreshed_at
+  `).run(supplyID, payload.source, JSON.stringify(payload), now, now);
+}
+
+async function wbFetchJson<T>(path: string): Promise<T> {
+  const apiKey = getWbApiKey();
+  if (!apiKey) throw new Error("WB API key is not configured");
+  const res = await fetch(`${SUPPLIES_API}${path}`, {
+    headers: {
+      Authorization: apiKey,
+      "Content-Type": "application/json",
+    },
+    cache: "no-store",
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(text || `WB supplies API HTTP ${res.status}`);
+  return (text ? JSON.parse(text) : null) as T;
+}
+
+async function loadSupplyContent(
+  supplyID: number,
+  virtualTypeID: number | null,
+  pgMode: boolean,
+  db: ReturnType<typeof getDb> | null,
+): Promise<SupplyContentPayload | null> {
+  const cached = supplyContentCache.get(supplyID);
+  if (cached && Date.now() - cached.ts < SUPPLY_CONTENT_CACHE_TTL_MS) return cached.payload;
+
+  if (pgMode) {
+    const stored = await readStoredSupplyContentPg(supplyID);
+    if (stored && isPostgresReadonlyConnection()) return stored;
+  } else if (db) {
+    const stored = readStoredSupplyContentSqlite(db, supplyID);
+    if (stored) return stored;
+  }
+
+  if (pgMode && isPostgresReadonlyConnection()) return null;
+
+  const goods = await wbFetchJson<WbSupplyGood[]>(`/supplies/${encodeURIComponent(String(supplyID))}/goods?limit=1000&offset=0`);
+  let payload: SupplyContentPayload;
+  if (virtualTypeID === 5) {
+    payload = { source: "goods", goods, fetchedAt: new Date().toISOString() };
+  } else {
+    const packages = await wbFetchJson<WbPackage[]>(`/supplies/${encodeURIComponent(String(supplyID))}/package`);
+    payload = { source: "package", packages, goods, fetchedAt: new Date().toISOString() };
+  }
+
+  supplyContentCache.set(supplyID, { ts: Date.now(), payload });
+  if (pgMode) {
+    await saveSupplyContentPg(supplyID, payload);
+  } else if (db) {
+    saveSupplyContentSqlite(db, supplyID, payload);
+  }
+  return payload;
+}
+
+function addContentToSupplyStage(map: Map<string, SupplyStageQty>, payload: SupplyContentPayload) {
+  if (payload.source === "package") {
+    for (const pack of payload.packages || []) {
+      for (const item of pack.barcodes || []) {
+        addSupplyStage(map, item.barcode, { packed: Number(item.quantity || 0) });
+      }
+    }
+  }
+
+  for (const item of payload.goods || []) {
+    const quantity = Number(item.quantity || 0);
+    addSupplyStage(map, item.barcode, {
+      packed: payload.source === "goods" ? quantity : 0,
+      accepted: Number(item.acceptedQuantity || 0),
+      unloading: Number(item.unloadingQuantity || 0),
+      readyForSale: Number(item.readyForSaleQuantity || 0),
+    });
+  }
+}
+
+async function buildSupplyStageByBarcode(
+  pgMode: boolean,
+  db: ReturnType<typeof getDb> | null,
+): Promise<Map<string, SupplyStageQty>> {
+  const map = new Map<string, SupplyStageQty>();
+  const exists = pgMode ? await tableExistsPg("wb_supply_snapshots") : tableExists("wb_supply_snapshots");
+  if (!exists) return map;
+
+  if (pgMode) await ensureSupplyContentTablePg();
+  else if (db) ensureSupplyContentTableSqlite(db);
+
+  const sql = `
+    SELECT supply_id, status_id, virtual_type_id, detail_json
+    FROM wb_supply_snapshots
+    WHERE status_id IN (3, 4, 6)
+    ORDER BY list_position ASC, COALESCE(updated_date, supply_date, create_date) DESC
+    LIMIT 50
+  `;
+  const snapshots = pgMode
+    ? await pgRows<SupplySnapshotRow>(sql)
+    : db!.prepare(sql).all() as SupplySnapshotRow[];
+
+  for (const snapshot of snapshots) {
+    const statusID = getSupplyStatus(snapshot);
+    if (!isRelevantSupplyStatus(statusID)) continue;
+    try {
+      const payload = await loadSupplyContent(Number(snapshot.supply_id), getSupplyVirtualType(snapshot), pgMode, db);
+      if (payload) addContentToSupplyStage(map, payload);
+    } catch (error) {
+      console.warn(`[warehouse-stock] failed to load supply content ${snapshot.supply_id}:`, error);
+    }
+  }
+
+  return map;
+}
+
 function getUserIdFromRequest(req: NextRequest): number | null {
   const token = req.cookies.get("mphub-token")?.value;
   if (!token) return null;
@@ -257,6 +579,17 @@ function buildWbStockByBarcode(db: ReturnType<typeof getDb>): Map<string, number
     WHERE barcode != ''
     GROUP BY barcode
   `).all() as Array<{ barcode: string | null; value: number | null }>;
+  return buildNumberMap(rows);
+}
+
+async function buildWbStockByBarcodePg(): Promise<Map<string, number>> {
+  if (!await tableExistsPg("shipment_stock")) return new Map();
+  const rows = await pgRows<Array<{ barcode: string | null; value: number | null }>[number]>(`
+    SELECT barcode, SUM(quantity) AS value
+    FROM shipment_stock
+    WHERE barcode != ''
+    GROUP BY barcode
+  `);
   return buildNumberMap(rows);
 }
 
@@ -313,6 +646,37 @@ function buildOrdersByBarcode(db: ReturnType<typeof getDb>, days: number): Map<s
   return map;
 }
 
+async function buildOrdersByBarcodePg(days: number): Promise<Map<string, number>> {
+  if (!await tableExistsPg("shipment_orders")) return new Map();
+
+  const today = new Date();
+  const from = new Date(today.getFullYear(), today.getMonth(), today.getDate() - days);
+  const to = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const sevenDaysAgo = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 7);
+  const sevenDaysAgoISO = toLocalISO(sevenDaysAgo);
+  const globalCoeff = (await getLastWeekCorrectionPg()).get("__global__") || 1;
+  const correctionMultiplier = globalCoeff > 1 ? Math.max(1, Math.round(globalCoeff)) : 1;
+
+  const rows = await pgRows<Array<{ barcode: string | null; date: string | null; value: number | null }>[number]>(`
+    SELECT barcode, date, COUNT(*) AS value
+    FROM shipment_orders
+    WHERE barcode != ''
+      AND date >= ?
+      AND date < ?
+    GROUP BY barcode, date
+  `, [toLocalISO(from), toLocalISO(to)]);
+
+  const map = new Map<string, number>();
+  for (const row of rows) {
+    const barcode = String(row.barcode || "").trim();
+    if (!barcode) continue;
+    const dateStr = String(row.date || "").slice(0, 10);
+    const multiplier = dateStr >= sevenDaysAgoISO ? correctionMultiplier : 1;
+    map.set(barcode, (map.get(barcode) || 0) + Number(row.value || 0) * multiplier);
+  }
+  return map;
+}
+
 function buildAutoBuyoutRateByArticle(db: ReturnType<typeof getDb>): Map<string, number> {
   const map = new Map<string, number>();
   if (!tableExists("realization")) return map;
@@ -331,6 +695,33 @@ function buildAutoBuyoutRateByArticle(db: ReturnType<typeof getDb>): Map<string,
     GROUP BY r.nm_id
     HAVING orders >= 30
   `).all(cutoff, ...dedup.params) as Array<{ nm_id: number; orders: number | null; buyouts: number | null }>;
+
+  for (const row of rows) {
+    const orders = Number(row.orders || 0);
+    const buyouts = Number(row.buyouts || 0);
+    if (orders > 0) map.set(String(row.nm_id), buyouts / orders);
+  }
+  return map;
+}
+
+async function buildAutoBuyoutRateByArticlePg(): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  if (!await tableExistsPg("realization")) return map;
+
+  const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const dedup = await getPgExcludeDailyFilter("rr_dt", "r");
+  const rows = await pgRows<Array<{ nm_id: number; orders: number | null; buyouts: number | null }>[number]>(`
+    SELECT r.nm_id,
+      SUM(CASE WHEN r.supplier_oper_name = 'Логистика' THEN r.delivery_amount ELSE 0 END) as orders,
+      SUM(CASE WHEN r.supplier_oper_name = 'Продажа' THEN r.quantity ELSE 0 END) as buyouts
+    FROM realization r
+    WHERE r.supplier_oper_name IN ('Логистика', 'Продажа')
+      AND r.nm_id > 0
+      AND r.rr_dt >= ?
+    ${dedup.sql}
+    GROUP BY r.nm_id
+    HAVING SUM(CASE WHEN r.supplier_oper_name = 'Логистика' THEN r.delivery_amount ELSE 0 END) >= 30
+  `, [cutoff, ...dedup.params]);
 
   for (const row of rows) {
     const orders = Number(row.orders || 0);
@@ -436,17 +827,102 @@ function buildArticleTrendByArticle(
   };
 }
 
+async function buildArticleTrendByArticlePg(
+  productSizesByArticle: Map<string, ProductSizeCandidate[]>,
+  loadedDays: number,
+  disabledByArticle: Map<string, Set<string>>,
+  includedArticles: Set<string>,
+): Promise<{ byArticle: Map<string, TrendSummary>; overall: TrendSummary }> {
+  const result = new Map<string, TrendSummary>();
+  const fallbackOverall: TrendSummary = { multiplier: 1, direction: "flat", totalOrders: 0 };
+  if (!await tableExistsPg("shipment_orders")) return { byArticle: result, overall: fallbackOverall };
+
+  const numWeeks = Math.max(1, Math.floor(loadedDays / 7));
+  const today = new Date();
+  const firstDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() - loadedDays);
+  const sevenDaysAgo = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 7);
+  const sevenDaysAgoISO = toLocalISO(sevenDaysAgo);
+  const globalCoeff = (await getLastWeekCorrectionPg()).get("__global__") || 1;
+  const correctionMultiplier = globalCoeff > 1 ? Math.max(1, Math.round(globalCoeff)) : 1;
+  const makeWeekly = (): WeeklyData[] => Array.from({ length: numWeeks }, (_, i) => {
+    const weekStart = new Date(firstDate.getFullYear(), firstDate.getMonth(), firstDate.getDate() + i * 7);
+    const weekEnd = new Date(firstDate.getFullYear(), firstDate.getMonth(), firstDate.getDate() + (i + 1) * 7);
+    const weekEndLabel = new Date(weekEnd.getFullYear(), weekEnd.getMonth(), weekEnd.getDate() - 1);
+    return {
+      week: i + 1,
+      label: `Нед. ${i + 1}`,
+      orders: 0,
+      dateRange: `${pad2(weekStart.getDate())}.${pad2(weekStart.getMonth() + 1)} - ${pad2(weekEndLabel.getDate())}.${pad2(weekEndLabel.getMonth() + 1)}`,
+    };
+  });
+  const overallWeekly = makeWeekly();
+
+  for (const [articleWB, sizes] of productSizesByArticle.entries()) {
+    if (!includedArticles.has(articleWB)) continue;
+    const disabledBarcodes = disabledByArticle.get(articleWB) || new Set<string>();
+    const barcodes = [...new Set(sizes
+      .map((size) => String(size.barcode || "").trim())
+      .filter((barcode) => barcode && !disabledBarcodes.has(barcode)))];
+    if (barcodes.length === 0) continue;
+
+    const weekly = makeWeekly();
+    const placeholders = barcodes.map(() => "?").join(",");
+    const rows = await pgRows<Array<{ date: string | null; value: number | null }>[number]>(`
+      SELECT date, COUNT(*) AS value
+      FROM shipment_orders
+      WHERE barcode IN (${placeholders})
+        AND date >= ?
+        AND date < ?
+      GROUP BY date
+    `, [...barcodes, toLocalISO(firstDate), toLocalISO(today)]);
+
+    for (const row of rows) {
+      const orderDate = String(row.date || "").slice(0, 10);
+      if (!orderDate) continue;
+      const multiplier = orderDate >= sevenDaysAgoISO ? correctionMultiplier : 1;
+      for (let i = 0; i < numWeeks; i++) {
+        const weekStart = new Date(firstDate.getFullYear(), firstDate.getMonth(), firstDate.getDate() + i * 7);
+        const weekEnd = new Date(firstDate.getFullYear(), firstDate.getMonth(), firstDate.getDate() + (i + 1) * 7);
+        if (orderDate >= toLocalISO(weekStart) && orderDate < toLocalISO(weekEnd)) {
+          const orders = Number(row.value || 0) * multiplier;
+          weekly[i].orders += orders;
+          overallWeekly[i].orders += orders;
+          break;
+        }
+      }
+    }
+
+    const trend = calculateTrend(weekly);
+    result.set(articleWB, {
+      multiplier: trend.multiplier,
+      direction: trend.direction,
+      totalOrders: trend.totalRaw,
+    });
+  }
+
+  const overallTrend = calculateTrend(overallWeekly);
+  return {
+    byArticle: result,
+    overall: {
+      multiplier: overallTrend.multiplier,
+      direction: overallTrend.direction,
+      totalOrders: overallTrend.totalRaw,
+    },
+  };
+}
+
 function buildPackingPlan(
   row: RawStockRow,
   barcode: string | null,
   packingDays: number,
   wbStockByBarcode: Map<string, number>,
+  supplyStageByBarcode: Map<string, SupplyStageQty>,
   ordersByBarcode: Map<string, number>,
   trendByArticle: Map<string, { multiplier: number; direction: "up" | "down" | "flat" }>,
   buyoutRate: number,
   disabledBarcodes: Set<string>,
   packingMultiplier: number,
-): Pick<StockRow, "packing_days" | "packing_multiplier" | "base_orders_qty" | "base_sales_qty" | "buyout_rate" | "trend_multiplier" | "trend_direction" | "target_sales_qty" | "target_sales_45d" | "wb_stock_qty" | "warehouse_required_units" | "plan_pack_units" | "plan_pack_boxes"> {
+): Pick<StockRow, "packing_days" | "packing_multiplier" | "base_orders_qty" | "base_sales_qty" | "buyout_rate" | "trend_multiplier" | "trend_direction" | "target_sales_qty" | "target_sales_45d" | "wb_stock_qty" | "supply_packed_qty" | "supply_accepted_qty" | "supply_unloading_qty" | "supply_ready_for_sale_qty" | "supply_plan_deduct_qty" | "warehouse_required_units" | "plan_pack_units" | "plan_pack_boxes"> {
   const code = String(barcode || "").trim();
   const isDisabledInShipment = code ? disabledBarcodes.has(code) : false;
   const baseOrders = code && !isDisabledInShipment ? ordersByBarcode.get(code) || 0 : 0;
@@ -455,8 +931,11 @@ function buildPackingPlan(
   const trendMultiplier = articleTrend?.multiplier ?? 1;
   const targetSales = baseSales * trendMultiplier * packingMultiplier;
   const wbStock = code ? wbStockByBarcode.get(code) || 0 : 0;
+  const supplyStage = code ? supplyStageByBarcode.get(code) : null;
+  const supplyPacked = supplyStage?.packed || 0;
+  const supplyReadyForSale = supplyStage?.readyForSale || 0;
   const warehouseRequired = Math.max(0, targetSales - wbStock);
-  const planUnits = Math.max(0, warehouseRequired - Number(row.units_qty || 0));
+  const planUnits = Math.max(0, warehouseRequired - supplyPacked - Number(row.units_qty || 0));
   const planBoxes = row.per_box && row.per_box > 0 ? planUnits / row.per_box : null;
 
   return {
@@ -470,6 +949,11 @@ function buildPackingPlan(
     target_sales_qty: round2(targetSales),
     target_sales_45d: round2(targetSales),
     wb_stock_qty: round2(wbStock),
+    supply_packed_qty: round2(supplyPacked),
+    supply_accepted_qty: round2(supplyStage?.accepted || 0),
+    supply_unloading_qty: round2(supplyStage?.unloading || 0),
+    supply_ready_for_sale_qty: round2(supplyReadyForSale),
+    supply_plan_deduct_qty: round2(supplyPacked),
     warehouse_required_units: round2(warehouseRequired),
     plan_pack_units: round2(planUnits),
     plan_pack_boxes: planBoxes === null ? null : round2(planBoxes),
@@ -477,15 +961,20 @@ function buildPackingPlan(
 }
 
 export async function GET(request: NextRequest) {
-  const authError = requireAdmin(request);
+  const authError = await requireAdmin(request);
   if (authError) return authError;
 
   try {
     initShipmentTables();
-    const db = getDb();
+    const pgMode = isPostgresEnabled();
+    const db = pgMode ? null : getDb();
     const userId = getUserIdFromRequest(request);
-    const settings = userId ? getUserSettings(userId) : {};
-    const overrides = userId ? getUserOverrides(userId) : {};
+    const settings = userId
+      ? (pgMode ? await getUserSettingsPg(userId) : getUserSettings(userId))
+      : {};
+    const overrides = userId
+      ? (pgMode ? await getUserOverridesPg(userId) : getUserOverrides(userId))
+      : {};
     const disabledByArticle = new Map<string, Set<string>>();
     for (const [articleWB, override] of Object.entries(overrides)) {
       const disabled = override.disabledSizes || {};
@@ -507,7 +996,10 @@ export async function GET(request: NextRequest) {
     );
     const loadedDays = normalizeLoadedDays(effectiveSettings.uploadDays);
 
-    if (!tableExists("warehouse_ready_stock")) {
+    const hasWarehouseReadyStock = pgMode
+      ? await tableExistsPg("warehouse_ready_stock")
+      : tableExists("warehouse_ready_stock");
+    if (!hasWarehouseReadyStock) {
       return NextResponse.json({
         meta: {
           ready: false,
@@ -523,7 +1015,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const rawRows = db.prepare(`
+    const rawRowsSql = `
       SELECT
         article_wb,
         sheet_name,
@@ -536,16 +1028,22 @@ export async function GET(request: NextRequest) {
         synced_at
       FROM warehouse_ready_stock
       ORDER BY sheet_name, size_range, size_label
-    `).all() as RawStockRow[];
+    `;
+    const rawRows = pgMode
+      ? await pgRows<RawStockRow>(rawRowsSql)
+      : db!.prepare(rawRowsSql).all() as RawStockRow[];
 
-    const productSizesByArticle = buildProductSizesByArticle(db);
-    const wbStockByBarcode = buildWbStockByBarcode(db);
-    const ordersByBarcode = buildOrdersByBarcode(db, packingDays);
+    const productSizesByArticle = pgMode ? await buildProductSizesByArticlePg() : buildProductSizesByArticle(db!);
+    const wbStockByBarcode = pgMode ? await buildWbStockByBarcodePg() : buildWbStockByBarcode(db!);
+    const supplyStageByBarcode = await buildSupplyStageByBarcode(pgMode, db);
+    const ordersByBarcode = pgMode ? await buildOrdersByBarcodePg(packingDays) : buildOrdersByBarcode(db!, packingDays);
     const includedArticles = new Set(rawRows.map((row) => String(row.article_wb)));
-    const trendStats = buildArticleTrendByArticle(db, productSizesByArticle, loadedDays, disabledByArticle, includedArticles);
+    const trendStats = pgMode
+      ? await buildArticleTrendByArticlePg(productSizesByArticle, loadedDays, disabledByArticle, includedArticles)
+      : buildArticleTrendByArticle(db!, productSizesByArticle, loadedDays, disabledByArticle, includedArticles);
     const trendByArticle = trendStats.byArticle;
     const autoBuyoutByArticle = effectiveSettings.buyoutMode === "auto"
-      ? buildAutoBuyoutRateByArticle(db)
+      ? (pgMode ? await buildAutoBuyoutRateByArticlePg() : buildAutoBuyoutRateByArticle(db!))
       : new Map<string, number>();
     const rows = rawRows.map((row): StockRow => {
       const barcodeMatch = findBarcode(row, productSizesByArticle);
@@ -554,12 +1052,14 @@ export async function GET(request: NextRequest) {
       return {
         ...row,
         ...barcodeMatch,
-        ...buildPackingPlan(row, barcodeMatch.barcode, packingDays, wbStockByBarcode, ordersByBarcode, trendByArticle, buyoutRate, disabledBarcodes, packingMultiplier),
+        ...buildPackingPlan(row, barcodeMatch.barcode, packingDays, wbStockByBarcode, supplyStageByBarcode, ordersByBarcode, trendByArticle, buyoutRate, disabledBarcodes, packingMultiplier),
       };
     });
 
-    const lastRun = tableExists("warehouse_sync_runs")
-      ? db.prepare(`
+    const hasWarehouseSyncRuns = pgMode
+      ? await tableExistsPg("warehouse_sync_runs")
+      : tableExists("warehouse_sync_runs");
+    const lastRunSql = `
           SELECT
             id,
             spreadsheet_title,
@@ -573,7 +1073,9 @@ export async function GET(request: NextRequest) {
           FROM warehouse_sync_runs
           ORDER BY id DESC
           LIMIT 1
-        `).get() as RunRow | undefined
+        `;
+    const lastRun = hasWarehouseSyncRuns
+      ? (pgMode ? await pgGet<RunRow>(lastRunSql) : db!.prepare(lastRunSql).get() as RunRow | undefined)
       : undefined;
 
     const byArticle = new Map<string, {

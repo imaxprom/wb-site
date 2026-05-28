@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { getDb } from "@/modules/finance/lib/queries";
+import { isPostgresEnabled, pgRows } from "@/lib/postgres";
 
 /**
  * GET /api/finance/ads?from=YYYY-MM-DD&to=YYYY-MM-DD
  * Returns advertising campaigns with daily breakdown.
  */
 export async function GET(request: NextRequest) {
-  const authError = requireAdmin(request);
+  const authError = await requireAdmin(request);
   if (authError) return authError;
 
   const { searchParams } = new URL(request.url);
@@ -16,30 +17,33 @@ export async function GET(request: NextRequest) {
   const dateTo = searchParams.get("to") || "2026-03-22";
 
   try {
-    const d = getDb();
-
     // Get campaigns with totals
-    const campaigns = d.prepare(`
+    const campaignsSql = `
       SELECT campaign_id as id, campaign_name as name, SUM(amount) as total
       FROM advertising
       WHERE date >= ? AND date <= ?
-      GROUP BY campaign_id
+      GROUP BY campaign_id, campaign_name
       ORDER BY total DESC
-    `).all(dateFrom, dateTo) as { id: number; name: string; total: number }[];
+    `;
+    const campaigns = isPostgresEnabled()
+      ? await pgRows<{ id: number; name: string; total: number }>(campaignsSql, [dateFrom, dateTo])
+      : getDb().prepare(campaignsSql).all(dateFrom, dateTo) as { id: number; name: string; total: number }[];
 
     // Get daily breakdown for each campaign
-    const dailyStmt = d.prepare(`
+    const dailySql = `
       SELECT date, amount FROM advertising
       WHERE campaign_id = ? AND date >= ? AND date <= ?
       ORDER BY date
-    `);
+    `;
 
-    const result = campaigns.map(c => {
-      const rows = dailyStmt.all(c.id, dateFrom, dateTo) as { date: string; amount: number }[];
+    const result = await Promise.all(campaigns.map(async (c) => {
+      const rows = isPostgresEnabled()
+        ? await pgRows<{ date: string; amount: number }>(dailySql, [c.id, dateFrom, dateTo])
+        : getDb().prepare(dailySql).all(c.id, dateFrom, dateTo) as { date: string; amount: number }[];
       const daily: Record<string, number> = {};
       for (const r of rows) daily[r.date] = r.amount;
       return { id: c.id, name: c.name, total: Math.round(c.total), daily };
-    });
+    }));
 
     return NextResponse.json(result);
   } catch (error) {

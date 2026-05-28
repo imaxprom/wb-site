@@ -315,6 +315,35 @@ def status_from_log(log_path: str | None, schedule: dict) -> str:
     return "idle" if age_min < max_gap_for_schedule(schedule) else "stopped"
 
 
+def data_health_status(log_path: str | None) -> tuple[str | None, int | None, list[dict] | None, str | None]:
+    """Promote data-health JSON checks into the service status card."""
+    if not log_path or not os.path.isfile(log_path):
+        return None, None, None, None
+    try:
+        data = json.loads(Path(log_path).read_text())
+    except Exception:
+        return "error", 1, [{"time": "", "message": "data-health-cron.json не читается"}], None
+
+    overall = data.get("overall")
+    checks = data.get("checks") if isinstance(data.get("checks"), list) else []
+    bad = [c for c in checks if c.get("status") in ("error", "warn")]
+    errors = [c for c in checks if c.get("status") == "error"]
+    last_errors = []
+    for c in bad[:5]:
+        message = f"{c.get('name', c.get('id', 'check'))}: {c.get('value', '')}"
+        if c.get("detail"):
+            message = f"{message} — {c.get('detail')}"
+        last_errors.append({"time": "", "message": message[:200]})
+
+    if overall == "error":
+        return "error", max(1, len(errors)), last_errors, data.get("timestamp")
+    if overall == "warn":
+        return "idle", 0, last_errors, data.get("timestamp")
+    if overall == "ok":
+        return "idle", 0, [], data.get("timestamp")
+    return None, None, None, data.get("timestamp")
+
+
 # ── Main ─────────────────────────────────────────────────────
 
 def build_service(svc: dict) -> dict:
@@ -385,6 +414,17 @@ def build_service(svc: dict) -> dict:
     file_hash = get_file_hash(script_path)
     last_modified = get_last_modified(script_path)
     last_run = get_last_run_from_log(log_path)
+
+    if svc_id == "data-health-cron":
+        dh_status, dh_error_count, dh_errors, dh_timestamp = data_health_status(log_path)
+        if dh_status:
+            status = dh_status
+        if dh_error_count is not None:
+            error_count = dh_error_count
+        if dh_errors is not None:
+            last_errors = dh_errors
+        if dh_timestamp:
+            last_run = dh_timestamp
 
     base.update({
         "status": status,

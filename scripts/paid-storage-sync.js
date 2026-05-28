@@ -15,6 +15,7 @@
 const fs = require("fs");
 const path = require("path");
 const Database = require("better-sqlite3");
+const { Pool } = require("pg");
 
 const PROJECT_DIR = path.join(__dirname, "..");
 const DB_PATH = path.join(PROJECT_DIR, "data", "finance.db");
@@ -28,6 +29,52 @@ const POLL_MAX_ATTEMPTS = 30;
 const BETWEEN_DAYS_DELAY_MS = 60000;
 const RATE_LIMIT_WAIT_MS = 60000;
 const MAX_RETRIES_429 = 2;
+
+function loadEnvFile(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return;
+    for (const line of fs.readFileSync(filePath, "utf-8").split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+      const idx = trimmed.indexOf("=");
+      const key = trimmed.slice(0, idx).trim();
+      const value = trimmed.slice(idx + 1).trim().replace(/^['"]|['"]$/g, "");
+      if (key && process.env[key] === undefined) process.env[key] = value;
+    }
+  } catch { /* ignore */ }
+}
+
+loadEnvFile(path.join(PROJECT_DIR, ".env.production.local"));
+
+const USE_PG = process.env.MPHUB_DB_ENGINE === "postgres";
+let pgPool = null;
+
+function getPgPool() {
+  if (!pgPool) {
+    if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required when MPHUB_DB_ENGINE=postgres");
+    pgPool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      max: Number(process.env.PGPOOL_MAX || 5),
+      application_name: process.env.PGAPPNAME || "mphub-paid-storage-sync",
+    });
+  }
+  return pgPool;
+}
+
+async function withPgTransaction(fn) {
+  const client = await getPgPool().connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`;
@@ -84,6 +131,11 @@ function hasDayData(db, date) {
   return row.cnt > 0;
 }
 
+async function hasDayDataPg(date) {
+  const result = await getPgPool().query("SELECT COUNT(*)::int as cnt FROM paid_storage WHERE date = $1", [date]);
+  return result.rows[0].cnt > 0;
+}
+
 async function fetchWithRetry(url, opts, label) {
   for (let attempt = 0; attempt <= MAX_RETRIES_429; attempt++) {
     const res = await fetch(url, opts);
@@ -127,21 +179,36 @@ async function syncDay(apiKey, date) {
     const rows = Array.isArray(raw) ? raw : (Array.isArray(raw?.data) ? raw.data : []);
     if (rows.length === 0) return { ok: true, total: 0, inserted: 0, note: "empty" };
 
-    const db = new Database(DB_PATH);
-    db.pragma("busy_timeout = 5000");
-    ensureTable(db);
-    db.prepare("DELETE FROM paid_storage WHERE date = ?").run(date);
-    const ins = db.prepare("INSERT INTO paid_storage (date, nm_id, barcode, warehouse, warehouse_price, barcodes_count, vendor_code, subject, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
     let inserted = 0, total = 0;
-    db.transaction(() => {
-      for (const r of rows) {
-        if ((r.date || date) !== date) continue;
-        ins.run(date, r.nmId || 0, r.barcode || "", r.warehouse || "", r.warehousePrice || 0, r.barcodesCount || 0, r.vendorCode || "", r.subject || "", r.volume || 0);
-        total += r.warehousePrice || 0;
-        inserted++;
-      }
-    })();
-    db.close();
+    if (USE_PG) {
+      await withPgTransaction(async (client) => {
+        await client.query("DELETE FROM paid_storage WHERE date = $1", [date]);
+        for (const r of rows) {
+          if ((r.date || date) !== date) continue;
+          await client.query(
+            "INSERT INTO paid_storage (date, nm_id, barcode, warehouse, warehouse_price, barcodes_count, vendor_code, subject, volume) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            [date, r.nmId || 0, r.barcode || "", r.warehouse || "", r.warehousePrice || 0, r.barcodesCount || 0, r.vendorCode || "", r.subject || "", r.volume || 0]
+          );
+          total += r.warehousePrice || 0;
+          inserted++;
+        }
+      });
+    } else {
+      const db = new Database(DB_PATH);
+      db.pragma("busy_timeout = 5000");
+      ensureTable(db);
+      db.prepare("DELETE FROM paid_storage WHERE date = ?").run(date);
+      const ins = db.prepare("INSERT INTO paid_storage (date, nm_id, barcode, warehouse, warehouse_price, barcodes_count, vendor_code, subject, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+      db.transaction(() => {
+        for (const r of rows) {
+          if ((r.date || date) !== date) continue;
+          ins.run(date, r.nmId || 0, r.barcode || "", r.warehouse || "", r.warehousePrice || 0, r.barcodesCount || 0, r.vendorCode || "", r.subject || "", r.volume || 0);
+          total += r.warehousePrice || 0;
+          inserted++;
+        }
+      })();
+      db.close();
+    }
     return { ok: true, total: Math.round(total), inserted };
   } catch (err) {
     return { ok: false, err: err.message || String(err) };
@@ -155,11 +222,18 @@ async function main() {
   const apiKey = getApiKey();
   if (!apiKey) { log("ERROR: no WB API key"); process.exit(1); }
 
-  const db = new Database(DB_PATH);
-  ensureTable(db);
   const dates = daysList(days);
-  const pending = dates.filter(d => !hasDayData(db, d));
-  db.close();
+  let pending = [];
+  if (USE_PG) {
+    for (const date of dates) {
+      if (!await hasDayDataPg(date)) pending.push(date);
+    }
+  } else {
+    const db = new Database(DB_PATH);
+    ensureTable(db);
+    pending = dates.filter(d => !hasDayData(db, d));
+    db.close();
+  }
 
   log(`Window ${dates[0]}..${dates[dates.length - 1]}: ${dates.length} days, ${pending.length} pending`);
 
@@ -182,4 +256,7 @@ if (!acquireLock()) {
 
 main()
   .catch(err => { log(`CRASH: ${err.message || err}`); process.exit(1); })
-  .finally(() => { releaseLock(); });
+  .finally(async () => {
+    releaseLock();
+    if (pgPool) await pgPool.end().catch(() => {});
+  });

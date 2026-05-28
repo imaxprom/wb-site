@@ -4,6 +4,7 @@ import { requireAdmin } from "@/lib/api-auth";
 export const maxDuration = 600; // 10 minutes for full sync
 import {
   getReviews,
+  getReviewsPg,
   getReviewsCount,
   ensureDefaultAccount,
   getDefaultAccountApiKey,
@@ -15,6 +16,7 @@ import {
   getEnrichedCount,
   type WBFeedback,
 } from "@/lib/reviews-db";
+import { isPostgresEnabled, isPostgresReadonlyConnection } from "@/lib/postgres";
 
 const WB_FEEDBACKS_URL =
   "https://feedbacks-api.wildberries.ru/api/v1/feedbacks";
@@ -283,7 +285,7 @@ async function syncFromWB(apiKey: string, accountId: number, fullSync: boolean):
 }
 
 export async function GET(req: NextRequest) {
-  const authError = requireAdmin(req);
+  const authError = await requireAdmin(req);
   if (authError) return authError;
 
   try {
@@ -291,24 +293,36 @@ export async function GET(req: NextRequest) {
     const syncParam = sp.get("sync"); // "true" = incremental, "full" = full sync
     const shouldSync = syncParam === "true" || syncParam === "full";
     const fullSync = syncParam === "full";
+    const pgMode = isPostgresEnabled();
 
-    // Ensure account + get API key
-    const apiKey = resolveApiKey();
-    const account = ensureDefaultAccount(apiKey);
+    if (shouldSync && pgMode) {
+      return NextResponse.json(
+        {
+          error: isPostgresReadonlyConnection()
+            ? "Reviews sync is disabled in local PostgreSQL readonly mode"
+            : "Reviews sync via API is disabled in PostgreSQL mode. Use the server-side reviews sync job.",
+          code: "reviews_sync_disabled_pg",
+        },
+        { status: isPostgresReadonlyConnection() ? 403 : 409 }
+      );
+    }
+
+    const apiKey = pgMode ? "" : resolveApiKey();
+    const account = pgMode ? null : ensureDefaultAccount(apiKey);
 
     if (shouldSync) {
       cleanDemoData();
       try {
-        await syncFromWB(apiKey, account.id, fullSync);
+        await syncFromWB(apiKey, account!.id, fullSync);
       } catch (e) {
         setSyncStatusDb({ status: "error", message: (e as Error).message });
         throw e;
       }
 
       // Enrich in background — don't block the response, UI polls sync-status
-      enrichFromStatistics(apiKey, account.id).then(() => {
+      enrichFromStatistics(apiKey, account!.id).then(() => {
         const fmtN = (n: number) => n.toLocaleString("ru-RU");
-        const finalCount = getReviewsCount(account.id);
+        const finalCount = getReviewsCount(account!.id);
         const enrichedTotal = getEnrichedCount();
         setSyncStatusDb({
           loaded: finalCount, total: finalCount, status: "done",
@@ -318,7 +332,7 @@ export async function GET(req: NextRequest) {
         });
       }).catch(() => {
         const fmtN = (n: number) => n.toLocaleString("ru-RU");
-        const finalCount = getReviewsCount(account.id);
+        const finalCount = getReviewsCount(account!.id);
         setSyncStatusDb({ loaded: finalCount, total: finalCount, status: "done", message: `В базе: ${fmtN(finalCount)} ✅` });
       });
     }
@@ -356,7 +370,7 @@ export async function GET(req: NextRequest) {
       sort_dir: (sp.get("sort_dir") as "asc" | "desc") || "desc",
     };
 
-    const result = getReviews(filters);
+    const result = pgMode ? await getReviewsPg(filters) : getReviews(filters);
     return NextResponse.json(result);
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

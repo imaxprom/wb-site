@@ -15,7 +15,7 @@ interface ForecastArticle {
   avg_price: number; cogs_unit: number; logistics_unit: number;
   commission_unit: number; tax_unit: number; profit_per_unit: number;
   ad_spend: number; storage: number; penalties: number;
-  estimated_revenue: number; estimated_profit: number;
+  estimated_revenue: number; estimated_profit: number; estimated?: boolean;
 }
 
 interface ForecastDay {
@@ -69,7 +69,7 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
   const [data, setData] = useState<ForecastDay[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
-  const [meta, setMeta] = useState<{ econFrom: string; econTo: string; econDays: number; articlesCount: number } | null>(null);
+  const [meta, setMeta] = useState<{ econFrom: string; econTo: string; econDays: number; articlesCount: number; estimatedArticlesCount?: number } | null>(null);
   const [visibleCols, setVisibleCols] = useState<Set<string>>(() => new Set(COLUMNS.filter(c => c.defaultOn).map(c => c.key)));
   const [showSettings, setShowSettings] = useState(false);
 
@@ -131,7 +131,7 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
       <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] px-4 py-3">
         <p className="text-xs text-[var(--text-muted)]">
           Прогноз прибыли: <strong className="text-[var(--text)]">заказы × % выкупа × прибыль/шт − реклама − хранение − штрафы</strong>.
-          {meta && <> Юнит-экономика за <strong className="text-[var(--text)]">{fmtDate(meta.econFrom)} — {fmtDate(meta.econTo)}</strong> ({meta.articlesCount} артикулов). % выкупа — исторический.</>}
+          {meta && <> Юнит-экономика за <strong className="text-[var(--text)]">{fmtDate(meta.econFrom)} — {fmtDate(meta.econTo)}</strong> ({meta.articlesCount} артикулов{meta.estimatedArticlesCount ? `, ${meta.estimatedArticlesCount} оценочно` : ""}). % выкупа — исторический.</>}
         </p>
       </div>
 
@@ -258,6 +258,11 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
                           <span className="text-[var(--text-muted)] w-[90px] shrink-0 font-mono text-[11px]">{art.nm_id}</span>
                           <span className="text-[var(--text-muted)] opacity-60 w-[120px] shrink-0 truncate text-[11px]" title={art.article}>{art.article}</span>
                           {art.custom_name && <span className="text-white font-medium truncate text-xs" title={art.custom_name}>{art.custom_name}</span>}
+                          {art.estimated && (
+                            <span className="ml-2 rounded border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--warning)]">
+                              оценка
+                            </span>
+                          )}
                         </div>
                       </td>
                       {cols.map(c => {

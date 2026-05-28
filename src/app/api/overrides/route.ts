@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { initShipmentTables, getUserOverrides, setUserOverride } from "@/lib/shipment-db";
+import {
+  getUserOverrides,
+  getUserOverridesPg,
+  initShipmentTables,
+  initShipmentTablesPg,
+  setUserOverride,
+  setUserOverridePg,
+} from "@/lib/shipment-db";
 import { verifyToken } from "@/lib/auth";
+import { isPostgresEnabled } from "@/lib/postgres";
 
 initShipmentTables();
 
@@ -17,7 +25,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const overrides = getUserOverrides(userId);
+  const overrides = isPostgresEnabled()
+    ? (await initShipmentTablesPg(), await getUserOverridesPg(userId))
+    : getUserOverrides(userId);
   return NextResponse.json(overrides);
 }
 
@@ -44,11 +54,20 @@ export async function PUT(req: NextRequest) {
     // Use empty barcode if not provided (for customName updates)
     const barcodeKey = barcode || "";
 
-    setUserOverride(userId, articleWB, barcodeKey, {
-      customName,
-      perBox,
-      disabled,
-    });
+    if (isPostgresEnabled()) {
+      await initShipmentTablesPg();
+      await setUserOverridePg(userId, articleWB, barcodeKey, {
+        customName,
+        perBox,
+        disabled,
+      });
+    } else {
+      setUserOverride(userId, articleWB, barcodeKey, {
+        customName,
+        perBox,
+        disabled,
+      });
+    }
 
     return NextResponse.json({ ok: true });
   } catch (err) {

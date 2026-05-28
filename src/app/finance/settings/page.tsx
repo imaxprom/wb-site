@@ -3,7 +3,6 @@
 import { Fragment, useState, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
 import { ChevronDown, ChevronRight, Search } from "lucide-react";
-import { StatCard } from "@/components/StatCard";
 import { formatNumber, cn } from "@/lib/utils";
 
 
@@ -32,9 +31,9 @@ interface ArticleGroup {
   sellerArticles: string[];
   rows: RowData[];
   total: number;
+  realSizeCount: number;
   withCost: number;
   withoutCost: number;
-  coverage: number;
 }
 
 type CostApplyMode = "today" | "first_sale" | "custom";
@@ -48,6 +47,14 @@ interface CostEditState {
   error: string | null;
 }
 
+interface CogsHistoryRow {
+  barcode: string;
+  cost: number;
+  valid_from: string;
+  valid_to: string | null;
+  created_at: string | null;
+}
+
 function hasCost(row: RowData): boolean {
   return row.cost !== null && row.cost > 0;
 }
@@ -57,8 +64,53 @@ function todayInputValue(): string {
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 }
 
+function formatDate(value: string | null): string {
+  if (!value) return "сейчас";
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+  }).format(date);
+}
+
+function formatDateTime(value: string | null): string {
+  if (!value) return "—";
+  const normalized = value.includes("T") ? value : value.replace(" ", "T");
+  const date = new Date(normalized.endsWith("Z") ? normalized : `${normalized}Z`);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("ru-RU", {
+    timeZone: "Europe/Moscow",
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function getGroupKey(row: RowData): string {
   return row.nm_id > 0 ? `nm:${row.nm_id}` : `barcode:${row.barcode}`;
+}
+
+function isRealSizeName(sizeName: string): boolean {
+  const normalized = sizeName.trim().toLowerCase();
+  return Boolean(normalized && normalized !== "-" && normalized !== "—" && normalized !== "–" && normalized !== "нет" && normalized !== "без размера");
+}
+
+function compareSizeRows(a: RowData, b: RowData): number {
+  const aReal = isRealSizeName(a.ts_name);
+  const bReal = isRealSizeName(b.ts_name);
+  if (aReal !== bReal) return aReal ? -1 : 1;
+
+  const size = a.ts_name.localeCompare(b.ts_name, "ru", { numeric: true });
+  if (size !== 0) return size;
+  return a.barcode.localeCompare(b.barcode, "ru");
+}
+
+function countRealSizes(groupRows: RowData[]): number {
+  return new Set(groupRows.map((row) => row.ts_name.trim()).filter(isRealSizeName)).size;
 }
 
 function rowMatches(row: RowData, query: string): boolean {
@@ -81,11 +133,7 @@ function buildArticleGroups(sourceRows: RowData[]): ArticleGroup[] {
   }
 
   return Array.from(groups.entries()).map(([key, groupRows]) => {
-    const sortedRows = [...groupRows].sort((a, b) => {
-      const size = a.ts_name.localeCompare(b.ts_name, "ru");
-      if (size !== 0) return size;
-      return a.barcode.localeCompare(b.barcode, "ru");
-    });
+    const sortedRows = [...groupRows].sort(compareSizeRows);
     const sellerArticles = Array.from(
       new Set(sortedRows.map((row) => row.sa_name).filter(Boolean))
     ).sort((a, b) => a.localeCompare(b, "ru"));
@@ -99,9 +147,9 @@ function buildArticleGroups(sourceRows: RowData[]): ArticleGroup[] {
       sellerArticles,
       rows: sortedRows,
       total,
+      realSizeCount: countRealSizes(sortedRows),
       withCost,
       withoutCost: total - withCost,
-      coverage: total > 0 ? (withCost / total) * 100 : 0,
     };
   }).sort((a, b) => {
     if ((a.withoutCost > 0) !== (b.withoutCost > 0)) {
@@ -121,6 +169,10 @@ export default function CogsSettingsPage() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [costEdit, setCostEdit] = useState<CostEditState | null>(null);
+  const [costHistory, setCostHistory] = useState<CogsHistoryRow[] | null>(null);
+  const [costHistoryLoading, setCostHistoryLoading] = useState(false);
+  const [costHistoryError, setCostHistoryError] = useState<string | null>(null);
+  const [showCostHistory, setShowCostHistory] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
   const [bulkText, setBulkText] = useState("");
   const [bulkResult, setBulkResult] = useState<string | null>(null);
@@ -200,6 +252,10 @@ export default function CogsSettingsPage() {
   }, []);
 
   function openCostEdit(row: RowData) {
+    setCostHistory(null);
+    setCostHistoryError(null);
+    setCostHistoryLoading(false);
+    setShowCostHistory(false);
     setCostEdit({
       row,
       value: row.cost !== null ? String(row.cost) : "",
@@ -208,6 +264,23 @@ export default function CogsSettingsPage() {
       saving: false,
       error: null,
     });
+  }
+
+  async function loadCostHistory(barcode: string) {
+    setShowCostHistory(true);
+    setCostHistoryLoading(true);
+    setCostHistoryError(null);
+
+    try {
+      const resp = await fetch(`/api/finance/cogs?history=true&barcode=${encodeURIComponent(barcode)}`, { cache: "no-store" });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const rows = await resp.json() as CogsHistoryRow[];
+      setCostHistory(rows);
+    } catch {
+      setCostHistoryError("Не удалось загрузить историю себестоимости.");
+    } finally {
+      setCostHistoryLoading(false);
+    }
   }
 
   async function saveCostEdit() {
@@ -341,9 +414,9 @@ export default function CogsSettingsPage() {
         ...group,
         rows: matchedRows,
         total: matchedRows.length,
+        realSizeCount: countRealSizes(matchedRows),
         withCost,
         withoutCost: matchedRows.length - withCost,
-        coverage: matchedRows.length > 0 ? (withCost / matchedRows.length) * 100 : 0,
       }];
     });
   }, [articleGroups, search]);
@@ -362,9 +435,8 @@ export default function CogsSettingsPage() {
 
   // Stats
   const total = rows.length;
-  const withCost = rows.filter(hasCost).length;
-  const withoutCost = total - withCost;
-  const coverage = total > 0 ? (withCost / total) * 100 : 0;
+  const totalArticles = articleGroups.length;
+  const withoutCost = rows.filter((row) => !hasCost(row)).length;
 
   if (loading) {
     return (
@@ -377,7 +449,7 @@ export default function CogsSettingsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-3">
             <Link
@@ -392,32 +464,28 @@ export default function CogsSettingsPage() {
             Управление себестоимостью по баркодам
           </p>
         </div>
-        <button
-          onClick={() => setShowBulkImport(!showBulkImport)}
-          className="px-4 py-2 text-sm font-medium rounded-lg border border-[var(--border)] bg-[var(--bg-card)] hover:bg-[var(--bg-card-hover)] text-[var(--text)] transition-colors"
-        >
-          📥 Загрузить из файла
-        </button>
-      </div>
-
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-        <StatCard
-          title="Всего баркодов"
-          value={formatNumber(total) + " шт"}
-          color="default"
-        />
-        <StatCard
-          title="Без себестоимости"
-          value={formatNumber(withoutCost) + " шт"}
-          color={withoutCost === 0 ? "success" : withoutCost < total * 0.2 ? "warning" : "danger"}
-        />
-        <StatCard
-          title="Покрытие"
-          value={coverage.toFixed(1) + "%"}
-          subtitle={`${withCost} из ${total} баркодов`}
-          color={coverage >= 90 ? "success" : coverage >= 50 ? "warning" : "danger"}
-        />
+        <div className="flex flex-col items-end gap-2">
+          <div className="grid grid-cols-3 gap-2 text-right text-sm">
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2">
+              <div className="text-xs text-[var(--text-muted)]">Баркодов</div>
+              <div className="font-semibold">{formatNumber(total)}</div>
+            </div>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2">
+              <div className="text-xs text-[var(--text-muted)]">Товаров</div>
+              <div className="font-semibold">{formatNumber(totalArticles)}</div>
+            </div>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2">
+              <div className="text-xs text-[var(--text-muted)]">Без цены</div>
+              <div className={cn("font-semibold", withoutCost > 0 ? "text-[var(--danger)]" : "text-[var(--success)]")}>{formatNumber(withoutCost)}</div>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowBulkImport(!showBulkImport)}
+            className="w-fit px-4 py-2 text-sm font-medium rounded-lg border border-[var(--border)] bg-[var(--bg-card)] hover:bg-[var(--bg-card-hover)] text-[var(--text)] transition-colors"
+          >
+            📥 Загрузить из файла
+          </button>
+        </div>
       </div>
 
       {/* Bulk import panel */}
@@ -472,20 +540,20 @@ export default function CogsSettingsPage() {
         <div className="data-table-wrapper">
           <table className="data-table table-fixed">
             <colgroup>
-              <col className="w-[16%]" />
-              <col className="w-[34%]" />
-              <col className="w-[10%]" />
-              <col className="w-[18%]" />
+              <col className="w-[14%]" />
+              <col className="w-[30%]" />
               <col className="w-[12%]" />
-              <col className="w-[10%]" />
+              <col className="w-[12%]" />
+              <col className="w-[17%]" />
+              <col className="w-[15%]" />
             </colgroup>
             <thead>
               <tr>
                 <th>Артикул</th>
                 <th>Артикул продавца</th>
-                <th className="num">Баркоды</th>
-                <th className="num">Без себестоимости</th>
-                <th className="num">Покрытие</th>
+                <th className="text-center">Размер</th>
+                <th className="text-center">Баркод</th>
+                <th className="text-center">Себестоимость</th>
                 <th className="text-center">Статус</th>
               </tr>
             </thead>
@@ -528,11 +596,11 @@ export default function CogsSettingsPage() {
                           )}
                         </span>
                       </td>
-                      <td className="num">{formatNumber(group.total)}</td>
-                      <td className={cn(hasMissingCost ? "text-[var(--danger)]" : "text-[var(--success)]")}>
+                      <td className="text-center tabular-nums">{formatNumber(group.realSizeCount)}</td>
+                      <td className="text-center tabular-nums">{formatNumber(group.total)}</td>
+                      <td className={cn("text-center tabular-nums", hasMissingCost ? "text-[var(--danger)]" : "text-[var(--success)]")}>
                         {formatNumber(group.withoutCost)}
                       </td>
-                      <td className="num">{group.coverage.toFixed(1)}%</td>
                       <td className="text-center text-base">
                         {hasMissingCost ? "🔴" : "✅"}
                       </td>
@@ -540,53 +608,34 @@ export default function CogsSettingsPage() {
 
                     {isExpanded && (
                       <>
-                        <tr className="bg-[var(--bg)]/70">
-                          <td
-                            colSpan={2}
-                            className="pl-12 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]"
-                          >
-                            Баркод
-                          </td>
-                          <td className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
-                            Размер
-                          </td>
-                          <td
-                            colSpan={2}
-                            className="num text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]"
-                          >
-                            Себестоимость
-                          </td>
-                          <td className="text-center text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
-                            Статус
-                          </td>
-                        </tr>
-
-                        {group.rows.map((row) => {
+                        {group.rows.map((row, rowIndex) => {
                           const rowHasCost = hasCost(row);
                           return (
                             <tr
                               key={`${group.key}:${row.barcode}`}
                               className={cn(
-                                "bg-[var(--bg)]/40 text-sm",
+                                "bg-[var(--bg)]/45 text-sm",
+                                rowIndex === 0 && "[&>td]:border-t [&>td]:border-t-[var(--border)]",
                                 !rowHasCost && "border-l-2 border-[var(--danger)] bg-[var(--danger)]/5"
                               )}
                             >
-                              <td
-                                colSpan={2}
-                                className="pl-12 font-mono text-[var(--text-muted)]"
-                              >
+                              <td aria-hidden="true" />
+                              <td aria-hidden="true" />
+                              <td className="text-center text-[var(--text)]">
+                                <span className="inline-block min-w-10 text-left">{row.ts_name || "—"}</span>
+                              </td>
+                              <td className="text-center font-mono text-[var(--text-muted)]">
                                 {row.barcode}
                               </td>
-                              <td className="text-[var(--text)]">
-                                {row.ts_name || "—"}
-                              </td>
-                              <td colSpan={2} className="num tabular-nums">
+                              <td className="text-center tabular-nums">
                                 <button
                                   type="button"
                                   onClick={() => openCostEdit(row)}
                                   className={cn(
-                                    "rounded px-2 py-0.5 text-right tabular-nums hover:bg-[var(--bg-card-hover)] transition-colors",
-                                    rowHasCost ? "text-[var(--text)]" : "text-[var(--danger)] italic"
+                                    "inline-flex min-w-[104px] cursor-pointer justify-center rounded-md border px-2.5 py-1 text-sm tabular-nums transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/50",
+                                    rowHasCost
+                                      ? "border-[var(--border)] bg-[var(--bg-card)] text-[var(--text)] hover:border-[var(--accent)] hover:bg-[var(--accent)]/10 hover:text-white"
+                                      : "border-[var(--danger)]/30 bg-[var(--danger)]/10 text-[var(--danger)] italic hover:border-[var(--danger)] hover:bg-[var(--danger)]/20"
                                   )}
                                   title="Нажмите для редактирования"
                                 >
@@ -621,9 +670,7 @@ export default function CogsSettingsPage() {
           <span>|</span>
           <span>Без себестоимости: <strong className={withoutCost > 0 ? "text-[var(--danger)]" : "text-[var(--success)]"}>{formatNumber(withoutCost)}</strong></span>
           <span>|</span>
-          <span>Покрытие: <strong className={coverage >= 90 ? "text-[var(--success)]" : coverage >= 50 ? "text-[var(--warning)]" : "text-[var(--danger)]"}>{coverage.toFixed(1)}%</strong></span>
-          <span>|</span>
-          <span>Артикулов: <strong className="text-[var(--text)]">{formatNumber(articleGroups.length)}</strong></span>
+          <span>Товаров: <strong className="text-[var(--text)]">{formatNumber(totalArticles)}</strong></span>
           {search && <span>| Показано групп: <strong className="text-[var(--text)]">{formatNumber(visibleGroups.length)}</strong></span>}
         </div>
       </div>
@@ -637,16 +684,67 @@ export default function CogsSettingsPage() {
             className="w-full max-w-xl rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="space-y-1">
-              <h3 className="text-xl font-semibold text-[var(--text)]">
-                Себестоимость баркода
-              </h3>
-              <p className="font-mono text-sm text-[var(--text-muted)]">
-                {costEdit.row.barcode}
-              </p>
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <h3 className="text-xl font-semibold text-[var(--text)]">
+                  Себестоимость баркода
+                </h3>
+                <p className="font-mono text-sm text-[var(--text-muted)]">
+                  {costEdit.row.barcode}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => loadCostHistory(costEdit.row.barcode)}
+                disabled={costEdit.saving || costHistoryLoading}
+                className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm text-[var(--text)] hover:bg-[var(--bg-card-hover)] disabled:opacity-50"
+              >
+                {costHistoryLoading ? "Загрузка…" : "История"}
+              </button>
             </div>
 
             <div className="mt-5 space-y-4">
+              {showCostHistory && (
+                <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3">
+                  <div className="mb-2 text-sm font-medium text-[var(--text-muted)]">
+                    История изменения себестоимости
+                  </div>
+                  {costHistoryError && (
+                    <p className="text-sm text-[var(--danger)]">{costHistoryError}</p>
+                  )}
+                  {!costHistoryError && costHistoryLoading && (
+                    <p className="text-sm text-[var(--text-muted)]">Загрузка истории…</p>
+                  )}
+                  {!costHistoryError && !costHistoryLoading && costHistory?.length === 0 && (
+                    <p className="text-sm text-[var(--text-muted)]">История пока пустая.</p>
+                  )}
+                  {!costHistoryError && !costHistoryLoading && costHistory && costHistory.length > 0 && (
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[460px] border-collapse text-sm">
+                        <thead>
+                          <tr className="text-xs uppercase tracking-wide text-[var(--text-muted)]">
+                            <th className="border-b border-[var(--border)] px-2 py-2 text-left">С даты</th>
+                            <th className="border-b border-[var(--border)] px-2 py-2 text-left">По дату</th>
+                            <th className="border-b border-[var(--border)] px-2 py-2 text-right">Себестоимость</th>
+                            <th className="border-b border-[var(--border)] px-2 py-2 text-left">Создано</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {costHistory.map((row) => (
+                            <tr key={`${row.barcode}:${row.valid_from}:${row.valid_to || ""}:${row.created_at || ""}`}>
+                              <td className="border-b border-[var(--border)]/70 px-2 py-2">{formatDate(row.valid_from)}</td>
+                              <td className="border-b border-[var(--border)]/70 px-2 py-2">{formatDate(row.valid_to)}</td>
+                              <td className="border-b border-[var(--border)]/70 px-2 py-2 text-right tabular-nums">{RUB(row.cost)}</td>
+                              <td className="border-b border-[var(--border)]/70 px-2 py-2">{formatDateTime(row.created_at)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <label className="block">
                 <span className="text-sm font-medium text-[var(--text-muted)]">
                   Себестоимость

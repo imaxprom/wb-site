@@ -9,7 +9,7 @@ const STATUS_PATH = path.join(process.cwd(), "public", "data", "monitor", "auth-
  * GET /api/monitor/auth-status — возвращает последнее состояние проверки (auth-check.js).
  */
 export async function GET(req: NextRequest) {
-  const authError = requireMonitorAdmin(req);
+  const authError = await requireMonitorAdmin(req);
   if (authError) return authError;
 
   try {

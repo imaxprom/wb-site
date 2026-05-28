@@ -4,14 +4,19 @@ import { apiError } from "@/lib/api-utils";
 import { isCronRequest } from "@/lib/cron-auth";
 import {
   initShipmentTables,
+  saveOrdersPg,
   saveOrders,
+  saveProductsPg,
   saveStock,
+  saveStockPg,
   saveProducts,
   setUploadDate,
+  setUploadDatePg,
 } from "@/lib/shipment-db";
 import { transformCards, transformStocks, transformOrders } from "@/lib/wb-transformers";
 import type { WBCard, WBStockItem, WBOrder, WBCardsResponse } from "@/lib/wb-api";
 import { getWbApiKey } from "@/lib/wb-api-key";
+import { isPostgresEnabled, isPostgresReadonlyConnection } from "@/lib/postgres";
 
 function readApiKey(headerKey?: string | null): string {
   if (headerKey) return headerKey;
@@ -90,13 +95,20 @@ async function fetchAllOrders(apiKey: string, days: number): Promise<WBOrder[]> 
 
 export async function POST(req: NextRequest) {
   if (!isCronRequest(req)) {
-    const authError = requireAdmin(req);
+    const authError = await requireAdmin(req);
     if (authError) return authError;
   }
 
   try {
     const body = await req.json().catch(() => ({})) as { days?: number };
     const days = Number(body.days) || 28;
+
+    if (isPostgresEnabled() && isPostgresReadonlyConnection()) {
+      return NextResponse.json(
+        { error: "Sync is disabled in local PostgreSQL readonly mode" },
+        { status: 403 }
+      );
+    }
 
     const apiKey = readApiKey(req.headers.get("x-wb-api-key"));
     if (!apiKey) {
@@ -121,10 +133,19 @@ export async function POST(req: NextRequest) {
     // Save ALL orders to SQLite (accumulate, no trimming)
     // Duplicates handled by INSERT OR IGNORE / ON CONFLICT in shipment-db
     // Stock is always replaced (current state), products are upserted
-    const productsResult = saveProducts(products);
-    const stockResult = saveStock(stock);
-    saveOrders(allOrders);
-    setUploadDate(new Date().toISOString());
+    const productsResult = isPostgresEnabled()
+      ? await saveProductsPg(products)
+      : saveProducts(products);
+    const stockResult = isPostgresEnabled()
+      ? await saveStockPg(stock)
+      : saveStock(stock);
+    if (isPostgresEnabled()) {
+      await saveOrdersPg(allOrders);
+      await setUploadDatePg(new Date().toISOString());
+    } else {
+      saveOrders(allOrders);
+      setUploadDate(new Date().toISOString());
+    }
 
     return NextResponse.json({
       orders: allOrders.length,

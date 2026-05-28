@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { getDb, initShipmentTables } from "@/lib/shipment-db";
+import { isPostgresEnabled, pgGet, pgRows } from "@/lib/postgres";
 
 interface AlertRow {
   article_wb: string;
@@ -24,19 +25,33 @@ function tableExists(tableName: string): boolean {
   return Boolean(row);
 }
 
+async function tableExistsPg(tableName: string): Promise<boolean> {
+  const row = await pgGet<{ exists: boolean }>(`
+    SELECT EXISTS (
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = ?
+    ) AS exists
+  `, [tableName]);
+  return Boolean(row?.exists);
+}
+
 export async function GET(request: NextRequest) {
-  const authError = requireAdmin(request);
+  const authError = await requireAdmin(request);
   if (authError) return authError;
 
   try {
     initShipmentTables();
-    const db = getDb();
+    const pgMode = isPostgresEnabled();
+    const db = pgMode ? null : getDb();
 
-    if (!tableExists("warehouse_measurements")) {
+    const hasWarehouseMeasurements = pgMode
+      ? await tableExistsPg("warehouse_measurements")
+      : tableExists("warehouse_measurements");
+    if (!hasWarehouseMeasurements) {
       return NextResponse.json({ measurementOverCardCount: 0, newMeasurementsCount: 0, items: [], newItems: [] });
     }
 
-    const items = db.prepare(`
+    const itemsSql = `
       WITH latest AS (
         SELECT
           article_wb,
@@ -44,7 +59,7 @@ export async function GET(request: NextRequest) {
           measured_at,
           ROW_NUMBER() OVER (
             PARTITION BY article_wb
-            ORDER BY datetime(measured_at) DESC, dim_id DESC
+            ORDER BY measured_at DESC, dim_id DESC
           ) AS rn
         FROM warehouse_measurements
         WHERE volume > 0
@@ -66,9 +81,12 @@ export async function GET(request: NextRequest) {
       WHERE latest.rn = 1
         AND latest.volume > card.card_volume
       ORDER BY latest.article_wb
-    `).all() as AlertRow[];
+    `;
+    const items = pgMode
+      ? await pgRows<AlertRow>(itemsSql)
+      : db!.prepare(itemsSql.replace("ORDER BY measured_at DESC", "ORDER BY datetime(measured_at) DESC")).all() as AlertRow[];
 
-    const newItems = db.prepare(`
+    const newItemsSql = `
       WITH latest AS (
         SELECT
           article_wb,
@@ -76,7 +94,7 @@ export async function GET(request: NextRequest) {
           measured_at,
           ROW_NUMBER() OVER (
             PARTITION BY article_wb
-            ORDER BY datetime(measured_at) DESC, dim_id DESC
+            ORDER BY measured_at DESC, dim_id DESC
           ) AS rn
         FROM warehouse_measurements
         WHERE volume > 0
@@ -87,9 +105,13 @@ export async function GET(request: NextRequest) {
         measured_at
       FROM latest
       WHERE rn = 1
-        AND datetime(measured_at) >= datetime('now', '-7 days')
-      ORDER BY datetime(measured_at) DESC, article_wb
-    `).all() as NewMeasurementRow[];
+        AND measured_at >= ?
+      ORDER BY measured_at DESC, article_wb
+    `;
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const newItems = pgMode
+      ? await pgRows<NewMeasurementRow>(newItemsSql, [sevenDaysAgo])
+      : db!.prepare(newItemsSql.replace("ORDER BY measured_at DESC", "ORDER BY datetime(measured_at) DESC")).all(sevenDaysAgo) as NewMeasurementRow[];
 
     return NextResponse.json({
       measurementOverCardCount: items.length,

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import { requireMonitorAdmin } from "@/lib/monitor-auth";
+import { isPostgresEnabled, isPostgresReadonlyConnection } from "@/lib/postgres";
 
 /**
  * GET /api/monitor/summary — сводный статус всех sync-систем.
@@ -59,8 +60,30 @@ function tailLog(logPath: string, lines: number, grepRegex?: RegExp): string[] {
 }
 
 export async function GET(req: NextRequest) {
-  const authError = requireMonitorAdmin(req);
+  const authError = await requireMonitorAdmin(req);
   if (authError) return authError;
+
+  if (isPostgresEnabled() && isPostgresReadonlyConnection()) {
+    return NextResponse.json({
+      overall: "warn",
+      mode: "local_postgres_readonly",
+      message: "Runtime monitoring is disabled in local PostgreSQL readonly mode. Localhost reads production business data only.",
+      sync: {
+        lastRun: null,
+        lastRunHoursAgo: null,
+        today: null,
+        dataLagDays: null,
+      },
+      auth: {
+        api: null,
+        lk: null,
+        apiReason: null,
+        lkReason: null,
+        checkedAt: null,
+      },
+      alertsRecent: [],
+    });
+  }
 
   const dataDir = path.join(process.cwd(), "data");
   const monitorDir = path.join(process.cwd(), "public", "data", "monitor");

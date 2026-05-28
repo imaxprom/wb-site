@@ -131,7 +131,7 @@ cd ~/website && bash scripts/prod-safe-build.sh
 - `daily-sync.js` — каждый час;
 - `sync-weekly-report.js` — Пн-Ср, 10:00-23:00 МСК;
 - `shipment-sync.sh` — каждый час, `days=28` по умолчанию;
-- `reviews-sync.js` — каждые 10 минут;
+- `reviews-sync.js` — каждые 15 минут, один archive-запрос WB за запуск;
 - `reviews-complaints.js` — каждые 30 минут;
 - `vps-watchdog.py` — каждые 5 минут;
 - `data-health-cron.sh` — каждый час;
