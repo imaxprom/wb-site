@@ -535,9 +535,17 @@ function warehouseTooltip(row: NeedRow) {
 function StatPill({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "need" | "packs" }) {
   const toneClass = tone === "need" ? "text-[#f97316]" : tone === "packs" ? "text-[#38bdf8]" : "text-white";
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2">
+    <div className="min-w-0 rounded-md border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2">
       <div className="text-[10px] font-medium uppercase text-[var(--text-muted)]">{label}</div>
       <div className={`mt-1 text-base font-semibold tabular-nums ${toneClass}`}>{value}</div>
+    </div>
+  );
+}
+
+function SummaryStatPill(props: Parameters<typeof StatPill>[0]) {
+  return (
+    <div className="w-[170px] shrink-0">
+      <StatPill {...props} />
     </div>
   );
 }
@@ -1402,13 +1410,13 @@ export default function PurchasesTestPage({
         <>
 
           <div className="overflow-x-auto pb-1">
-            <div className="grid min-w-[1080px] grid-cols-6 gap-3">
-              <StatPill label="Остатки WB в штуках" value={formatNumber(totals.stock)} />
-              <StatPill label={`Цель ${formatNumber(targetDays)} дней в штуках`} value={formatNumber(totals.sales)} />
-              <StatPill label="Дефицит до склада" value={formatNumber(totals.needBeforeWarehouse)} />
-              <StatPill label="Остаток склада" value={formatNumber(totals.warehouse)} />
-              <StatPill label="К закупке в штуках" value={formatNumber(totals.need)} tone="need" />
-              <StatPill label="К закупке в пачках" value={formatNumber(totals.packs)} tone="need" />
+            <div className="flex min-w-[1080px] flex-nowrap gap-3">
+              <SummaryStatPill label="Остатки WB в штуках" value={formatNumber(totals.stock)} />
+              <SummaryStatPill label={`Цель ${formatNumber(targetDays)} дней в штуках`} value={formatNumber(totals.sales)} />
+              <SummaryStatPill label="Дефицит до склада" value={formatNumber(totals.needBeforeWarehouse)} />
+              <SummaryStatPill label="Остаток склада" value={formatNumber(totals.warehouse)} />
+              <SummaryStatPill label="К закупке в штуках" value={formatNumber(totals.need)} tone="need" />
+              <SummaryStatPill label="К закупке в пачках" value={formatNumber(totals.packs)} tone="need" />
             </div>
           </div>
 
