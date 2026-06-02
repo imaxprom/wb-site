@@ -1,9 +1,11 @@
+import PurchasesCalculator from "./test/page";
+
 export default function PurchasesPage() {
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">Закупки</h2>
-      </div>
-    </div>
+    <PurchasesCalculator
+      title="Закупки"
+      description="Расчёт потребности по комплектам: остатки из Google Sheets, продажи и потребность в штуках и пачках."
+      showPlan={false}
+    />
   );
 }
