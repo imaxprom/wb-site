@@ -1085,7 +1085,7 @@ function GoogleStockVariant({ sheet, loading, error }: { sheet: PurchaseStockShe
               <StatPill label="Всего пачек" value={formatNumber(sheet.totals.packs)} tone="packs" />
               <StatPill label="Пачек в размерных коробах" value={formatNumber(sheet.totals.sizeBoxPacks)} />
             </div>
-            <div className="grid min-w-0 gap-4 2xl:grid-cols-2">
+            <div className="grid min-w-0 gap-4 xl:grid-cols-2">
               <StockGroupTable title="Маленькие размеры" rows={sheet.small} bagPacks={600} />
               <StockGroupTable title="Большие размеры: 48-50 / 50-52 / 52-54" rows={sheet.big} bagPacks={300} />
             </div>
@@ -1407,7 +1407,7 @@ export default function PurchasesTestPage({
             <StatPill label="Дефицит до склада" value={formatNumber(totals.needBeforeWarehouse)} />
             <StatPill label="Остаток склада" value={formatNumber(totals.warehouse)} />
             <StatPill label="К закупке в штуках" value={formatNumber(totals.need)} tone="need" />
-            <StatPill label="К закупке в пачках" value={formatNumber(totals.packs)} tone="packs" />
+            <StatPill label="К закупке в пачках" value={formatNumber(totals.packs)} tone="need" />
           </div>
 
           <PurchaseMultiplierSelector selected={purchaseMultiplier} onSelect={setPurchaseMultiplier} />
