@@ -1401,13 +1401,15 @@ export default function PurchasesTestPage({
       ) : (
         <>
 
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-            <StatPill label="Остатки WB в штуках" value={formatNumber(totals.stock)} />
-            <StatPill label={`Цель ${formatNumber(targetDays)} дней в штуках`} value={formatNumber(totals.sales)} />
-            <StatPill label="Дефицит до склада" value={formatNumber(totals.needBeforeWarehouse)} />
-            <StatPill label="Остаток склада" value={formatNumber(totals.warehouse)} />
-            <StatPill label="К закупке в штуках" value={formatNumber(totals.need)} tone="need" />
-            <StatPill label="К закупке в пачках" value={formatNumber(totals.packs)} tone="need" />
+          <div className="overflow-x-auto pb-1">
+            <div className="grid min-w-[1080px] grid-cols-6 gap-3">
+              <StatPill label="Остатки WB в штуках" value={formatNumber(totals.stock)} />
+              <StatPill label={`Цель ${formatNumber(targetDays)} дней в штуках`} value={formatNumber(totals.sales)} />
+              <StatPill label="Дефицит до склада" value={formatNumber(totals.needBeforeWarehouse)} />
+              <StatPill label="Остаток склада" value={formatNumber(totals.warehouse)} />
+              <StatPill label="К закупке в штуках" value={formatNumber(totals.need)} tone="need" />
+              <StatPill label="К закупке в пачках" value={formatNumber(totals.packs)} tone="need" />
+            </div>
           </div>
 
           <PurchaseMultiplierSelector selected={purchaseMultiplier} onSelect={setPurchaseMultiplier} />
