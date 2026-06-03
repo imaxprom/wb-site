@@ -705,7 +705,7 @@ function HeatmapVariant({ rows }: { rows: NeedRow[] }) {
         ))}
         {colors.map((color) => (
           <Fragment key={color}>
-            <div key={`${color}-label`} className="flex min-h-12 items-center text-sm font-medium text-white">{color}</div>
+            <div key={`${color}-label`} className="flex h-16 items-center text-sm font-medium text-white">{color}</div>
             {columns.map((column) => {
               if (column.type === "purchase") {
                 const purchasePacks = Math.max(0, ...column.sizes.map((size) => getCell(rows, color, size)?.packs || 0));
@@ -714,7 +714,7 @@ function HeatmapVariant({ rows }: { rows: NeedRow[] }) {
                 return (
                   <div
                     key={`${color}-purchase-${column.key}`}
-                    className="grid min-h-12 place-items-center rounded border border-[#38bdf8]/40 text-center text-xs tabular-nums"
+                    className="grid h-16 place-items-center rounded border border-[#38bdf8]/40 text-center text-xs tabular-nums"
                     style={{ background: purchasePacks > 0 ? bg : "var(--bg)" }}
                     title={`${color}: закупка ${column.key === "small" ? "малой" : "большой"} группы ${formatNumber(purchasePacks)} пач. Берём максимум по размерам: ${column.sizes.map((size) => `${size}: ${formatNumber(getCell(rows, color, size)?.packs || 0)} пач`).join(", ")}`}
                   >
@@ -731,7 +731,7 @@ function HeatmapVariant({ rows }: { rows: NeedRow[] }) {
               return (
                 <div
                   key={`${color}-${column.size}`}
-                  className="grid min-h-12 place-items-center rounded border border-[var(--border)] text-center text-xs tabular-nums"
+                  className="grid h-16 place-items-center rounded border border-[var(--border)] text-center text-xs tabular-nums"
                   style={{ background: row && row.packs > 0 ? bg : "var(--bg)" }}
                   title={row ? `${color} ${column.size}: до склада ${formatNumber(row.needBeforeWarehousePieces)} шт, ${warehouseTooltip(row)}, к закупке ${formatNumber(row.needPieces)} шт, ${formatNumber(row.packs)} пач.` : ""}
                 >
