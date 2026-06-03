@@ -542,14 +542,6 @@ function StatPill({ label, value, tone = "default" }: { label: string; value: st
   );
 }
 
-function SummaryStatPill(props: Parameters<typeof StatPill>[0]) {
-  return (
-    <div className="w-[170px] shrink-0">
-      <StatPill {...props} />
-    </div>
-  );
-}
-
 function VariantHeader({ icon: Icon, title }: { icon: LucideIcon; title: string }) {
   return (
     <div className="flex items-center gap-2 border-b border-[var(--border)] px-4 py-3">
@@ -705,7 +697,7 @@ function HeatmapVariant({ rows }: { rows: NeedRow[] }) {
         ))}
         {colors.map((color) => (
           <Fragment key={color}>
-            <div key={`${color}-label`} className="flex h-24 items-center text-sm font-medium text-white">{color}</div>
+            <div key={`${color}-label`} className="flex h-16 items-center text-sm font-medium text-white">{color}</div>
             {columns.map((column) => {
               if (column.type === "purchase") {
                 const purchasePacks = Math.max(0, ...column.sizes.map((size) => getCell(rows, color, size)?.packs || 0));
@@ -714,7 +706,7 @@ function HeatmapVariant({ rows }: { rows: NeedRow[] }) {
                 return (
                   <div
                     key={`${color}-purchase-${column.key}`}
-                    className="grid h-24 place-items-center rounded border border-[#38bdf8]/40 text-center text-xs tabular-nums"
+                    className="grid h-16 place-items-center rounded border border-[#38bdf8]/40 text-center text-xs tabular-nums"
                     style={{ background: purchasePacks > 0 ? bg : "var(--bg)" }}
                     title={`${color}: закупка ${column.key === "small" ? "малой" : "большой"} группы ${formatNumber(purchasePacks)} пач. Берём максимум по размерам: ${column.sizes.map((size) => `${size}: ${formatNumber(getCell(rows, color, size)?.packs || 0)} пач`).join(", ")}`}
                   >
@@ -731,7 +723,7 @@ function HeatmapVariant({ rows }: { rows: NeedRow[] }) {
               return (
                 <div
                   key={`${color}-${column.size}`}
-                  className="grid h-24 place-items-center rounded border border-[var(--border)] text-center text-xs tabular-nums"
+                  className="grid h-16 place-items-center rounded border border-[var(--border)] text-center text-xs tabular-nums"
                   style={{ background: row && row.packs > 0 ? bg : "var(--bg)" }}
                   title={row ? `${color} ${column.size}: до склада ${formatNumber(row.needBeforeWarehousePieces)} шт, ${warehouseTooltip(row)}, к закупке ${formatNumber(row.needPieces)} шт, ${formatNumber(row.packs)} пач.` : ""}
                 >
@@ -1410,13 +1402,13 @@ export default function PurchasesTestPage({
         <>
 
           <div className="overflow-x-auto pb-1">
-            <div className="flex min-w-[1080px] flex-nowrap gap-3">
-              <SummaryStatPill label="Остатки WB в штуках" value={formatNumber(totals.stock)} />
-              <SummaryStatPill label={`Цель ${formatNumber(targetDays)} дней в штуках`} value={formatNumber(totals.sales)} />
-              <SummaryStatPill label="Дефицит до склада" value={formatNumber(totals.needBeforeWarehouse)} />
-              <SummaryStatPill label="Остаток склада" value={formatNumber(totals.warehouse)} />
-              <SummaryStatPill label="К закупке в штуках" value={formatNumber(totals.need)} tone="need" />
-              <SummaryStatPill label="К закупке в пачках" value={formatNumber(totals.packs)} tone="need" />
+            <div className="grid min-w-[1080px] grid-cols-6 gap-3">
+              <StatPill label="Остатки WB в штуках" value={formatNumber(totals.stock)} />
+              <StatPill label={`Цель ${formatNumber(targetDays)} дней в штуках`} value={formatNumber(totals.sales)} />
+              <StatPill label="Дефицит до склада" value={formatNumber(totals.needBeforeWarehouse)} />
+              <StatPill label="Остаток склада" value={formatNumber(totals.warehouse)} />
+              <StatPill label="К закупке в штуках" value={formatNumber(totals.need)} tone="need" />
+              <StatPill label="К закупке в пачках" value={formatNumber(totals.packs)} tone="need" />
             </div>
           </div>
 
