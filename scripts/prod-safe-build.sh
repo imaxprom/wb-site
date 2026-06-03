@@ -61,6 +61,9 @@ wait_for_health() {
 echo "[deploy] stopping PM2 app"
 pm2 stop "$APP_NAME" || exit 1
 
+echo "[deploy] removing .next for clean build"
+rm -rf .next
+
 echo "[deploy] building"
 if ! npm run build -- --webpack; then
   restore_previous_build "build failed"
