@@ -44,7 +44,7 @@
 - daily-sync разбит на 4 независимых sync-модуля
 - Автотесты API (scripts/test-api.sh, 9 эндпоинтов)
 - busy_timeout=5000 на всех DB-соединениях (модули, sync, API routes)
-- WAL checkpoint после записи в weekly_reports.db
+- WAL checkpoint после записи в PostgreSQL weekly tables
 - Процент выкупа из realization (delivery_amount/quantity) вместо shipment_orders.isCancel
 
 ### Выполнено 05.05.2026
@@ -133,7 +133,7 @@ if (!JWT_SECRET) throw new Error("JWT_SECRET environment variable is required in
 
 ---
 
-### 2.6 Async внутри SQLite-транзакции
+### 2.6 Async внутри PostgreSQL-транзакции
 
 **Где:** `src/lib/daily-sync.ts`, строка ~241
 ```typescript
@@ -150,7 +150,7 @@ db.transaction(() => {
 })();
 ```
 
-**Зачем:** better-sqlite3 транзакции — синхронные. Async внутри них может привести к блокировке БД.
+**Зачем:** pg транзакции — синхронные. Async внутри них может привести к блокировке БД.
 
 ---
 

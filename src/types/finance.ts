@@ -68,6 +68,7 @@ export interface PnlData {
 export interface DailyRow {
   date: string;
   orders_rub: number;
+  orders_count: number;
   sales_rub: number;
   returns_rub: number;
   realization: number;

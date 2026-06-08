@@ -2,15 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import {
-  getAcceptedSupplyContent,
   getAcceptedSupplyContentPg,
-  getDb,
-  initShipmentTables,
-  saveAcceptedSupplyContent,
   saveAcceptedSupplyContentPg,
   type AcceptedSupplyContentInput,
 } from "@/lib/shipment-db";
-import { isPostgresEnabled, isPostgresReadonlyConnection, pgRows } from "@/lib/postgres";
+import { isPostgresReadonlyConnection, pgGet, pgRows } from "@/lib/postgres";
 import { getWbApiKey } from "@/lib/wb-api-key";
 
 const SUPPLIES_API = "https://supplies-api.wildberries.ru/api/v1";
@@ -70,30 +66,68 @@ interface ArticleSummary {
 
 type BarcodeSummary = ArticleSummary["barcodes"][number];
 
+interface StoredSupplyContentPayload {
+  source?: "package" | "goods";
+  packages?: WbPackage[];
+  goods?: WbSupplyGood[];
+  articles?: ArticleSummary[];
+  meta?: {
+    source?: "package" | "goods";
+    packageCount?: number;
+    totalQuantity?: number;
+    totalAcceptedQuantity?: number;
+    articleCount?: number;
+    barcodeCount?: number;
+  };
+}
+
 const packageCache = new Map<string, { ts: number; data: WbPackage[] }>();
 const goodsCache = new Map<string, { ts: number; data: WbSupplyGood[] }>();
 const detailCache = new Map<string, { ts: number; data: WbSupplyDetail }>();
 
-function shouldMirrorSuppliesToPostgres(): boolean {
-  return !isPostgresEnabled() && process.env.SUPPLIES_PG_MIRROR === "1" && Boolean(process.env.DATABASE_URL);
-}
-
-async function mirrorAcceptedSupplyContent(input: AcceptedSupplyContentInput): Promise<void> {
-  if (!shouldMirrorSuppliesToPostgres()) return;
-  try {
-    await saveAcceptedSupplyContentPg(input);
-  } catch (error) {
-    console.error("Failed to mirror accepted WB supply content to PostgreSQL", error);
-  }
-}
-
 async function persistAcceptedSupplyContent(input: AcceptedSupplyContentInput): Promise<void> {
-  if (isPostgresEnabled()) {
-    await saveAcceptedSupplyContentPg(input);
-    return;
+  await saveAcceptedSupplyContentPg(input);
+}
+
+function safeJson<T>(value: string | null | undefined): T | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return null;
   }
-  saveAcceptedSupplyContent(input);
-  await mirrorAcceptedSupplyContent(input);
+}
+
+async function readStoredSupplyContentPg(supplyID: number): Promise<StoredSupplyContentPayload | null> {
+  try {
+    const row = await pgGet<{ payload_json: string }>(`
+      SELECT payload_json
+      FROM wb_supply_contents
+      WHERE supply_id = ?
+    `, [supplyID]);
+    return safeJson<StoredSupplyContentPayload>(row?.payload_json);
+  } catch (error) {
+    if (error instanceof Error && /relation .* does not exist/i.test(error.message)) return null;
+    throw error;
+  }
+}
+
+async function persistSupplyContentPg(
+  supplyID: number,
+  source: "package" | "goods",
+  payload: StoredSupplyContentPayload,
+): Promise<void> {
+  if (isPostgresReadonlyConnection()) return;
+  const now = new Date().toISOString();
+  await pgGet(`
+    INSERT INTO wb_supply_contents (supply_id, source, payload_json, saved_at, refreshed_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(supply_id) DO UPDATE SET
+      source = EXCLUDED.source,
+      payload_json = EXCLUDED.payload_json,
+      refreshed_at = EXCLUDED.refreshed_at
+    RETURNING supply_id
+  `, [supplyID, source, JSON.stringify(payload), now, now]);
 }
 
 class WbApiError extends Error {
@@ -162,38 +196,6 @@ async function wbFetchGoods(supplyID: string): Promise<WbSupplyGood[]> {
   const data = await wbFetch<WbSupplyGood[]>(`/supplies/${encodeURIComponent(supplyID)}/goods?limit=1000&offset=0`);
   goodsCache.set(supplyID, { ts: Date.now(), data });
   return data;
-}
-
-function buildBarcodeMeta(): Map<string, BarcodeMeta> {
-  initShipmentTables();
-  const db = getDb();
-  const rows = db.prepare(`
-    SELECT article_wb, name, sizes_json
-    FROM shipment_products
-    WHERE sizes_json IS NOT NULL AND sizes_json != ''
-  `).all() as { article_wb: string; name: string | null; sizes_json: string }[];
-
-  const meta = new Map<string, BarcodeMeta>();
-  for (const product of rows) {
-    let sizes: ProductSize[] = [];
-    try {
-      const parsed = JSON.parse(product.sizes_json || "[]");
-      if (Array.isArray(parsed)) sizes = parsed as ProductSize[];
-    } catch {
-      sizes = [];
-    }
-
-    for (const size of sizes) {
-      const barcode = String(size.barcode || "").trim();
-      if (!barcode) continue;
-      meta.set(barcode, {
-        articleWB: String(product.article_wb || ""),
-        name: product.name || "",
-        size: size.size || "",
-      });
-    }
-  }
-  return meta;
 }
 
 async function buildBarcodeMetaPg(): Promise<Map<string, BarcodeMeta>> {
@@ -357,91 +359,155 @@ function packagePackedQuantity(packages: WbPackage[]): number {
   }, 0);
 }
 
+function responseTotalQuantity(payload: { meta?: { totalQuantity?: number; totalAcceptedQuantity?: number }; articles?: ArticleSummary[] }): number {
+  const metaTotal = Number(payload.meta?.totalQuantity || 0) + Number(payload.meta?.totalAcceptedQuantity || 0);
+  if (metaTotal > 0) return metaTotal;
+  return (payload.articles || []).reduce((sum, article) => {
+    return sum + Number(article.quantity || 0) + Number(article.acceptedQuantity || 0);
+  }, 0);
+}
+
+function hasBarcodeContent(payload: { meta?: { totalQuantity?: number; totalAcceptedQuantity?: number }; articles?: ArticleSummary[] }): boolean {
+  return responseTotalQuantity(payload) > 0;
+}
+
+function buildGoodsPayload(supplyID: string, goods: WbSupplyGood[], meta: Map<string, BarcodeMeta>) {
+  const articles = summarizeGoods(goods, meta);
+  const totalQuantity = goods.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+  const totalAcceptedQuantity = goods.reduce((sum, item) => sum + Number(item.acceptedQuantity || 0), 0);
+
+  return withSortedBarcodeSizes({
+    supplyID,
+    source: "goods" as const,
+    goods,
+    articles,
+    meta: {
+      source: "goods" as const,
+      packageCount: 0,
+      totalQuantity,
+      totalAcceptedQuantity,
+      articleCount: articles.length,
+      barcodeCount: articles.reduce((sum, article) => sum + article.barcodes.length, 0),
+    },
+  });
+}
+
+function buildPackagePayload(supplyID: string, packages: WbPackage[], meta: Map<string, BarcodeMeta>) {
+  const articles = summarizeArticles(packages, meta);
+  const totalQuantity = packagePackedQuantity(packages);
+
+  return withSortedBarcodeSizes({
+    supplyID,
+    source: "package" as const,
+    packages,
+    articles,
+    meta: {
+      source: "package" as const,
+      packageCount: packages.length,
+      totalQuantity,
+      articleCount: articles.length,
+      barcodeCount: articles.reduce((sum, article) => sum + article.barcodes.length, 0),
+    },
+  });
+}
+
+function buildStoredPayload(supplyID: string, stored: StoredSupplyContentPayload, meta: Map<string, BarcodeMeta>) {
+  if (stored.goods && stored.goods.length > 0) {
+    return buildGoodsPayload(supplyID, stored.goods || [], meta);
+  }
+  if (stored.packages && stored.packages.length > 0) {
+    return buildPackagePayload(supplyID, stored.packages || [], meta);
+  }
+  if (Array.isArray(stored.articles) && stored.meta) {
+    const payload = withSortedBarcodeSizes({
+      supplyID,
+      source: stored.source,
+      articles: stored.articles,
+      meta: stored.meta,
+    });
+    return hasBarcodeContent(payload) ? payload : null;
+  }
+  return null;
+}
+
 export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const authError = await requireAdmin(request);
   if (authError) return authError;
 
   try {
     const { id } = await context.params;
-    const pgMode = isPostgresEnabled();
     const supplyID = Number(id);
+    let emptyStoredContent = false;
     if (Number.isSafeInteger(supplyID)) {
-      const stored = pgMode
-        ? await getAcceptedSupplyContentPg(supplyID)
-        : getAcceptedSupplyContent(supplyID);
+      const stored = await getAcceptedSupplyContentPg(supplyID);
       if (stored) {
-        if (!pgMode) {
-          await mirrorAcceptedSupplyContent({
-            supplyID,
-            source: stored.source,
-            payload: stored.payload,
-          });
-        }
-        return NextResponse.json(withSortedBarcodeSizes(stored.payload as { articles?: ArticleSummary[] }));
+        const payload = withSortedBarcodeSizes(stored.payload as { articles?: ArticleSummary[] });
+        if (hasBarcodeContent(payload)) return NextResponse.json(payload);
+        emptyStoredContent = true;
+      }
+
+      const storedContent = await readStoredSupplyContentPg(supplyID);
+      if (storedContent) {
+        const meta = await buildBarcodeMetaPg();
+        const payload = buildStoredPayload(id, storedContent, meta);
+        if (payload) return NextResponse.json(payload);
+        emptyStoredContent = true;
       }
     }
 
-    if (pgMode && isPostgresReadonlyConnection()) {
+    if (isPostgresReadonlyConnection()) {
       return NextResponse.json(
-        { error: "WB supply package live fetch is disabled in local PostgreSQL readonly mode. Localhost reads production-saved data only." },
+        {
+          error: emptyStoredContent
+            ? "Сохранённый состав поставки пустой: WB не отдал barcode-состав, вычесть её из плана по размерам невозможно."
+            : "Состав поставки ещё не сохранён на production. Обновите поставки на production, затем повторите на локале.",
+        },
         { status: 403 }
       );
     }
 
     const detail = await wbFetchDetail(id);
-    const meta = pgMode ? await buildBarcodeMetaPg() : buildBarcodeMeta();
+    const meta = await buildBarcodeMetaPg();
 
     if (detail.virtualTypeID === 5) {
       const goods = await wbFetchGoods(id);
-      const articles = summarizeGoods(goods, meta);
-      const totalQuantity = goods.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-      const totalAcceptedQuantity = goods.reduce((sum, item) => sum + Number(item.acceptedQuantity || 0), 0);
+      const payload = buildGoodsPayload(id, goods, meta);
+      if (!hasBarcodeContent(payload)) {
+        return NextResponse.json(
+          { error: "WB не вернул barcode-состав поставки. Вычесть её из плана по размерам невозможно." },
+          { status: 404 },
+        );
+      }
 
-      const payload = {
-        supplyID: id,
-        source: "goods",
-        goods,
-        articles,
-        meta: {
-          source: "goods",
-          packageCount: 0,
-          totalQuantity,
-          totalAcceptedQuantity,
-          articleCount: articles.length,
-          barcodeCount: articles.reduce((sum, article) => sum + article.barcodes.length, 0),
-        },
-      };
+      if (Number.isSafeInteger(supplyID)) {
+        await persistSupplyContentPg(supplyID, "goods", payload);
+      }
 
       if (detail.statusID === 5 && Number.isSafeInteger(supplyID)) {
         await persistAcceptedSupplyContent({ supplyID, source: "goods", payload });
       }
 
-      return NextResponse.json(withSortedBarcodeSizes(payload));
+      return NextResponse.json(payload);
     }
 
     const packages = await wbFetchPackage(id);
-    const articles = summarizeArticles(packages, meta);
-    const totalQuantity = packagePackedQuantity(packages);
+    const payload = buildPackagePayload(id, packages, meta);
+    if (!hasBarcodeContent(payload)) {
+      return NextResponse.json(
+        { error: "WB не вернул barcode-состав поставки. Вычесть её из плана по размерам невозможно." },
+        { status: 404 },
+      );
+    }
 
-    const payload = {
-      supplyID: id,
-      source: "package",
-      packages,
-      articles,
-      meta: {
-        source: "package",
-        packageCount: packages.length,
-        totalQuantity,
-        articleCount: articles.length,
-        barcodeCount: articles.reduce((sum, article) => sum + article.barcodes.length, 0),
-      },
-    };
+    if (Number.isSafeInteger(supplyID)) {
+      await persistSupplyContentPg(supplyID, "package", payload);
+    }
 
     if (detail.statusID === 5 && Number.isSafeInteger(supplyID)) {
       await persistAcceptedSupplyContent({ supplyID, source: "package", payload });
     }
 
-    return NextResponse.json(withSortedBarcodeSizes(payload));
+    return NextResponse.json(payload);
   } catch (error) {
     return apiError(error, error instanceof WbApiError ? error.status : 500);
   }

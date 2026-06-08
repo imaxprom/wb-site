@@ -19,8 +19,24 @@ const contentSecurityPolicy = [
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  serverExternalPackages: ["better-sqlite3"],
+  outputFileTracingExcludes: {
+    "/*": [
+      "./data/**/*",
+      "./.deploy-backups/**/*",
+      "./.npm-cache/**/*",
+      "./.venv/**/*",
+      "./e2e/**/*",
+    ],
+    "next-server": [
+      "./data/**/*",
+      "./.deploy-backups/**/*",
+      "./.npm-cache/**/*",
+      "./.venv/**/*",
+      "./e2e/**/*",
+    ],
+  },
   experimental: {
+    cpus: 1,
     serverActions: {
       bodySizeLimit: "10mb",
     },

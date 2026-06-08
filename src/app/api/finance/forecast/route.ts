@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
-import { getDb } from "@/modules/finance/lib/queries";
-import { getExcludeDailyFilter, getPgExcludeDailyFilter } from "@/modules/analytics/lib/db";
-import { isPostgresEnabled, pgGet, pgRows } from "@/lib/postgres";
+import { getPgExcludeDailyFilter } from "@/modules/analytics/lib/db";
+import { pgGet, pgRows } from "@/lib/postgres";
 
 /** Предзагрузка себестоимости в Map на один запрос. */
 interface CogsHistoryRow {
@@ -11,35 +10,6 @@ interface CogsHistoryRow {
   cost: number;
   valid_from: string;
   valid_to: string | null;
-}
-
-function tableExists(db: ReturnType<typeof getDb>, tableName: string): boolean {
-  const row = db
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-    .get(tableName);
-  return Boolean(row);
-}
-
-function getCogsHistoryMap(): Map<string, CogsHistoryRow[]> {
-  const d = getDb();
-  const rows = tableExists(d, "cogs_history")
-    ? d.prepare(`
-        SELECT barcode, cost, valid_from, valid_to
-        FROM cogs_history
-        ORDER BY barcode, valid_from
-      `).all() as CogsHistoryRow[]
-    : d.prepare(`
-        SELECT barcode, cost, '0000-01-01' AS valid_from, NULL AS valid_to
-        FROM cogs
-      `).all() as CogsHistoryRow[];
-
-  const cogsHistoryMap = new Map<string, CogsHistoryRow[]>();
-  for (const row of rows) {
-    const history = cogsHistoryMap.get(row.barcode) || [];
-    history.push(row);
-    cogsHistoryMap.set(row.barcode, history);
-  }
-  return cogsHistoryMap;
 }
 
 async function getCogsHistoryMapPg(): Promise<Map<string, CogsHistoryRow[]>> {
@@ -101,13 +71,11 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const pgMode = isPostgresEnabled();
-    const d = pgMode ? null : getDb();
     const all = async <T>(sql: string, params: unknown[] = []): Promise<T[]> => {
-      return pgMode ? await pgRows(sql, params) as T[] : d!.prepare(sql).all(...params) as T[];
+      return await pgRows(sql, params) as T[];
     };
     const get = async <T>(sql: string, params: unknown[] = []): Promise<T | undefined> => {
-      return pgMode ? await pgGet(sql, params) as T | undefined : d!.prepare(sql).get(...params) as T | undefined;
+      return await pgGet(sql, params) as T | undefined;
     };
 
     // Юнит-экономика за тот же период, что и прогноз.
@@ -120,8 +88,8 @@ export async function GET(request: NextRequest) {
     // Дедуп-фильтры: для дней, покрытых weekly_final-отчётом, исключаем weekly/daily
     // дубликаты. Без этого SUM(storage_fee/penalty/quantity/rpwd) удваивается/
     // учетверяется по мере подтягивания финальных WB-отчётов.
-    const dedupSale = pgMode ? await getPgExcludeDailyFilter("sale_dt", "r") : getExcludeDailyFilter(d!, "sale_dt", "r");
-    const dedupRr = pgMode ? await getPgExcludeDailyFilter("rr_dt", "r") : getExcludeDailyFilter(d!, "rr_dt", "r");
+    const dedupSale = await getPgExcludeDailyFilter("sale_dt", "r");
+    const dedupRr = await getPgExcludeDailyFilter("rr_dt", "r");
 
     // ── 1. Юнит-экономика: продажи/возвраты (по sale_dt) + логистика (по rr_dt) ──
     const salesRaw = await all<{ nm_id: number; sa_name: string; sales_rpwd: number; sales_ppvz: number; sales_retail: number; sales_qty: number; ret_qty: number }>(`
@@ -162,7 +130,7 @@ export async function GET(request: NextRequest) {
     }));
 
     // COGS через историю по датам продажи.
-    const cogsHistory = pgMode ? await getCogsHistoryMapPg() : getCogsHistoryMap();
+    const cogsHistory = await getCogsHistoryMapPg();
     const cogsRows = await all<{ nm_id: number; barcode: string; sale_dt: string; qty: number }>(`
       SELECT r.nm_id, r.barcode, r.sale_dt, SUM(r.quantity) as qty
       FROM realization r

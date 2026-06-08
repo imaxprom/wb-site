@@ -2,20 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import {
-  getAcceptedSupply,
-  getAcceptedSupplyContent,
   getAcceptedSupplyContentPg,
   getAcceptedSupplyPg,
-  getDb,
   getSupplySnapshotsPg,
-  saveAcceptedSupply,
   saveAcceptedSupplyPg,
-  saveSupplySnapshot,
   saveSupplySnapshotPg,
   type AcceptedSupplyInput,
   type SupplySnapshotInput,
 } from "@/lib/shipment-db";
-import { isPostgresEnabled, isPostgresReadonlyConnection, pgGet } from "@/lib/postgres";
+import { isPostgresReadonlyConnection, pgGet } from "@/lib/postgres";
 import { getWbApiKey } from "@/lib/wb-api-key";
 
 const SUPPLIES_API = "https://supplies-api.wildberries.ru/api/v1";
@@ -100,44 +95,12 @@ function isDraftSupply(row: WbSupplyListRow, detail?: WbSupplyDetail | null): bo
   return (detail?.statusID ?? row.statusID) === 1;
 }
 
-function shouldMirrorSuppliesToPostgres(): boolean {
-  return !isPostgresEnabled() && process.env.SUPPLIES_PG_MIRROR === "1" && Boolean(process.env.DATABASE_URL);
-}
-
-async function mirrorSupplySnapshot(input: SupplySnapshotInput): Promise<void> {
-  if (!shouldMirrorSuppliesToPostgres()) return;
-  try {
-    await saveSupplySnapshotPg(input);
-  } catch (error) {
-    console.error("Failed to mirror WB supply snapshot to PostgreSQL", error);
-  }
-}
-
-async function mirrorAcceptedSupply(input: AcceptedSupplyInput): Promise<void> {
-  if (!shouldMirrorSuppliesToPostgres()) return;
-  try {
-    await saveAcceptedSupplyPg(input);
-  } catch (error) {
-    console.error("Failed to mirror accepted WB supply to PostgreSQL", error);
-  }
-}
-
 async function persistSupplySnapshot(input: SupplySnapshotInput): Promise<void> {
-  if (isPostgresEnabled()) {
-    await saveSupplySnapshotPg(input);
-    return;
-  }
-  saveSupplySnapshot(input);
-  await mirrorSupplySnapshot(input);
+  await saveSupplySnapshotPg(input);
 }
 
 async function persistAcceptedSupply(input: AcceptedSupplyInput): Promise<void> {
-  if (isPostgresEnabled()) {
-    await saveAcceptedSupplyPg(input);
-    return;
-  }
-  saveAcceptedSupply(input);
-  await mirrorAcceptedSupply(input);
+  await saveAcceptedSupplyPg(input);
 }
 
 class WbApiError extends Error {
@@ -239,26 +202,8 @@ async function readStoredSupplyContentPg(supplyID: number): Promise<SupplyConten
   return (accepted?.payload as SupplyContentPayload | undefined) || null;
 }
 
-function readStoredSupplyContentSqlite(supplyID: number): SupplyContentPayload | null {
-  try {
-    const db = getDb();
-    const table = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'wb_supply_contents'").get();
-    if (table) {
-      const row = db.prepare("SELECT payload_json FROM wb_supply_contents WHERE supply_id = ?").get(supplyID) as { payload_json: string } | undefined;
-      if (row?.payload_json) return safeJson<SupplyContentPayload>(row.payload_json);
-    }
-  } catch {
-    // Fallback to accepted content below.
-  }
-
-  const accepted = getAcceptedSupplyContent(supplyID);
-  return (accepted?.payload as SupplyContentPayload | undefined) || null;
-}
-
 async function enrichDetailWithPackedQuantity(supplyID: number, detail: WbSupplyDetail): Promise<WbSupplyDetail> {
-  const payload = isPostgresEnabled()
-    ? await readStoredSupplyContentPg(supplyID)
-    : readStoredSupplyContentSqlite(supplyID);
+  const payload = await readStoredSupplyContentPg(supplyID);
   const packed = contentPackedQuantity(payload);
   if (!packed) return { ...detail, packedQuantity: detail.quantity, packedQuantitySource: "detail" };
   return { ...detail, packedQuantity: packed.quantity, packedQuantitySource: packed.source };
@@ -278,7 +223,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ supplies: listCache.data, meta: { limit, offset, source: "cache" } });
     }
 
-    if (isPostgresEnabled() && isPostgresReadonlyConnection()) {
+    if (isPostgresReadonlyConnection()) {
       const stored = await getSupplySnapshotsPg(limit, offset);
       const supplies = await Promise.all(stored.map(async (item) => ({
         ...item.row,
@@ -307,9 +252,7 @@ export async function GET(request: NextRequest) {
 
       const acceptedFromList = row.statusID === 5;
       if (acceptedFromList) {
-        const stored = isPostgresEnabled()
-          ? await getAcceptedSupplyPg(supplyID as number)
-          : getAcceptedSupply(supplyID as number);
+        const stored = await getAcceptedSupplyPg(supplyID as number);
         if (stored) {
           const detail = await enrichDetailWithPackedQuantity(supplyID as number, stored.detail as WbSupplyDetail);
           if (isDraftSupply(row, detail)) continue;

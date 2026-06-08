@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
-import { getDb, getExcludeDailyFilter } from "@/modules/finance/lib/queries";
 import { getPgExcludeDailyFilter } from "@/modules/analytics/lib/db";
-import { isPostgresEnabled, pgRows } from "@/lib/postgres";
+import { pgRows } from "@/lib/postgres";
 
 function cogsCostSql(alias: string, dateColumn: string): string {
   return `COALESCE((
@@ -29,10 +28,8 @@ export async function GET(request: NextRequest) {
   const dateTo = searchParams.get("to") || "2026-03-22";
 
   try {
-    const pgMode = isPostgresEnabled();
-    const db = pgMode ? null : getDb();
-    const dedupSale = pgMode ? await getPgExcludeDailyFilter("sale_dt", "r") : getExcludeDailyFilter(db!, "sale_dt", "r");
-    const dedupRr = pgMode ? await getPgExcludeDailyFilter("rr_dt", "r") : getExcludeDailyFilter(db!, "rr_dt", "r");
+    const dedupSale = await getPgExcludeDailyFilter("sale_dt", "r");
+    const dedupRr = await getPgExcludeDailyFilter("rr_dt", "r");
 
     // Get all articles with sales in period
     const articlesSql = `
@@ -54,9 +51,7 @@ export async function GET(request: NextRequest) {
       ORDER BY sales_rpwd DESC
     `;
     const articlesParams = [dateFrom, dateTo, ...dedupSale.params];
-    const articles = pgMode
-      ? await pgRows<Record<string, number>>(articlesSql, articlesParams)
-      : db!.prepare(articlesSql).all(...articlesParams) as Record<string, number>[];
+    const articles = await pgRows<Record<string, number>>(articlesSql, articlesParams);
 
     // Logistics by nm_id (from rr_dt)
     const logisticsSql = `
@@ -68,9 +63,7 @@ export async function GET(request: NextRequest) {
       GROUP BY nm_id
     `;
     const logisticsParams = [dateFrom, dateTo, ...dedupRr.params];
-    const logistics = pgMode
-      ? await pgRows<Record<string, number>>(logisticsSql, logisticsParams)
-      : db!.prepare(logisticsSql).all(...logisticsParams) as Record<string, number>[];
+    const logistics = await pgRows<Record<string, number>>(logisticsSql, logisticsParams);
     const logMap = Object.fromEntries(logistics.map(r => [r.nm_id, r.logistics]));
 
     // Ad spend per article (точные данные из advertising с nm_id)
@@ -80,9 +73,7 @@ export async function GET(request: NextRequest) {
       WHERE date >= ? AND date <= ? AND nm_id > 0
       GROUP BY nm_id
     `;
-    const adsByArticle = pgMode
-      ? await pgRows<{ nm_id: number; total: number }>(adsByArticleSql, [dateFrom, dateTo])
-      : db!.prepare(adsByArticleSql).all(dateFrom, dateTo) as { nm_id: number; total: number }[];
+    const adsByArticle = await pgRows<{ nm_id: number; total: number }>(adsByArticleSql, [dateFrom, dateTo]);
     const adMap = Object.fromEntries(adsByArticle.map(r => [r.nm_id, r.total]));
 
     const result = articles.map(a => {

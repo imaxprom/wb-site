@@ -183,7 +183,7 @@ export default function CogsSettingsPage() {
     async function loadAll() {
       setLoading(true);
 
-      // 1. Load cogs from API (SQLite)
+      // 1. Load cogs from API (PostgreSQL)
       let storedCogs: Record<string, number> = {};
       try {
         const resp = await fetch("/api/finance/cogs");
@@ -195,7 +195,7 @@ export default function CogsSettingsPage() {
 
       setCogs(storedCogs);
 
-      // 2. Load barcode list from API (SQLite)
+      // 2. Load barcode list from API (PostgreSQL)
       let barcodes: BarcodeItem[] = [];
       try {
         const resp = await fetch("/api/finance/barcodes");

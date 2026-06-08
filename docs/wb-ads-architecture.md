@@ -31,16 +31,16 @@
           ┌──────────┼──────────┐
           ▼          ▼          ▼
     ┌──────────┐ ┌────────┐ ┌──────────────┐
-    │ SQLite   │ │ WB API │ │ Puppeteer    │
+    │ PostgreSQL   │ │ WB API │ │ Puppeteer    │
     │ ads.db   │ │ (HTTP) │ │ (auth CDP)   │
     └──────────┘ └────────┘ └──────────────┘
 ```
 
-**Стек:** Next.js 16 + TypeScript + Tailwind CSS 4 + SQLite (better-sqlite3) + Puppeteer + recharts
+**Стек:** Next.js 16 + TypeScript + Tailwind CSS 4 + PostgreSQL (pg) + Puppeteer + recharts
 
 ---
 
-## 2. База данных (SQLite)
+## 2. База данных (PostgreSQL)
 
 **Файл:** `data/ads.db` — 22 таблицы
 

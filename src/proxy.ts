@@ -85,6 +85,10 @@ export async function proxy(req: NextRequest) {
     return NextResponse.next();
   }
 
+  if (pathname.startsWith("/api/purchases/")) {
+    return NextResponse.next();
+  }
+
   // Allow static files / Next.js internals
   if (
     pathname.startsWith("/_next/") ||

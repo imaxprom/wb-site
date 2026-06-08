@@ -14,6 +14,15 @@ export function ClientShell({ children, initialSidebarCollapsed = false }: { chi
     return <>{children}</>;
   }
 
+  const needsShipmentData =
+    pathname.startsWith("/shipment") ||
+    pathname.startsWith("/products") ||
+    pathname.startsWith("/upload");
+
+  if (!needsShipmentData) {
+    return <ShellWithNav initialPinned={!initialSidebarCollapsed}>{children}</ShellWithNav>;
+  }
+
   return (
     <DataProvider>
       <ShellWithNav initialPinned={!initialSidebarCollapsed}>{children}</ShellWithNav>

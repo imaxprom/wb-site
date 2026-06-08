@@ -3,37 +3,24 @@ import { requireAdmin } from "@/lib/api-auth";
 import fs from "fs";
 import path from "path";
 import {
-  getReviewAccountById,
   getReviewAccountByIdPg,
-  getReviewAccounts,
   getReviewAccountsPg,
-  getReviewById,
   getReviewByIdPg,
-  getReviewsForAutoComplaint,
   getReviewsForAutoComplaintPg,
-  createComplaint,
   createComplaintPg,
-  updateComplaintStatus,
   updateComplaintStatusPg,
-  updateComplaintContent,
   updateComplaintContentPg,
-  updateReviewComplaintStatus,
   updateReviewComplaintStatusPg,
-  getComplaintsByAccount,
   getComplaintsByAccountPg,
-  getComplaintByReviewId,
   getComplaintByReviewIdPg,
-  getTodayComplaintsCount,
   getTodayComplaintsCountPg,
-  getLastComplaintByManager,
   getLastComplaintByManagerPg,
-  shouldPauseByRecentRejections,
   shouldPauseByRecentRejectionsPg,
   type ReviewAccount,
   type Review,
   type ReviewComplaint,
 } from "@/lib/reviews-db";
-import { isPostgresEnabled, isPostgresReadonlyConnection } from "@/lib/postgres";
+import { isPostgresReadonlyConnection } from "@/lib/postgres";
 
 export const maxDuration = 300;
 
@@ -91,42 +78,36 @@ function getCodexGatewayConfig() {
 }
 
 async function readReviewAccountById(id: number): Promise<ReviewAccount | null> {
-  return isPostgresEnabled() ? await getReviewAccountByIdPg(id) : getReviewAccountById(id);
+  return await getReviewAccountByIdPg(id);
 }
 
 async function readReviewAccountsWithCabinetTokens(): Promise<ReviewAccount[]> {
-  const accounts = isPostgresEnabled() ? await getReviewAccountsPg() : getReviewAccounts();
+  const accounts = await getReviewAccountsPg();
   return accounts.filter(a => a.wb_authorize_v3);
 }
 
 async function readReviewById(id: number): Promise<Review | null> {
-  return isPostgresEnabled() ? await getReviewByIdPg(id) : getReviewById(id);
+  return await getReviewByIdPg(id);
 }
 
 async function readComplaintByReviewId(reviewId: number): Promise<ReviewComplaint | null> {
-  return isPostgresEnabled() ? await getComplaintByReviewIdPg(reviewId) : getComplaintByReviewId(reviewId);
+  return await getComplaintByReviewIdPg(reviewId);
 }
 
 async function readTodayComplaintsCount(accountId: number): Promise<number> {
-  return isPostgresEnabled() ? await getTodayComplaintsCountPg(accountId) : getTodayComplaintsCount(accountId);
+  return await getTodayComplaintsCountPg(accountId);
 }
 
 async function readReviewsForAutoComplaint(accountId: number, ratings: number[], excludedArticles: string[]): Promise<Review[]> {
-  return isPostgresEnabled()
-    ? await getReviewsForAutoComplaintPg(accountId, ratings, excludedArticles)
-    : getReviewsForAutoComplaint(accountId, ratings, excludedArticles);
+  return await getReviewsForAutoComplaintPg(accountId, ratings, excludedArticles);
 }
 
 async function readLastComplaintByManager(accountId: number, managerName: string): Promise<string | null> {
-  return isPostgresEnabled()
-    ? await getLastComplaintByManagerPg(accountId, managerName)
-    : getLastComplaintByManager(accountId, managerName);
+  return await getLastComplaintByManagerPg(accountId, managerName);
 }
 
 async function readPauseByRecentRejections(accountId: number, lastN: number): Promise<{ pause: boolean; rejected: number; approved: number }> {
-  return isPostgresEnabled()
-    ? await shouldPauseByRecentRejectionsPg(accountId, lastN)
-    : shouldPauseByRecentRejections(accountId, lastN);
+  return await shouldPauseByRecentRejectionsPg(accountId, lastN);
 }
 
 async function writeComplaint(data: {
@@ -137,22 +118,19 @@ async function writeComplaint(data: {
   explanation?: string;
   manager_name?: string;
 }): Promise<number> {
-  return isPostgresEnabled() ? await createComplaintPg(data) : createComplaint(data);
+  return await createComplaintPg(data);
 }
 
 async function writeComplaintStatus(id: number, status: string, errorMessage?: string): Promise<void> {
-  if (isPostgresEnabled()) await updateComplaintStatusPg(id, status, errorMessage);
-  else updateComplaintStatus(id, status, errorMessage);
+  await updateComplaintStatusPg(id, status, errorMessage);
 }
 
 async function writeComplaintContent(id: number, reasonId: number, explanation: string, managerName: string): Promise<void> {
-  if (isPostgresEnabled()) await updateComplaintContentPg(id, reasonId, explanation, managerName);
-  else updateComplaintContent(id, reasonId, explanation, managerName);
+  await updateComplaintContentPg(id, reasonId, explanation, managerName);
 }
 
 async function writeReviewComplaintStatus(reviewId: number, complaintStatus: string): Promise<void> {
-  if (isPostgresEnabled()) await updateReviewComplaintStatusPg(reviewId, complaintStatus);
-  else updateReviewComplaintStatus(reviewId, complaintStatus);
+  await updateReviewComplaintStatusPg(reviewId, complaintStatus);
 }
 
 function getComplaintsConfig(account: ReviewAccount): ComplaintsConfig {
@@ -475,7 +453,7 @@ export async function POST(req: NextRequest) {
   if (authError) return authError;
 
   try {
-    if (isPostgresEnabled() && isPostgresReadonlyConnection()) {
+    if (isPostgresReadonlyConnection()) {
       return NextResponse.json(
         { error: "Review complaint writes are disabled in local PostgreSQL readonly mode" },
         { status: 403 }
@@ -750,9 +728,7 @@ async function syncComplaintStatuses(): Promise<number> {
   let totalUpdated = 0;
 
   for (const account of accounts) {
-    const pending = isPostgresEnabled()
-      ? await getComplaintsByAccountPg(account.id, "submitted")
-      : getComplaintsByAccount(account.id, "submitted");
+    const pending = await getComplaintsByAccountPg(account.id, "submitted");
     if (pending.length === 0) continue;
 
     const headers = buildHeaders(account);
@@ -803,7 +779,7 @@ export async function GET(req: NextRequest) {
     const accountId = sp.get("account_id") ? Number(sp.get("account_id")) : undefined;
     const status = sp.get("status") || undefined;
 
-    if (shouldSync && isPostgresEnabled() && isPostgresReadonlyConnection()) {
+    if (shouldSync && isPostgresReadonlyConnection()) {
       return NextResponse.json(
         { error: "Review complaint status sync is disabled in local PostgreSQL readonly mode" },
         { status: 403 }
@@ -814,9 +790,7 @@ export async function GET(req: NextRequest) {
       await syncComplaintStatuses();
     }
 
-    const complaints = isPostgresEnabled()
-      ? await getComplaintsByAccountPg(accountId, status)
-      : getComplaintsByAccount(accountId, status);
+    const complaints = await getComplaintsByAccountPg(accountId, status);
     return NextResponse.json({ complaints });
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

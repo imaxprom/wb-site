@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
-import { getDb } from "@/modules/finance/lib/queries";
-import { isPostgresEnabled, pgGet, pgRows } from "@/lib/postgres";
+import { pgGet, pgRows } from "@/lib/postgres";
 
 interface RealizationBarcodeRow {
   barcode: string;
@@ -45,13 +44,6 @@ interface BarcodeCandidate extends BarcodeItem {
 
 function clean(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
-}
-
-function tableExists(db: ReturnType<typeof getDb>, tableName: string): boolean {
-  const row = db
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-    .get(tableName);
-  return Boolean(row);
 }
 
 async function pgTableExists(tableName: string): Promise<boolean> {
@@ -100,18 +92,14 @@ export async function GET(request: NextRequest) {
   if (authError) return authError;
 
   try {
-    const d = isPostgresEnabled() ? null : getDb();
-
     const stockByNmBarcode = new Map<string, ShipmentStockRow>();
-    if (isPostgresEnabled() ? await pgTableExists("shipment_stock") : tableExists(d!, "shipment_stock")) {
+    if (await pgTableExists("shipment_stock")) {
       const stockSql = `
         SELECT article_wb, barcode, article_seller, size
         FROM shipment_stock
         WHERE barcode != '' AND article_wb != ''
       `;
-      const stockRows = isPostgresEnabled()
-        ? await pgRows<ShipmentStockRow>(stockSql)
-        : d!.prepare(stockSql).all() as ShipmentStockRow[];
+      const stockRows = await pgRows<ShipmentStockRow>(stockSql);
 
       for (const row of stockRows) {
         const articleWb = clean(row.article_wb);
@@ -124,15 +112,13 @@ export async function GET(request: NextRequest) {
     }
 
     const productSizeByNmBarcode = new Map<string, string>();
-    if (isPostgresEnabled() ? await pgTableExists("shipment_products") : tableExists(d!, "shipment_products")) {
+    if (await pgTableExists("shipment_products")) {
       const productsSql = `
         SELECT article_wb, sizes_json
         FROM shipment_products
         WHERE article_wb != '' AND sizes_json IS NOT NULL AND sizes_json != ''
       `;
-      const productRows = isPostgresEnabled()
-        ? await pgRows<ShipmentProductRow>(productsSql)
-        : d!.prepare(productsSql).all() as ShipmentProductRow[];
+      const productRows = await pgRows<ShipmentProductRow>(productsSql);
 
       for (const product of productRows) {
         let sizes: unknown;
@@ -171,9 +157,7 @@ export async function GET(request: NextRequest) {
       WHERE barcode != '' AND nm_id > 0
       GROUP BY barcode, nm_id, TRIM(COALESCE(sa_name, '')), TRIM(COALESCE(ts_name, ''))
     `;
-    const realizationRows = isPostgresEnabled()
-      ? await pgRows<RealizationBarcodeRow>(realizationSql)
-      : d!.prepare(realizationSql).all() as RealizationBarcodeRow[];
+    const realizationRows = await pgRows<RealizationBarcodeRow>(realizationSql);
 
     const byBarcode = new Map<string, BarcodeCandidate>();
     for (const row of realizationRows) {

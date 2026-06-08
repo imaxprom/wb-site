@@ -25,19 +25,19 @@
           "section": "shipment",
           "type": "feature",
           "title": "Авторизация + полный уход от кеша браузера",
-          "description": "Страница /login, защищённая cookie-сессия на 30 дней, middleware redirect. API-ключ WB, настройки, overrides — всё в SQLite и серверных файлах. localStorage больше не используется для данных."
+          "description": "Страница /login, защищённая cookie-сессия на 30 дней, middleware redirect. API-ключ WB, настройки, overrides — всё в PostgreSQL-only runtime"
         },
         {
           "section": "shipment",
           "type": "feature",
           "title": "Накопительная логика заказов",
-          "description": "Заказы в SQLite только добавляются (INSERT OR IGNORE), никогда не удаляются. База растёт со временем. При отображении фильтруется по выбранному периоду."
+          "description": "Заказы в PostgreSQL-only runtime"
         },
         {
           "section": "shipment",
           "type": "feature",
-          "title": "Миграция на SQLite — единый источник данных",
-          "description": "Заказы, остатки и карточки теперь хранятся в серверной БД SQLite (finance.db), а не в кеше браузера (IndexedDB). Нет проблем с рассинхроном, данные одинаковы для всех. Новые API: /api/data/sync, /api/data/orders, /api/data/stock, /api/data/products.",
+          "title": "Миграция на PostgreSQL-only runtime",
+          "description": "Заказы, остатки и карточки теперь хранятся в серверной БД PostgreSQL-only runtime",
           "backlog": "Добавить cron для автоматического обновления данных (база сама растёт без ручной загрузки)"
         },
         {

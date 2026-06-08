@@ -2,27 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   deleteLoginAttemptPg,
   getLoginAttemptPg,
-  getUserByEmail,
   getUserByEmailPg,
   getUserByIdPg,
-  initShipmentTables,
   initShipmentTablesPg,
   recordLoginFailurePg,
-  updateUserPasswordHash,
   updateUserPasswordHashPg,
-  getDb,
 } from "@/lib/shipment-db";
 import { verifyPassword, createToken, hashPassword, isLegacyPasswordHash } from "@/lib/auth";
-import { isPostgresEnabled, isPostgresReadonlyConnection } from "@/lib/postgres";
-
-initShipmentTables();
+import { isPostgresReadonlyConnection } from "@/lib/postgres";
 
 const MAX_AGE = 30 * 24 * 60 * 60; // 30 days
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILED_ATTEMPTS = 5;
 const DEV_PG_ADMIN_ID = 7218;
-
-type AttemptState = { count: number; first_at: number };
 
 function getClientIp(req: NextRequest): string {
   return (
@@ -38,7 +30,6 @@ function attemptKey(req: NextRequest, email: string): string {
 
 function isReadonlyPgDevLogin(email: string, password: string): boolean {
   return process.env.NODE_ENV !== "production"
-    && isPostgresEnabled()
     && isPostgresReadonlyConnection()
     && email === "admin"
     && password === "admin";
@@ -64,26 +55,12 @@ function buildLoginResponse(user: { id: number; email: string; name: string | nu
 }
 
 async function isBlocked(key: string): Promise<boolean> {
-  if (isPostgresEnabled()) {
-    const state = await getLoginAttemptPg(key);
-    if (!state) return false;
-
-    if (Date.now() - state.first_at > LOGIN_WINDOW_MS) {
-      await deleteLoginAttemptPg(key);
-      return false;
-    }
-
-    return state.count >= MAX_FAILED_ATTEMPTS;
-  }
-
-  const state = getDb()
-    .prepare("SELECT count, first_at FROM auth_login_attempts WHERE key = ?")
-    .get(key) as AttemptState | undefined;
+  const state = await getLoginAttemptPg(key);
 
   if (!state) return false;
 
   if (Date.now() - state.first_at > LOGIN_WINDOW_MS) {
-    getDb().prepare("DELETE FROM auth_login_attempts WHERE key = ?").run(key);
+    await deleteLoginAttemptPg(key);
     return false;
   }
 
@@ -92,41 +69,11 @@ async function isBlocked(key: string): Promise<boolean> {
 
 async function recordFailure(key: string): Promise<void> {
   const now = Date.now();
-  if (isPostgresEnabled()) {
-    await recordLoginFailurePg(key, now, LOGIN_WINDOW_MS);
-    return;
-  }
-
-  getDb()
-    .prepare("DELETE FROM auth_login_attempts WHERE updated_at < ?")
-    .run(now - LOGIN_WINDOW_MS * 4);
-
-  const state = getDb()
-    .prepare("SELECT count, first_at FROM auth_login_attempts WHERE key = ?")
-    .get(key) as AttemptState | undefined;
-
-  if (!state || now - state.first_at > LOGIN_WINDOW_MS) {
-    getDb()
-      .prepare(`
-        INSERT INTO auth_login_attempts (key, count, first_at, updated_at)
-        VALUES (?, 1, ?, ?)
-        ON CONFLICT(key) DO UPDATE SET count = 1, first_at = excluded.first_at, updated_at = excluded.updated_at
-      `)
-      .run(key, now, now);
-    return;
-  }
-
-  getDb()
-    .prepare("UPDATE auth_login_attempts SET count = count + 1, updated_at = ? WHERE key = ?")
-    .run(now, key);
+  await recordLoginFailurePg(key, now, LOGIN_WINDOW_MS);
 }
 
 async function clearFailures(key: string): Promise<void> {
-  if (isPostgresEnabled()) {
-    await deleteLoginAttemptPg(key);
-    return;
-  }
-  getDb().prepare("DELETE FROM auth_login_attempts WHERE key = ?").run(key);
+  await deleteLoginAttemptPg(key);
 }
 
 export async function POST(req: NextRequest) {
@@ -157,12 +104,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (isPostgresEnabled()) {
-      await initShipmentTablesPg();
-    }
-    const user = isPostgresEnabled()
-      ? await getUserByEmailPg(email)
-      : getUserByEmail(email);
+    await initShipmentTablesPg();
+    const user = await getUserByEmailPg(email);
     if (!user) {
       await recordFailure(key);
       return NextResponse.json({ ok: false, error: "Неверный email или пароль" }, { status: 401 });
@@ -175,11 +118,7 @@ export async function POST(req: NextRequest) {
 
     await clearFailures(key);
     if (isLegacyPasswordHash(user.password_hash)) {
-      if (isPostgresEnabled()) {
-        await updateUserPasswordHashPg(user.id, hashPassword(password));
-      } else {
-        updateUserPasswordHash(user.id, hashPassword(password));
-      }
+      await updateUserPasswordHashPg(user.id, hashPassword(password));
     }
 
     return buildLoginResponse(user);

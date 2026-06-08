@@ -8,13 +8,11 @@
  * Or via production cron.
  */
 
-const Database = require("better-sqlite3");
 const path = require("path");
 const fs = require("fs");
 const { Pool } = require("pg");
 
 const PROJECT_DIR = path.join(__dirname, "..");
-const DB_PATH = path.join(PROJECT_DIR, "data", "finance.db");
 const LOG_PATH = path.join(PROJECT_DIR, "data", "reviews-sync.log");
 const LOCK_PATH = path.join(PROJECT_DIR, "data", "reviews-sync.lock");
 
@@ -34,7 +32,7 @@ function loadEnvFile(filePath) {
 
 loadEnvFile(path.join(PROJECT_DIR, ".env.production.local"));
 
-const USE_PG = process.env.MPHUB_DB_ENGINE === "postgres";
+const USE_PG = true;
 let pgPool = null;
 
 function getPgPool() {
@@ -75,9 +73,7 @@ function log(msg) {
 // ─── DB helpers ─────────────────────────────────────────────
 
 function getDb() {
-  const db = new Database(DB_PATH, { readonly: false });
-  db.pragma("journal_mode = WAL");
-  return db;
+  throw new Error("Removed file-DB reviews sync is disabled. Use PostgreSQL runtime only.");
 }
 
 function getApiKey(db) {

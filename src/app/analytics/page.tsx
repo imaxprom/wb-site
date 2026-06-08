@@ -15,6 +15,24 @@ function fmt(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+async function readJsonResponse<T>(response: Response, fallback: T): Promise<T> {
+  const text = await response.text();
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`;
+    if (text) {
+      try {
+        const payload = JSON.parse(text) as { error?: string };
+        message = payload.error || message;
+      } catch {
+        message = text.slice(0, 200) || message;
+      }
+    }
+    throw new Error(message);
+  }
+  if (!text.trim()) return fallback;
+  return JSON.parse(text) as T;
+}
+
 export default function AnalyticsPage() {
   const { stock, products, settings, overrides, isLoaded } = useAnalyticsData();
 
@@ -47,18 +65,25 @@ export default function AnalyticsPage() {
     setLoadingOrders(true);
     try {
       const [ordersRes, statsRes] = await Promise.all([
-        fetch(`/api/data/orders?from=${from}&to=${to}`),
+        fetch(`/api/data/orders?from=${from}&to=${to}&limit=3000`),
         fetch(`/api/data/order-stats?from=${from}&to=${to}`),
       ]);
-      const data = await ordersRes.json();
+      const data = await readJsonResponse<OrderRecord[]>(ordersRes, []);
       if (Array.isArray(data)) setOrders(data);
-      if (statsRes.ok) {
-        const s = await statsRes.json();
-        if (s.deliveries > 0 || s.orders > 0) setWeeklyStats(s);
-        else setWeeklyStats(null);
-      }
+      const s = await readJsonResponse<{
+        orders: number;
+        dailyOrders?: Record<string, number>;
+        deliveries: number;
+        returns: number;
+        returnRate: number;
+        buyouts: number;
+      } | null>(statsRes, null);
+      if (s && (s.deliveries > 0 || s.orders > 0)) setWeeklyStats(s);
+      else setWeeklyStats(null);
     } catch (e) {
       console.error("Failed to fetch orders:", e);
+      setOrders([]);
+      setWeeklyStats(null);
     } finally {
       setLoadingOrders(false);
     }

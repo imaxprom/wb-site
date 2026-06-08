@@ -2,15 +2,15 @@ import pg, { Pool, type PoolClient, type QueryResult, type QueryResultRow } from
 
 const { types } = pg;
 
-// Keep runtime JSON stable compared to better-sqlite3: PostgreSQL int8/numeric
-// values should arrive as JS numbers for our aggregate API responses.
+// Keep runtime JSON stable: PostgreSQL int8/numeric values should arrive as JS
+// numbers for our aggregate API responses.
 types.setTypeParser(20, (value) => Number(value)); // int8
 types.setTypeParser(1700, (value) => Number(value)); // numeric
 
 let pool: Pool | null = null;
 
 export function isPostgresEnabled(): boolean {
-  return process.env.MPHUB_DB_ENGINE === "postgres";
+  return true;
 }
 
 export function isPostgresReadonlyConnection(): boolean {
@@ -21,7 +21,10 @@ export function getPostgresPool(): Pool {
   if (!pool) {
     const connectionString = process.env.DATABASE_URL;
     if (!connectionString) {
-      throw new Error("DATABASE_URL is required when MPHUB_DB_ENGINE=postgres");
+      throw new Error("DATABASE_URL is required for MpHub PostgreSQL runtime");
+    }
+    if (process.env.MPHUB_DB_ENGINE && process.env.MPHUB_DB_ENGINE !== "postgres") {
+      throw new Error(`Unsupported MPHUB_DB_ENGINE=${process.env.MPHUB_DB_ENGINE}; MpHub runtime is PostgreSQL-only`);
     }
     pool = new Pool({
       connectionString,
@@ -41,7 +44,7 @@ export async function pgQuery<T extends QueryResultRow = QueryResultRow>(
   return getPostgresPool().query<T>(sql, params);
 }
 
-export function sqliteParamsToPg(sql: string): string {
+export function positionalParamsToPg(sql: string): string {
   let index = 0;
   return sql.replace(/\?/g, () => `$${++index}`);
 }
@@ -50,7 +53,7 @@ export async function pgRows<T extends QueryResultRow = QueryResultRow>(
   sql: string,
   params: unknown[] = []
 ): Promise<T[]> {
-  const result = await pgQuery<T>(sqliteParamsToPg(sql), params);
+  const result = await pgQuery<T>(positionalParamsToPg(sql), params);
   return result.rows;
 }
 
@@ -58,7 +61,7 @@ export async function pgGet<T extends QueryResultRow = QueryResultRow>(
   sql: string,
   params: unknown[] = []
 ): Promise<T | undefined> {
-  const result = await pgQuery<T>(sqliteParamsToPg(sql), params);
+  const result = await pgQuery<T>(positionalParamsToPg(sql), params);
   return result.rows[0];
 }
 

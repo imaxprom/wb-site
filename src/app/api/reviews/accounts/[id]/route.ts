@@ -1,30 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import {
-  updateReviewAccount,
   updateReviewAccountPg,
-  deleteReviewAccount,
   deleteReviewAccountPg,
-  getReviewAccountById,
   getReviewAccountByIdPg,
-  initReviewTables,
   toPublicReviewAccount,
 } from "@/lib/reviews-db";
-import { isPostgresEnabled, isPostgresReadonlyConnection } from "@/lib/postgres";
+import { isPostgresReadonlyConnection } from "@/lib/postgres";
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
 
   try {
-    if (isPostgresEnabled() && isPostgresReadonlyConnection()) {
+    if (isPostgresReadonlyConnection()) {
       return NextResponse.json(
         { error: "Review account writes are disabled in local PostgreSQL readonly mode" },
         { status: 403 }
       );
     }
 
-    initReviewTables();
     const { id } = await params;
     const body = await req.json();
     for (const key of ["api_key", "wb_authorize_v3", "wb_validation_key"]) {
@@ -32,14 +27,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         delete body[key];
       }
     }
-    if (isPostgresEnabled()) {
-      await updateReviewAccountPg(Number(id), body);
-    } else {
-      updateReviewAccount(Number(id), body);
-    }
-    const updated = isPostgresEnabled()
-      ? await getReviewAccountByIdPg(Number(id))
-      : getReviewAccountById(Number(id));
+    await updateReviewAccountPg(Number(id), body);
+    const updated = await getReviewAccountByIdPg(Number(id));
     return NextResponse.json(updated ? toPublicReviewAccount(updated) : null);
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
@@ -51,20 +40,15 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   if (authError) return authError;
 
   try {
-    if (isPostgresEnabled() && isPostgresReadonlyConnection()) {
+    if (isPostgresReadonlyConnection()) {
       return NextResponse.json(
         { error: "Review account writes are disabled in local PostgreSQL readonly mode" },
         { status: 403 }
       );
     }
 
-    initReviewTables();
     const { id } = await params;
-    if (isPostgresEnabled()) {
-      await deleteReviewAccountPg(Number(id));
-    } else {
-      deleteReviewAccount(Number(id));
-    }
+    await deleteReviewAccountPg(Number(id));
     return NextResponse.json({ ok: true });
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

@@ -21,6 +21,17 @@ interface AnalyticsData {
 
 const AnalyticsContext = createContext<AnalyticsData | null>(null);
 
+async function readJsonResponse<T>(response: Response, fallback: T): Promise<T> {
+  if (!response.ok) return fallback;
+  const text = await response.text();
+  if (!text.trim()) return fallback;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 export function useAnalyticsData() {
   const ctx = useContext(AnalyticsContext);
   if (!ctx) throw new Error("useAnalyticsData must be used within AnalyticsProvider");
@@ -58,7 +69,7 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
 
         let settings: AppSettings = data.settings;
         if (settingsRes.ok) {
-          const raw = await settingsRes.json() as Record<string, unknown>;
+          const raw = await readJsonResponse<Record<string, unknown>>(settingsRes, {});
           settings = {
             buyoutRate: typeof raw.buyoutRate === "number" ? raw.buyoutRate : 0.75,
             buyoutMode: (raw.buyoutMode as "manual" | "auto") || "auto",
@@ -68,9 +79,9 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
           };
         }
 
-        const overrides = overridesRes.ok ? await overridesRes.json() as ProductOverrides : {};
-        const stock = stockRes.ok ? await stockRes.json() as StockItem[] : [];
-        const products = productsRes.ok ? await productsRes.json() as Product[] : [];
+        const overrides = await readJsonResponse<ProductOverrides>(overridesRes, {});
+        const stock = await readJsonResponse<StockItem[]>(stockRes, []);
+        const products = await readJsonResponse<Product[]>(productsRes, []);
 
         if (cancelled) return;
         setData({ stock, products, settings, overrides, isLoaded: true });

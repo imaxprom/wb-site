@@ -3,20 +3,18 @@
  * Generate SESSION_STATE.md for a quick restart map.
  *
  * This file is intentionally a snapshot, not the source of truth.
- * It reads local legacy SQLite directly and, when SSH is available, verifies
- * production PostgreSQL/runtime state on wb-site.
+ * It verifies production PostgreSQL/runtime state on wb-site. Local runtime
+ * data must come from PostgreSQL through the SSH tunnel.
  */
 
-const Database = require("better-sqlite3");
 const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
 
 const ROOT = process.cwd();
-const DB_PATH = path.join(ROOT, "data", "finance.db");
 const OUT_PATH = path.join(ROOT, "SESSION_STATE.md");
 const NOTES_PATH = path.join(ROOT, "scripts", "session-state-notes.json");
-const PROD_DIR = "/home/makson/website";
+const PROD_DIR = "/home/makson/current";
 
 function moscowParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -39,62 +37,12 @@ function dash(value) {
   return value === null || value === undefined || value === "" ? "-" : String(value);
 }
 
-function tableExists(db, table) {
-  const row = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
-  return Boolean(row);
-}
-
-function safeGet(db, sql, fallback = null) {
-  try {
-    return db.prepare(sql).get() || fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function countTable(db, table) {
-  if (!tableExists(db, table)) return null;
-  return safeGet(db, `SELECT COUNT(*) AS c FROM ${table}`, { c: 0 })?.c ?? 0;
-}
-
-function dbSnapshot(dbPath) {
-  if (!fs.existsSync(dbPath)) {
-    return { ok: false, error: `DB not found: ${dbPath}` };
-  }
-
-  const db = new Database(dbPath, { readonly: true });
-  db.pragma("busy_timeout = 5000");
-
-  const snapshot = {
-    ok: true,
-    engine: "sqlite-legacy",
-    shipment_products: countTable(db, "shipment_products"),
-    shipment_stock: countTable(db, "shipment_stock"),
-    shipment_orders: tableExists(db, "shipment_orders")
-      ? safeGet(db, "SELECT COUNT(*) AS c, MAX(date) AS max_date FROM shipment_orders")
-      : null,
-    paid_storage: tableExists(db, "paid_storage")
-      ? safeGet(db, "SELECT COUNT(*) AS c, MAX(date) AS max_date FROM paid_storage")
-      : null,
-    warehouse_ready_stock: countTable(db, "warehouse_ready_stock"),
-    warehouse_remains_volume: tableExists(db, "warehouse_remains_volume")
-      ? safeGet(db, "SELECT COUNT(*) AS c, MAX(synced_at) AS max_synced FROM warehouse_remains_volume")
-      : null,
-    warehouse_measurements: tableExists(db, "warehouse_measurements")
-      ? safeGet(db, "SELECT COUNT(*) AS c, MAX(synced_at) AS max_synced, MAX(measured_at) AS max_measured FROM warehouse_measurements")
-      : null,
-    logistics_tariff_cache: tableExists(db, "logistics_tariff_cache")
-      ? safeGet(db, "SELECT COUNT(*) AS c, MAX(synced_at) AS max_synced FROM logistics_tariff_cache")
-      : null,
-    reviews: countTable(db, "reviews"),
-    review_complaints: countTable(db, "review_complaints"),
-    sync_status: tableExists(db, "sync_status")
-      ? safeGet(db, "SELECT status, total, loaded, message, updated_at FROM sync_status WHERE id=1")
-      : null,
+function localSnapshot() {
+  return {
+    ok: false,
+    engine: "postgres-through-ssh-tunnel",
+    error: "Local file-DB snapshot is disabled; use production PostgreSQL via 127.0.0.1:55432 tunnel",
   };
-
-  db.close();
-  return snapshot;
 }
 
 const REMOTE_DB_SCRIPT = `
@@ -132,19 +80,11 @@ async function pgSnapshot() {
     await pool.end();
   }
 }
-const Database = require("better-sqlite3");
-${tableExists.toString()}
-${safeGet.toString()}
-${countTable.toString()}
-${dbSnapshot.toString()}
 (async () => {
-  if (process.env.MPHUB_DB_ENGINE === "postgres") {
-    console.log(JSON.stringify(await pgSnapshot()));
-    return;
+  if (process.env.MPHUB_DB_ENGINE && process.env.MPHUB_DB_ENGINE !== "postgres") {
+    throw new Error("MpHub runtime is PostgreSQL-only; MPHUB_DB_ENGINE must be postgres");
   }
-  const snap = dbSnapshot("data/finance.db");
-  snap.engine = "sqlite";
-  console.log(JSON.stringify(snap));
+  console.log(JSON.stringify(await pgSnapshot()));
 })().catch((error) => {
   console.log(JSON.stringify({ ok: false, error: error.message }));
   process.exitCode = 1;
@@ -250,7 +190,7 @@ function rsyncDryRunStatus() {
     "-e",
     "ssh",
     `${ROOT}/`,
-    "wb-site:~/website/",
+    "wb-site:~/current/",
   ];
   const result = tryExec("rsync dry-run", () => execFileSync("rsync", args, { encoding: "utf8", timeout: 20000 }));
   if (!result.ok) return result.error;
@@ -317,7 +257,7 @@ function snapshotWarnings(local, prod, runtime, dryRun) {
   const warnings = [];
 
   if (!prod?.ok) warnings.push(`Production DB snapshot unavailable: ${dash(prod?.error)}`);
-  if (!local?.ok) warnings.push(`Local DB snapshot unavailable: ${dash(local?.error)}`);
+  if (!local?.ok) warnings.push(`Local DB snapshot skipped: ${dash(local?.error)}`);
 
   if (local?.ok && prod?.ok) {
     [
@@ -373,10 +313,10 @@ function snapshotWarnings(local, prod, runtime, dryRun) {
 }
 
 function formatSnapshot(name, snap) {
-  if (!snap?.ok) return `### ${name}\n\n- unavailable: ${dash(snap?.error)}`;
+  if (!snap?.ok) return `### ${name}\n\n- engine: ${dash(snap?.engine)}\n- unavailable: ${dash(snap?.error)}`;
   return `### ${name}
 
-- engine: ${dash(snap.engine || (name.startsWith("Local") ? "sqlite-legacy" : "-"))}
+- engine: ${dash(snap.engine || "-")}
 - shipment_products: ${dash(snap.shipment_products)}
 - shipment_stock: ${dash(snap.shipment_stock)}
 - shipment_orders: ${dash(snap.shipment_orders?.c)}, max date ${dash(snap.shipment_orders?.max_date)}
@@ -394,7 +334,7 @@ function formatSnapshot(name, snap) {
 
 function main() {
   const now = moscowParts();
-  const local = dbSnapshot(DB_PATH);
+  const local = localSnapshot();
   const prod = productionDbSnapshot();
   const runtime = productionRuntime();
   const status = gitStatusShort();
@@ -428,15 +368,15 @@ Purpose: short starting map for a new session. This file is generated by \`npm r
 3. \`PROJECT_CONTEXT.md\` — detailed current project context.
 4. \`TODO.md\` — active backlog.
 5. \`src/app/docs/page.tsx\` + \`public/data/docs.json\` — in-app knowledge base. \`KnowledgeBase.tsx\` is absent in this repo.
-6. \`~/.codex/memories/\` — long-term Codex memories, especially \`mphub-shipment-logistics-current-context.md\`, \`mphub-reviews-current-context.md\`, \`mphub-prod-ops.md\`, \`moscow-time.md\`.
+6. \`~/.codex/memories/\` — long-term Codex memories, especially \`mphub-purchases-current-context.md\`, \`mphub-shipment-logistics-current-context.md\`, \`mphub-reviews-current-context.md\`, \`mphub-prod-ops.md\`, \`moscow-time.md\`.
 
 ## Project
 
 - Workspace: \`/Users/octopus/Projects/website\`
-- Production: \`ssh wb-site\`, \`${PROD_DIR}\`, public \`https://hub.imaxprom.site\`
-- Stack: Next.js 16, TypeScript, Tailwind CSS 4, PostgreSQL in production; SQLite remains as legacy/local fallback for specific imports and old snapshots.
-- Main runtime DB: production PostgreSQL on VM 107; local/dev reads it through the configured tunnel when needed. Legacy \`data/finance.db\` is not the production source of truth.
-- Deploy: \`bash scripts/deploy.sh\` → rsync → \`scripts/prod-safe-build.sh\`.
+- Production: \`ssh wb-site\`, active \`${PROD_DIR}\`, legacy/bootstrap \`/home/makson/website\`, public \`https://hub.imaxprom.site\`
+- Stack: Next.js 16, TypeScript, Tailwind CSS 4, PostgreSQL-only runtime.
+- Main runtime DB: production PostgreSQL on VM 107; local/dev reads it through the configured tunnel when needed. File-DB fallback is removed.
+- Deploy: \`SOURCE_MODE=local bash scripts/release-deploy.sh\` → build new release → preflight → switch \`/home/makson/current\`; old \`scripts/deploy.sh\` is fallback/clean rebuild only.
 - Editable handoff notes: \`scripts/session-state-notes.json\` feeds Current Focus and Continue From Here.
 
 ## Current Focus

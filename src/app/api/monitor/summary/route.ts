@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import { requireMonitorAdmin } from "@/lib/monitor-auth";
-import { isPostgresEnabled, isPostgresReadonlyConnection } from "@/lib/postgres";
+import { isPostgresReadonlyConnection } from "@/lib/postgres";
 
 /**
  * GET /api/monitor/summary — сводный статус всех sync-систем.
@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
   const authError = await requireMonitorAdmin(req);
   if (authError) return authError;
 
-  if (isPostgresEnabled() && isPostgresReadonlyConnection()) {
+  if (isPostgresReadonlyConnection()) {
     return NextResponse.json({
       overall: "warn",
       mode: "local_postgres_readonly",

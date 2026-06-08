@@ -13,11 +13,20 @@ import { WarehouseBreakdown } from "./WarehouseBreakdown";
 import type { TrendResult } from "@/modules/shipment/lib/trend-engine";
 import { InfoTip } from "@/components/Tooltip";
 import { packItems, unitVolumeLiters, type PackingItem, type BoxConfig } from "@/lib/packing-engine";
-import { PackingSummaryTable, aggregatePackingByRegion, type PackingSummaryEditableValues, type SummaryArticle } from "./PackingSummaryTable";
+import { PackingSummaryTable, aggregatePackingByRegion, type ArticleLogisticsMetrics, type PackingSummaryEditableValues, type SummaryArticle } from "./PackingSummaryTable";
 import { ArticleMultiSelect } from "./ArticleMultiSelect";
 import { buildWarehouseStockByBarcode } from "@/modules/shipment/lib/warehouse-ready-stock";
+import { applyManualSupplyDeductions } from "@/modules/shipment/lib/manual-supply-deductions";
 
 const V2_BOX_ROUNDING_OPTIONS = Array.from({ length: 10 }, (_, i) => Math.round((i + 1) * 10) / 100);
+
+interface LogisticsProductMetricRow {
+  articleWB?: string;
+  localization?: {
+    localizationIndex?: number | null;
+    salesDistributionIndexPercent?: number | null;
+  } | null;
+}
 
 // ─── Trend Badge ────────────────────────────────────────────
 
@@ -130,7 +139,13 @@ function WeeklyChart({ trend }: { trend: TrendResult }) {
 
 // ─── Main Component ─────────────────────────────────────────
 
-export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "v1" | "v2" }) {
+export default function ShipmentCalcV2({
+  initialMode = "v2",
+  manualSupplyDeductByBarcode,
+}: {
+  initialMode?: "v1" | "v2";
+  manualSupplyDeductByBarcode?: Map<string, number>;
+}) {
   const { stock, orderAggregates, products, warehouseReadyStock, settings, overrides, updateSettings, isLoaded } = useData();
   const effectiveRegions = useEffectiveRegions();
   const getBuyout = useEffectiveBuyout();
@@ -148,12 +163,49 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
     shipmentByKey: {},
     sampleByKey: {},
   });
+  const [articleMetrics, setArticleMetrics] = useState<Record<string, ArticleLogisticsMetrics>>({});
+  const [articleMetricsReady, setArticleMetricsReady] = useState(false);
 
   React.useEffect(() => {
     if (settings.v2RoundTo !== undefined) setV2BoxRounding(settings.v2RoundTo);
     if (settings.v2UnitRounding !== undefined) setV2UnitRounding(settings.v2UnitRounding);
     if (settings.v2ViewMode !== undefined) setV2ViewMode(settings.v2ViewMode as "units" | "boxes");
   }, [settings.v2RoundTo, settings.v2UnitRounding, settings.v2ViewMode]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setArticleMetricsReady(false);
+    fetch("/api/logistics/products", { cache: "no-store" })
+      .then(async (res) => {
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`);
+        return Array.isArray(payload.products) ? payload.products as LogisticsProductMetricRow[] : [];
+      })
+      .then((rows) => {
+        if (cancelled) return;
+        const next: Record<string, ArticleLogisticsMetrics> = {};
+        for (const row of rows) {
+          const articleWB = String(row.articleWB || "").trim();
+          if (!articleWB || next[articleWB]) continue;
+          next[articleWB] = {
+            localizationIndex: row.localization?.localizationIndex ?? null,
+            salesDistributionIndexPercent: row.localization?.salesDistributionIndexPercent ?? null,
+          };
+        }
+        setArticleMetrics(next);
+        setArticleMetricsReady(true);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.warn("Failed to load shipment article logistics metrics", error);
+          setArticleMetrics({});
+          setArticleMetricsReady(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const { sortedProducts, orderTotals } = useMemo(() => {
     const stockTotals = new Map<string, number>();
@@ -210,7 +262,7 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
   }, [product, isAllMode, stock, orderAggregates, effectiveRegions, overrides, getBuyout, uploadDays]);
 
   // Merged rows and trend for "all" mode
-  const { effectiveRows, effectiveRowsV1, effectiveTrend, effectiveRegionConfigs } = useMemo(() => {
+  const { effectiveRows: baseEffectiveRows, effectiveRowsV1: baseEffectiveRowsV1, effectiveTrend, effectiveRegionConfigs } = useMemo(() => {
     if (isAllMode && allCalculations.length > 0) {
       const merged = allCalculations.flatMap((c) => c.rows.map((r) => ({ ...r, articleName: c.product.name, articleWB: c.product.articleWB })));
       const mergedV1 = allCalculations.flatMap((c) => c.rowsV1.map((r) => ({ ...r, articleName: c.product.name, articleWB: c.product.articleWB })));
@@ -238,6 +290,17 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
     }
     return { effectiveRows: [], effectiveRowsV1: [], effectiveTrend: null, effectiveRegionConfigs: effectiveRegions };
   }, [isAllMode, allCalculations, singleCalc, effectiveRegions]);
+
+  const v2ManualDeduction = useMemo(
+    () => applyManualSupplyDeductions(baseEffectiveRows, manualSupplyDeductByBarcode),
+    [baseEffectiveRows, manualSupplyDeductByBarcode]
+  );
+  const v1ManualDeduction = useMemo(
+    () => applyManualSupplyDeductions(baseEffectiveRowsV1, manualSupplyDeductByBarcode),
+    [baseEffectiveRowsV1, manualSupplyDeductByBarcode]
+  );
+  const effectiveRows = v2ManualDeduction.rows;
+  const effectiveRowsV1 = v1ManualDeduction.rows;
 
   const rows = mode === "v2" ? effectiveRows : effectiveRowsV1;
   const trend = effectiveTrend;
@@ -405,27 +468,37 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
   }, [v2WarehouseStock.syncKey]);
 
   const v2RowMeta = useMemo(() => {
-    const map: Record<string, { plan: number; fact: number; need: number }> = {};
+    const baseByBarcode = new Map(baseEffectiveRows.map((row) => [row.barcode, row]));
+    const map: Record<string, { plan: number; fact: number; need: number; factByRegion: Record<string, number>; needByRegion: Record<string, number> }> = {};
     for (const row of effectiveRows) {
       const plan = row.regions.reduce((s, r) => s + r.plan, 0);
-      const fact = row.regions.reduce((s, r) => s + r.fact, 0);
       const need = row.regions.reduce((s, r) => s + Math.max(0, Math.ceil(r.plan - r.fact)), 0);
-      map[row.barcode] = { plan, fact, need };
+      const baseRow = baseByBarcode.get(row.barcode);
+      const fact = (baseRow ?? row).regions.reduce((s, r) => s + r.fact, 0);
+      const factByRegion: Record<string, number> = {};
+      const needByRegion: Record<string, number> = {};
+      for (const region of row.regions) {
+        const baseRegion = baseRow?.regions.find((item) => item.regionId === region.regionId);
+        factByRegion[region.regionId] = baseRegion?.fact ?? region.fact;
+        needByRegion[region.regionId] = Math.max(0, Math.ceil(region.plan - region.fact));
+      }
+      map[row.barcode] = { plan, fact, need, factByRegion, needByRegion };
     }
     return map;
-  }, [effectiveRows]);
+  }, [baseEffectiveRows, effectiveRows]);
 
   const handleExport = useCallback(() => {
-    if (allCalculations.length === 0) return;
+    if (allCalculations.length === 0 || !articleMetricsReady) return;
     exportShipmentExcelSummary({
       articles: v2Articles,
       regions: v2SummaryRegions,
       viewMode: v2ViewMode,
       rowMeta: v2RowMeta,
+      articleMetrics,
       boxRounding: v2BoxRounding,
       editableValues: v2EditableValues,
     });
-  }, [allCalculations, v2Articles, v2SummaryRegions, v2ViewMode, v2RowMeta, v2BoxRounding, v2EditableValues]);
+  }, [allCalculations, articleMetricsReady, v2Articles, v2SummaryRegions, v2ViewMode, v2RowMeta, articleMetrics, v2BoxRounding, v2EditableValues]);
 
   if (!isLoaded) {
     return (
@@ -483,10 +556,10 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
         <div className="ml-auto">
           <button
             onClick={handleExport}
-            disabled={allCalculations.length === 0}
+            disabled={allCalculations.length === 0 || !articleMetricsReady}
             className="px-5 py-2 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white text-sm rounded-lg font-medium transition-colors disabled:opacity-40"
           >
-            Сформировать отгрузку
+            {articleMetricsReady ? "Сформировать отгрузку" : "Загрузка ИЛ/ИРП..."}
           </button>
         </div>
       </div>
@@ -583,6 +656,7 @@ export default function ShipmentCalcV2({ initialMode = "v2" }: { initialMode?: "
             regions={v2SummaryRegions}
             viewMode={v2ViewMode}
             rowMeta={v2RowMeta}
+            articleMetrics={articleMetrics}
             boxRounding={v2BoxRounding}
             editableValues={v2EditableValues}
             onEditableValuesChange={setV2EditableValues}

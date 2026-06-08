@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
 import Link from "next/link";
-import { Calculator, Package, ReceiptText } from "lucide-react";
+import { Calendar, Calculator, Package, ReceiptText } from "lucide-react";
 import { StatCard } from "@/components/StatCard";
 import DateRangePicker from "@/components/DateRangePicker";
 import { formatNumber } from "@/lib/utils";
@@ -46,9 +46,100 @@ import {
 const RUB = (v: number) => formatNumber(v) + " ₽";
 const PCT = (v: number) => v.toFixed(1) + "%";
 const QTY = (v: number) => formatNumber(v) + " шт";
+const formatPeriodDate = (date: string) => date ? `${date.slice(8)}.${date.slice(5, 7)}.${date.slice(0, 4)}` : "";
+const toLocalISODate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+const getYesterdayISODate = () => {
+  const date = new Date();
+  date.setDate(date.getDate() - 1);
+  return toLocalISODate(date);
+};
 
 interface FinanceBarcodeItem {
   barcode: string;
+}
+
+type ChartTooltipPayload = {
+  name?: string;
+  value?: number | string;
+  color?: string;
+  dataKey?: string;
+  payload?: {
+    day?: string;
+    orders_count?: number;
+    [key: string]: unknown;
+  };
+};
+
+const financeTooltipStyle = {
+  background: "#12121a",
+  border: "1px solid #2a2a3a",
+  borderRadius: 8,
+  color: "#e4e4ef",
+  boxShadow: "0 18px 45px rgba(0, 0, 0, 0.35)",
+} as const;
+
+function MetricMiniTooltip({
+  active,
+  payload,
+  title,
+  showOrdersCount = false,
+}: {
+  active?: boolean;
+  payload?: ChartTooltipPayload[];
+  title: string;
+  showOrdersCount?: boolean;
+}) {
+  if (!active || !payload?.length) return null;
+  const item = payload[0];
+  const day = item.payload?.day || "";
+  const value = Number(item.value || 0);
+  const ordersCount = Number(item.payload?.orders_count || 0);
+  const color = item.color || "#e4e4ef";
+
+  return (
+    <div className="px-3 py-2 text-xs" style={financeTooltipStyle}>
+      <div className="mb-1 font-medium text-white">{day}</div>
+      <div className="flex min-w-[150px] items-center justify-between gap-4">
+        <span className="flex items-center gap-2 font-medium" style={{ color }}>
+          <span className="h-2 w-2 rounded-full" style={{ background: color }} />
+          {title}
+        </span>
+        <span className="font-semibold">{RUB(value)}</span>
+      </div>
+      {showOrdersCount && (
+        <div className="mt-1 flex min-w-[150px] items-center justify-between gap-4">
+          <span className="text-[var(--text-muted)]">Кол-во</span>
+          <span className="font-semibold">{QTY(ordersCount)}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DailyMetricsTooltip({ active, payload }: { active?: boolean; payload?: ChartTooltipPayload[] }) {
+  if (!active || !payload?.length) return null;
+  const day = String(payload[0]?.payload?.day || "");
+  const order: Record<string, number> = { "Заказы": 0, "Продажи": 1, "Прибыль": 2 };
+  const items = [...payload].sort((a, b) => (order[a.name || ""] ?? 9) - (order[b.name || ""] ?? 9));
+
+  return (
+    <div className="px-3 py-2 text-xs" style={financeTooltipStyle}>
+      <div className="mb-1 font-medium text-white">{day}</div>
+      <div className="space-y-1">
+        {items.map((item) => (
+          <div key={`${item.dataKey}-${item.name}`} className="min-w-[180px]">
+            <div className="flex items-center justify-between gap-4">
+              <span className="flex items-center gap-2 text-[var(--text-muted)]">
+                <span className="h-2 w-2 rounded-full" style={{ background: item.color }} />
+                <span className="font-medium" style={{ color: item.color || "#e4e4ef" }}>{item.name}</span>
+              </span>
+              <span className="font-semibold">{RUB(Number(item.value || 0))}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 
@@ -139,9 +230,10 @@ export default function FinancePage() {
   // Period filter
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
+  const [periodPreview, setPeriodPreview] = useState<{ from: string; to: string } | null>(null);
   const [showPeriodPicker, setShowPeriodPicker] = useState(false);
 
-  // Tax settings (loaded from API → SQLite)
+  // Tax settings (loaded from API → PostgreSQL)
   const [taxSettings, setTaxSettings] = useState<TaxSettings>({ usnRate: 1.0, ndsRate: 5.0 });
 
   // Article table state
@@ -173,8 +265,8 @@ export default function FinancePage() {
     endDate.setDate(today.getDate() - 1); // вчера
     const startDate = new Date(endDate);
     startDate.setDate(endDate.getDate() - 29); // 30 дней включительно
-    setDateFrom(startDate.toISOString().slice(0, 10));
-    setDateTo(endDate.toISOString().slice(0, 10));
+    setDateFrom(toLocalISODate(startDate));
+    setDateTo(toLocalISODate(endDate));
   }, []);
 
   // ── Load tax settings once ──
@@ -331,6 +423,19 @@ export default function FinancePage() {
   }
 
   // forecastData removed — forecast tab now uses its own API
+  const handlePeriodPreviewChange = useCallback((from: string, to: string) => {
+    setPeriodPreview((prev) => {
+      if (prev?.from === from && prev?.to === to) return prev;
+      return { from, to };
+    });
+  }, []);
+
+  const periodLabel = (() => {
+    const from = periodPreview?.from || dateFrom;
+    const to = periodPreview ? periodPreview.to : dateTo;
+    if (from) return `${formatPeriodDate(from)} — ${to ? formatPeriodDate(to) : "..."}`;
+    return recalcPnl?.period || "Выберите период";
+  })();
 
   if (loading) {
     return (
@@ -345,24 +450,35 @@ export default function FinancePage() {
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="relative">
-          <h2 className="text-2xl font-bold">Период</h2>
           <button
-            onClick={() => setShowPeriodPicker(!showPeriodPicker)}
-            className="text-sm text-[var(--text-muted)] mt-2 px-3 py-1 border border-[var(--border)] rounded-lg hover:border-[var(--accent)] hover:text-[var(--text)] transition-colors cursor-pointer"
+            onClick={() => {
+              setShowPeriodPicker((open) => {
+                const next = !open;
+                if (!next) setPeriodPreview(null);
+                return next;
+              });
+            }}
+            className="inline-flex items-center gap-2 text-sm text-[var(--text-muted)] px-3 py-1 border border-[var(--border)] rounded-lg hover:border-[var(--accent)] hover:text-[var(--text)] transition-colors cursor-pointer"
           >
-            {dateFrom && dateTo
-              ? `${dateFrom.slice(8)}.${dateFrom.slice(5, 7)}.${dateFrom.slice(0, 4)} — ${dateTo.slice(8)}.${dateTo.slice(5, 7)}.${dateTo.slice(0, 4)}`
-              : recalcPnl?.period || "Выберите период"}
+            <span>{periodLabel}</span>
+            <Calendar className="h-4 w-4 shrink-0" aria-hidden="true" />
           </button>
           {showPeriodPicker && (
             <DateRangePicker
               dateFrom={dateFrom}
               dateTo={dateTo}
+              maxDate={getYesterdayISODate()}
+              highlightMaxDate
               onChange={(from, to) => {
                 setDateFrom(from);
                 setDateTo(to);
+                setPeriodPreview(null);
               }}
-              onClose={() => setShowPeriodPicker(false)}
+              onPreviewChange={handlePeriodPreviewChange}
+              onClose={() => {
+                setShowPeriodPicker(false);
+                setPeriodPreview(null);
+              }}
             />
           )}
         </div>
@@ -411,7 +527,7 @@ export default function FinancePage() {
         {(["pnl", "articles", "reconciliation", "forecast"] as Tab[]).map((t) => (
           <TabBtn
             key={t}
-            label={{ pnl: "✓ Отчёты", articles: "Артикулы", reconciliation: "✓ Сверка", forecast: "✓ Прогноз" }[t]}
+            label={{ pnl: "Отчёты", articles: "Артикулы", reconciliation: "Сверка", forecast: "Прогноз" }[t]}
             active={tab === t}
             onClick={() => setTab(t)}
           />
@@ -540,8 +656,10 @@ export default function FinancePage() {
                     {filteredDaily.length > 0 && (
                       <div className="mt-2">
                         <ResponsiveContainer width="100%" height={40}>
-                          <AreaChart data={filteredDaily.map(d => ({ v: (d as unknown as Record<string, number>)[mc.dataKey] || 0, day: d.date.slice(8) + "." + d.date.slice(5, 7) }))} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
-                            <Tooltip contentStyle={{ background: "#12121a", border: "1px solid #2a2a3a", borderRadius: 8, fontSize: 11 }} labelFormatter={(_, payload) => payload?.[0]?.payload?.day || ""} formatter={(v: unknown) => [RUB(Number(v)), mc.title]} />
+                          <AreaChart data={filteredDaily.map(d => ({ v: (d as unknown as Record<string, number>)[mc.dataKey] || 0, orders_count: d.orders_count || 0, day: d.date.slice(8) + "." + d.date.slice(5, 7) }))} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+                            <Tooltip
+                              content={<MetricMiniTooltip title={mc.title} showOrdersCount={mc.dataKey === "orders_rub"} />}
+                            />
                             <Area type="monotone" dataKey="v" stroke={mc.color} fill={mc.color} fillOpacity={0.15} strokeWidth={1.5} dot={false} />
                           </AreaChart>
                         </ResponsiveContainer>
@@ -560,7 +678,7 @@ export default function FinancePage() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#2a2a3a" />
                   <XAxis dataKey="day" tick={{ fill: "#8888a0", fontSize: 11 }} />
                   <YAxis tickFormatter={(v) => fmtM(v)} tick={{ fill: "#8888a0", fontSize: 11 }} />
-                  <Tooltip contentStyle={{ background: "#12121a", border: "1px solid #2a2a3a", borderRadius: 8, color: "#e4e4ef" }} itemStyle={{ color: "#e4e4ef" }} labelStyle={{ color: "#e4e4ef" }} formatter={(v) => RUB(Number(v))} itemSorter={(item) => { const order: Record<string, number> = { "Заказы": 0, "Продажи": 1, "Прибыль": 2 }; return order[item.name as string] ?? 9; }} />
+                  <Tooltip content={<DailyMetricsTooltip />} />
                   <Legend wrapperStyle={{ color: "#8888a0", fontSize: 12 }} />
                   <Bar dataKey="profit" name="Прибыль" stackId="stack" fill="#66BB6A" />
                   <Bar dataKey="sales_rub" name="Продажи" stackId="stack" fill="#42A5F5">

@@ -11,13 +11,11 @@
   "dependencies": {
     "@tailwindcss/postcss": "^4.2.2",
     "@types/adm-zip": "^0.5.8",
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.5.0",
     "@types/pg": "^8.20.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "adm-zip": "^0.5.16",
-    "better-sqlite3": "^12.8.0",
     "clsx": "^2.1.1",
     "exceljs": "^4.4.0",
     "idb": "^8.0.3",

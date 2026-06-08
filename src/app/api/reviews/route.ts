@@ -1,288 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
+import { isPostgresReadonlyConnection } from "@/lib/postgres";
+import { getReviewsPg } from "@/lib/reviews-db";
 
-export const maxDuration = 600; // 10 minutes for full sync
-import {
-  getReviews,
-  getReviewsPg,
-  getReviewsCount,
-  ensureDefaultAccount,
-  getDefaultAccountApiKey,
-  upsertReviewsFromWB,
-  cleanDemoData,
-  setSyncStatusDb,
-  getReviewsForEnrichment,
-  enrichReviewsByShkId,
-  getEnrichedCount,
-  type WBFeedback,
-} from "@/lib/reviews-db";
-import { isPostgresEnabled, isPostgresReadonlyConnection } from "@/lib/postgres";
-
-const WB_FEEDBACKS_URL =
-  "https://feedbacks-api.wildberries.ru/api/v1/feedbacks";
-const WB_FEEDBACKS_ARCHIVE_URL =
-  "https://feedbacks-api.wildberries.ru/api/v1/feedbacks/archive";
-
-// ─── Sync status (SQLite-backed) ────────────────────────────
-
-/**
- * Read API key from DB. WB_API_KEY is only an explicit recovery fallback.
- */
-function resolveApiKey(): string {
-  const fromDb = getDefaultAccountApiKey();
-  if (fromDb) return fromDb;
-
-  const fromEnv = process.env.WB_API_KEY?.trim();
-  if (fromEnv) {
-    ensureDefaultAccount(fromEnv);
-    return fromEnv;
-  }
-
-  throw new Error("WB API key is not configured. Add a reviews account or set WB_API_KEY.");
-}
-
-
-const WB_ORDERS_URL = "https://statistics-api.wildberries.ru/api/v1/supplier/orders";
-const WB_STATISTICS_URL = "https://statistics-api.wildberries.ru/api/v5/supplier/reportDetailByPeriod";
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function fetchWbJson(url: string, apiKey: string): Promise<unknown> {
-  let lastBody = "";
-
-  const retryDelays = [10000, 30000, 60000, 120000, 180000, 300000, 300000, 300000];
-  for (let attempt = 1; attempt <= retryDelays.length; attempt++) {
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-    const text = await res.text().catch(() => "");
-    lastBody = text;
-
-    if (res.ok) {
-      return text ? JSON.parse(text) : {};
-    }
-
-    if (res.status === 429 || res.status >= 500) {
-      await sleep(retryDelays[attempt - 1]);
-      continue;
-    }
-
-    throw new Error(`WB feedbacks API ${res.status}: ${text}`);
-  }
-
-  throw new Error(`WB feedbacks API retry exhausted: ${lastBody}`);
-}
-
-function getFeedbacksFromResponse(data: unknown): WBFeedback[] {
-  const response = data as { data?: { feedbacks?: WBFeedback[] } };
-  return Array.isArray(response.data?.feedbacks) ? response.data.feedbacks : [];
-}
-
-/**
- * Enrich reviews with price & region from Orders API (realtime, sticker=shk_id),
- * then fill remaining from Statistics API (detail report, 7-10 day delay).
- */
-async function enrichFromStatistics(apiKey: string, accountId: number): Promise<number> {
-  const reviews = getReviewsForEnrichment(accountId);
-  if (reviews.length === 0) return 0;
-
-  setSyncStatusDb({ status: "syncing", message: `Обогащение: загрузка заказов (реалтайм)...` });
-
-  const shkLookup = new Map<number, number>();
-  for (const r of reviews) {
-    shkLookup.set(r.shk_id, r.id);
-  }
-
-  let totalEnriched = 0;
-  const fmtN = (n: number) => n.toLocaleString("ru-RU");
-
-  // ── Step 1: Orders API (realtime, last 30 days) ──
-  try {
-    const dateFrom = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
-    const res = await fetch(`${WB_ORDERS_URL}?dateFrom=${dateFrom}`, {
-      headers: { Authorization: apiKey },
-    });
-    if (res.ok) {
-      const orders = await res.json();
-      if (Array.isArray(orders)) {
-        const batch: { shk_id: number; price: number; pickup_point: string }[] = [];
-        for (const o of orders) {
-          const sticker = Number(o.sticker);
-          const price = Math.abs(o.finishedPrice || 0);
-          if (sticker && shkLookup.has(sticker) && price > 0) {
-            batch.push({
-              shk_id: sticker,
-              price,
-              pickup_point: o.regionName || "",
-            });
-            shkLookup.delete(sticker);
-          }
-        }
-        if (batch.length > 0) {
-          enrichReviewsByShkId(batch);
-          totalEnriched += batch.length;
-        }
-        setSyncStatusDb({
-          message: `Обогащение: заказы — ${fmtN(totalEnriched)} совпадений. Загрузка статистики...`,
-        });
-      }
-    }
-  } catch { /* continue to statistics */ }
-
-  // ── Step 2: Statistics API (detail report, last 90 days) for remaining ──
-  if (shkLookup.size > 0) {
-    const dateFrom = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
-    const dateTo = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
-    let rrdid = 0;
-
-    for (let page = 0; page < 50; page++) {
-      const url = `${WB_STATISTICS_URL}?dateFrom=${dateFrom}&dateTo=${dateTo}&limit=100000&rrdid=${rrdid}`;
-      const res = await fetch(url, { headers: { Authorization: apiKey } });
-      if (!res.ok) break;
-
-      const rows = await res.json();
-      if (!Array.isArray(rows) || rows.length === 0) break;
-
-      const batch: { shk_id: number; price: number; pickup_point: string }[] = [];
-      for (const row of rows) {
-        if (row.shk_id && shkLookup.has(row.shk_id)) {
-          const price = row.retail_amount || row.retail_price_withdisc_rub || 0;
-          const pickup = row.ppvz_office_name || "";
-          if (price > 0 && pickup) {
-            batch.push({ shk_id: row.shk_id, price, pickup_point: pickup });
-            shkLookup.delete(row.shk_id);
-          }
-        }
-        if (row.rrd_id > rrdid) rrdid = row.rrd_id;
-      }
-
-      if (batch.length > 0) {
-        enrichReviewsByShkId(batch);
-        totalEnriched += batch.length;
-      }
-
-      setSyncStatusDb({
-        message: `Обогащение: стр. ${page + 1}, сохранено ${fmtN(totalEnriched)} (цена + ПВЗ)`,
-      });
-
-      if (rows.length < 100000 || shkLookup.size === 0) break;
-      await new Promise(r => setTimeout(r, 500));
-    }
-  }
-
-  return totalEnriched;
-}
-
-/**
- * Fetch feedbacks from WB Seller API and upsert into DB.
- * Writes to DB in batches (every 5000) to avoid memory issues and timeouts.
- * fullSync=true — load ALL regular and archived reviews.
- * fullSync=false — incremental: unanswered + recent answered + recent archive pages.
- */
-async function syncFromWB(apiKey: string, accountId: number, fullSync: boolean): Promise<number> {
-  setSyncStatusDb({ status: "syncing", loaded: 0, total: 0, message: "Загрузка неотвеченных отзывов..." });
-
-  const dbCount = getReviewsCount(accountId);
-  const isIncremental = !fullSync && dbCount > 0;
-  const fmtN = (n: number) => n.toLocaleString("ru-RU");
-
-  let totalFetched = 0;
-  let batch: WBFeedback[] = [];
-
-  function flushBatch() {
-    if (batch.length === 0) return;
-    upsertReviewsFromWB(accountId, batch);
-    batch = [];
-  }
-
-  function addToBatch(feedbacks: WBFeedback[]) {
-    batch.push(...feedbacks);
-    totalFetched += feedbacks.length;
-    if (batch.length >= 5000) flushBatch();
-  }
-
-  // 1) Fetch ALL unanswered (both full & incremental)
-  for (let skip = 0; ; skip += 100) {
-    const url = `${WB_FEEDBACKS_URL}?isAnswered=false&take=100&skip=${skip}`;
-    const feedbacks = getFeedbacksFromResponse(await fetchWbJson(url, apiKey));
-    addToBatch(feedbacks);
-    setSyncStatusDb({
-      loaded: totalFetched,
-      message: isIncremental
-        ? `Инкрементальный sync | Неотвеченные: ${fmtN(totalFetched)}`
-        : `Загружено: ${fmtN(totalFetched)} (неотвеченные)`,
-    });
-    if (feedbacks.length < 100) break;
-    await sleep(500);
-  }
-
-  // 2) Fetch answered
-  if (isIncremental) {
-    setSyncStatusDb({ message: `Инкрементальный sync | Загрузка последних 500 отвеченных...` });
-    const url = `${WB_FEEDBACKS_URL}?isAnswered=true&take=500&skip=0`;
-    addToBatch(getFeedbacksFromResponse(await fetchWbJson(url, apiKey)));
-  } else {
-    for (let skip = 0; ; skip += 5000) {
-      const url = `${WB_FEEDBACKS_URL}?isAnswered=true&take=5000&skip=${skip}`;
-      const feedbacks = getFeedbacksFromResponse(await fetchWbJson(url, apiKey));
-      addToBatch(feedbacks);
-      setSyncStatusDb({
-        loaded: totalFetched,
-        message: `Загружено и сохранено: ${fmtN(totalFetched)} (обычные)`,
-      });
-      if (feedbacks.length < 5000) break;
-      await sleep(500);
-    }
-  }
-
-  // 3) Fetch archive. WB moved rating-only and processed reviews here.
-  const archivePageLimit = isIncremental ? 3 : Number.POSITIVE_INFINITY;
-  let archivePages = 0;
-  for (let skip = 0; ; skip += 5000) {
-    if (archivePages >= archivePageLimit) break;
-    const url = `${WB_FEEDBACKS_ARCHIVE_URL}?take=5000&skip=${skip}`;
-    const feedbacks = getFeedbacksFromResponse(await fetchWbJson(url, apiKey));
-    addToBatch(feedbacks);
-    archivePages++;
-    setSyncStatusDb({
-      loaded: totalFetched,
-      message: isIncremental
-        ? `Инкрементальный sync | Архив: стр. ${archivePages}, всего получено ${fmtN(totalFetched)}`
-        : `Загружено и сохранено: ${fmtN(totalFetched)} (с архивом)`,
-    });
-    if (feedbacks.length < 5000) break;
-    await sleep(500);
-    if (isIncremental) {
-      const oldestDate = feedbacks
-        .map((fb) => fb.createdDate?.slice(0, 10))
-        .filter(Boolean)
-        .sort()[0];
-      const cutoff = new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10);
-      if (oldestDate && oldestDate < cutoff) break;
-    }
-  }
-
-  // Flush remaining
-  flushBatch();
-
-  if (totalFetched > 0) {
-    const newDbCount = getReviewsCount(accountId);
-    setSyncStatusDb({
-      loaded: newDbCount,
-      total: newDbCount,
-      status: "done",
-      message: isIncremental
-        ? `Добавлено ${fmtN(Math.max(newDbCount - dbCount, 0))} новых. В базе: ${fmtN(newDbCount)} ✅`
-        : `Загружено ${fmtN(newDbCount)} ✅`,
-    });
-    return totalFetched;
-  }
-
-  setSyncStatusDb({ status: "done", loaded: dbCount, total: dbCount, message: `В базе: ${fmtN(dbCount)} ✅` });
-  return 0;
-}
+export const maxDuration = 600;
 
 export async function GET(req: NextRequest) {
   const authError = await requireAdmin(req);
@@ -290,12 +11,10 @@ export async function GET(req: NextRequest) {
 
   try {
     const sp = req.nextUrl.searchParams;
-    const syncParam = sp.get("sync"); // "true" = incremental, "full" = full sync
+    const syncParam = sp.get("sync");
     const shouldSync = syncParam === "true" || syncParam === "full";
-    const fullSync = syncParam === "full";
-    const pgMode = isPostgresEnabled();
 
-    if (shouldSync && pgMode) {
+    if (shouldSync) {
       return NextResponse.json(
         {
           error: isPostgresReadonlyConnection()
@@ -303,38 +22,8 @@ export async function GET(req: NextRequest) {
             : "Reviews sync via API is disabled in PostgreSQL mode. Use the server-side reviews sync job.",
           code: "reviews_sync_disabled_pg",
         },
-        { status: isPostgresReadonlyConnection() ? 403 : 409 }
+        { status: isPostgresReadonlyConnection() ? 403 : 409 },
       );
-    }
-
-    const apiKey = pgMode ? "" : resolveApiKey();
-    const account = pgMode ? null : ensureDefaultAccount(apiKey);
-
-    if (shouldSync) {
-      cleanDemoData();
-      try {
-        await syncFromWB(apiKey, account!.id, fullSync);
-      } catch (e) {
-        setSyncStatusDb({ status: "error", message: (e as Error).message });
-        throw e;
-      }
-
-      // Enrich in background — don't block the response, UI polls sync-status
-      enrichFromStatistics(apiKey, account!.id).then(() => {
-        const fmtN = (n: number) => n.toLocaleString("ru-RU");
-        const finalCount = getReviewsCount(account!.id);
-        const enrichedTotal = getEnrichedCount();
-        setSyncStatusDb({
-          loaded: finalCount, total: finalCount, status: "done",
-          message: enrichedTotal > 0
-            ? `В базе: ${fmtN(finalCount)} ✅ | Цена и ПВЗ: ${fmtN(enrichedTotal)}`
-            : `В базе: ${fmtN(finalCount)} ✅`,
-        });
-      }).catch(() => {
-        const fmtN = (n: number) => n.toLocaleString("ru-RU");
-        const finalCount = getReviewsCount(account!.id);
-        setSyncStatusDb({ loaded: finalCount, total: finalCount, status: "done", message: `В базе: ${fmtN(finalCount)} ✅` });
-      });
     }
 
     const filters = {
@@ -370,7 +59,7 @@ export async function GET(req: NextRequest) {
       sort_dir: (sp.get("sort_dir") as "asc" | "desc") || "desc",
     };
 
-    const result = pgMode ? await getReviewsPg(filters) : getReviews(filters);
+    const result = await getReviewsPg(filters);
     return NextResponse.json(result);
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

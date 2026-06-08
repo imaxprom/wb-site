@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
-import { getComplaintByReviewId, getComplaintByReviewIdPg } from "@/lib/reviews-db";
-import { isPostgresEnabled } from "@/lib/postgres";
+import { getComplaintByReviewIdPg } from "@/lib/reviews-db";
 
 /**
  * GET /api/reviews/complaint-status?review_id=N — статус жалобы
@@ -19,9 +18,7 @@ export async function GET(req: NextRequest) {
   if (!reviewId) {
     return NextResponse.json({ error: "review_id required" }, { status: 400 });
   }
-  const complaint = isPostgresEnabled()
-    ? await getComplaintByReviewIdPg(reviewId)
-    : getComplaintByReviewId(reviewId);
+  const complaint = await getComplaintByReviewIdPg(reviewId);
   if (!complaint) {
     return NextResponse.json({ status: "none" });
   }

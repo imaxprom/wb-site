@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
-import { isPostgresEnabled, pgRows } from "@/lib/postgres";
-import { getDb } from "@/modules/finance/lib/queries";
+import { pgRows } from "@/lib/postgres";
 
 export interface BarcodeItem {
   barcode: string;
@@ -47,9 +46,7 @@ export async function GET(req: NextRequest) {
       ORDER BY sa_name, ts_name, barcode
     `;
 
-    const rows = isPostgresEnabled()
-      ? await pgRows<BarcodeItem>(sql)
-      : getDb().prepare(sql.replace("FULL OUTER JOIN", "LEFT JOIN")).all() as BarcodeItem[];
+    const rows = await pgRows<BarcodeItem>(sql);
 
     return NextResponse.json(rows);
   } catch (err) {

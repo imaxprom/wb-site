@@ -1,17 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
-import { getSyncStatusDb, getSyncStatusDbPg, getReviewsCount, getReviewsCountPg } from "@/lib/reviews-db";
-import { isPostgresEnabled } from "@/lib/postgres";
+import { getSyncStatusDbPg, getReviewsCountPg } from "@/lib/reviews-db";
 
 export async function GET(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
 
-  const pgMode = isPostgresEnabled();
-  const status = pgMode ? await getSyncStatusDbPg() : getSyncStatusDb();
+  const status = await getSyncStatusDbPg();
 
   if (status.status === "idle") {
-    const dbCount = pgMode ? await getReviewsCountPg() : getReviewsCount();
+    const dbCount = await getReviewsCountPg();
     return NextResponse.json({
       ...status,
       loaded: dbCount,

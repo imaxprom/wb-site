@@ -9,15 +9,12 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const Database = require("better-sqlite3");
 
 const ROOT = process.cwd();
-const DB_PATH = process.env.DB_PATH || path.join(ROOT, "data", "finance.db");
 const KEY_PATH = process.env.GOOGLE_SERVICE_ACCOUNT_KEY || path.join(ROOT, "data", "google-service-account.json");
 const SPREADSHEET_ID = process.env.WAREHOUSE_SPREADSHEET_ID || "1BXtl8hX_mp2sbde9lzkF_uS43WCnnSn_wNNxcse9daM";
 const RANGE = "A1:N120";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
-const USE_PG = process.env.MPHUB_DB_ENGINE === "postgres";
 
 let pgPool = null;
 
@@ -174,46 +171,6 @@ function parseSheet(title, rows) {
   return [...bySize.values()];
 }
 
-function ensureSchema(db) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS warehouse_sync_runs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      spreadsheet_id TEXT NOT NULL,
-      spreadsheet_title TEXT,
-      status TEXT NOT NULL,
-      started_at TEXT NOT NULL,
-      finished_at TEXT,
-      sheets_count INTEGER NOT NULL DEFAULT 0,
-      rows_count INTEGER NOT NULL DEFAULT 0,
-      total_units REAL NOT NULL DEFAULT 0,
-      total_boxes REAL NOT NULL DEFAULT 0,
-      message TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS warehouse_ready_stock (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      spreadsheet_id TEXT NOT NULL,
-      spreadsheet_title TEXT,
-      sheet_name TEXT NOT NULL,
-      article_wb TEXT NOT NULL,
-      size_label TEXT NOT NULL,
-      size_range TEXT NOT NULL,
-      source_column TEXT NOT NULL,
-      color_column TEXT,
-      per_box REAL,
-      filled_cells INTEGER NOT NULL DEFAULT 0,
-      units_qty REAL NOT NULL DEFAULT 0,
-      boxes_qty REAL,
-      synced_at TEXT NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_warehouse_ready_stock_article
-      ON warehouse_ready_stock(article_wb);
-    CREATE INDEX IF NOT EXISTS idx_warehouse_ready_stock_synced
-      ON warehouse_ready_stock(synced_at);
-  `);
-}
-
 async function ensureSchemaPg(pool) {
   const existing = await pool.query(`
     SELECT to_regclass('public.warehouse_sync_runs') AS sync_runs,
@@ -282,90 +239,7 @@ async function readWarehouseSheets() {
 
 async function main() {
   const startedAt = new Date().toISOString();
-  if (USE_PG) {
-    await syncPostgres(startedAt);
-    return;
-  }
-
-  await syncSqlite(startedAt);
-}
-
-async function syncSqlite(startedAt) {
-  const db = new Database(DB_PATH);
-  db.pragma("busy_timeout = 5000");
-  ensureSchema(db);
-
-  const insertRun = db.prepare(`
-    INSERT INTO warehouse_sync_runs (spreadsheet_id, status, started_at, message)
-    VALUES (?, 'running', ?, '')
-  `);
-  const run = insertRun.run(SPREADSHEET_ID, startedAt);
-  const runId = run.lastInsertRowid;
-
-  try {
-    const data = await readWarehouseSheets();
-    const syncedAt = new Date().toISOString();
-    const warehouseRows = data.rows.filter((row) => row.articleWB);
-    const totalUnits = warehouseRows.reduce((sum, row) => sum + row.unitsQty, 0);
-    const totalBoxes = warehouseRows.reduce((sum, row) => sum + (row.boxesQty || 0), 0);
-
-    const write = db.transaction(() => {
-      db.prepare("DELETE FROM warehouse_ready_stock WHERE spreadsheet_id = ?").run(SPREADSHEET_ID);
-      const insert = db.prepare(`
-        INSERT INTO warehouse_ready_stock (
-          spreadsheet_id, spreadsheet_title, sheet_name, article_wb,
-          size_label, size_range, source_column, color_column,
-          per_box, filled_cells, units_qty, boxes_qty, synced_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      for (const row of warehouseRows) {
-        insert.run(
-          SPREADSHEET_ID,
-          data.title,
-          row.sheetName,
-          row.articleWB,
-          row.sizeLabel,
-          row.sizeRange,
-          row.sourceColumn,
-          row.colorColumn,
-          row.perBox,
-          row.filledCells,
-          row.unitsQty,
-          row.boxesQty,
-          syncedAt,
-        );
-      }
-      db.prepare(`
-        UPDATE warehouse_sync_runs
-        SET spreadsheet_title = ?, status = 'done', finished_at = ?, sheets_count = ?,
-            rows_count = ?, total_units = ?, total_boxes = ?, message = ?
-        WHERE id = ?
-      `).run(
-        data.title,
-        syncedAt,
-        data.sheetTitles.length,
-        warehouseRows.length,
-        Math.round(totalUnits * 100) / 100,
-        Math.round(totalBoxes * 100) / 100,
-        `Imported ${warehouseRows.length} warehouse size rows`,
-        runId,
-      );
-    });
-    write();
-
-    console.log(`Imported ${warehouseRows.length} rows from ${data.sheetTitles.length} sheets`);
-    console.log(`Total units: ${Math.round(totalUnits * 100) / 100}`);
-    console.log(`Total boxes: ${Math.round(totalBoxes * 100) / 100}`);
-  } catch (error) {
-    db.prepare(`
-      UPDATE warehouse_sync_runs
-      SET status = 'error', finished_at = ?, message = ?
-      WHERE id = ?
-    `).run(new Date().toISOString(), error.message, runId);
-    throw error;
-  } finally {
-    db.close();
-  }
+  await syncPostgres(startedAt);
 }
 
 async function syncPostgres(startedAt) {

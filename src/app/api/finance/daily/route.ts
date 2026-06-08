@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
-import { getDaily, getDailyPg } from "@/modules/finance/lib/queries";
+import { getDailyPg } from "@/modules/finance/lib/queries";
 import { apiError } from "@/lib/api-utils";
-import { isPostgresEnabled } from "@/lib/postgres";
 
 export async function GET(request: NextRequest) {
   const authError = await requireAdmin(request);
@@ -14,9 +13,7 @@ export async function GET(request: NextRequest) {
   const nmId = searchParams.get("nm_id") ? Number(searchParams.get("nm_id")) : undefined;
 
   try {
-    const daily = isPostgresEnabled()
-      ? await getDailyPg(dateFrom, dateTo, nmId)
-      : getDaily(dateFrom, dateTo, nmId);
+    const daily = await getDailyPg(dateFrom, dateTo, nmId);
     return NextResponse.json(daily);
   } catch (error) {
     return apiError(error);

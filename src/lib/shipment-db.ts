@@ -1,27 +1,15 @@
 /**
- * SQLite storage for shipment data (orders, stock, products, meta).
- * Uses the existing finance.db database.
+ * PostgreSQL storage for shipment data (orders, stock, products, meta).
+ * Local file-based DB access has been removed.
  */
 
-import Database from "better-sqlite3";
-import path from "path";
 import type { OrderRecord, StockItem, Product, ProductOverride, ProductOverrides } from "@/types";
 import { hashPassword } from "./auth";
 import { isPostgresEnabled, isPostgresReadonlyConnection, pgGet, pgRows, withPgTransaction } from "@/lib/postgres";
 import type { PoolClient } from "pg";
 
-const DB_PATH = path.join(process.cwd(), "data", "finance.db");
-
-let db: Database.Database | null = null;
-
-export function getDb(): Database.Database {
-  if (!db) {
-    db = new Database(DB_PATH, { readonly: false });
-    db.pragma("busy_timeout = 5000");
-    db.pragma("journal_mode = WAL");
-    db.pragma("cache_size = -64000");
-  }
-  return db;
+export function getDb(): any {
+  throw new Error("Removed shipment file DB helper. Use PostgreSQL helpers instead.");
 }
 
 export interface UserRow {
@@ -896,8 +884,19 @@ export function saveOrders(orders: OrderRecord[]): void {
 
   const insert = d.transaction((rows: OrderRecord[]) => {
     for (const o of rows) {
+      const fallbackUid = `${o.barcode}:${o.date}:${o.warehouse}`;
+      const orderUid = o.orderUid || fallbackUid;
+      if (orderUid !== fallbackUid) {
+        d.prepare(`
+          DELETE FROM shipment_orders
+          WHERE order_uid = ?
+            AND barcode = ?
+            AND date = ?
+            AND warehouse = ?
+        `).run(fallbackUid, o.barcode, o.date, o.warehouse);
+      }
       stmt.run({
-        orderUid: o.orderUid || `${o.barcode}:${o.date}:${o.warehouse}`,
+        orderUid,
         gNumber: o.gNumber || "",
         sticker: o.sticker || "",
         srid: o.srid || "",
@@ -931,6 +930,17 @@ export async function saveOrdersPg(orders: OrderRecord[]): Promise<void> {
   assertPostgresWritable();
   await withPgTransaction(async (client) => {
     for (const o of orders) {
+      const fallbackUid = `${o.barcode}:${o.date}:${o.warehouse}`;
+      const orderUid = o.orderUid || fallbackUid;
+      if (orderUid !== fallbackUid) {
+        await client.query(`
+          DELETE FROM shipment_orders
+          WHERE order_uid = $1
+            AND barcode = $2
+            AND date = $3
+            AND warehouse = $4
+        `, [fallbackUid, o.barcode, o.date, o.warehouse]);
+      }
       await client.query(`
         INSERT INTO shipment_orders
           (order_uid, g_number, sticker, srid, date, warehouse, federal_district, region, article_seller, article_wb,
@@ -944,7 +954,7 @@ export async function saveOrdersPg(orders: OrderRecord[]): Promise<void> {
           is_cancel = EXCLUDED.is_cancel,
           cancel_date = EXCLUDED.cancel_date
       `, [
-        o.orderUid || `${o.barcode}:${o.date}:${o.warehouse}`,
+        orderUid,
         o.gNumber || "",
         o.sticker || "",
         o.srid || "",
@@ -1202,13 +1212,18 @@ export async function saveProductsPg(products: Product[]): Promise<{ total: numb
   return { total: products.length, written, skipped };
 }
 
-export function getOrders(dateFrom: string, dateTo: string): OrderRecord[] {
+export function getOrders(dateFrom: string, dateTo: string, limit?: number): OrderRecord[] {
   const d = getDb();
+  const safeLimit = Number.isSafeInteger(limit) && Number(limit) > 0 ? Number(limit) : null;
   const rows = d.prepare(`
-    SELECT * FROM shipment_orders
+    SELECT order_uid, g_number, sticker, srid, date, warehouse, federal_district, region,
+      article_seller, article_wb, barcode, category, subject, brand, size, total_price,
+      discount_percent, spp, finished_price, price_with_disc, is_cancel, cancel_date
+    FROM shipment_orders
     WHERE date >= ? AND date < ?
     ORDER BY date DESC
-  `).all(dateFrom, dateTo) as Record<string, unknown>[];
+    ${safeLimit ? "LIMIT ?" : ""}
+  `).all(...(safeLimit ? [dateFrom, dateTo, safeLimit] : [dateFrom, dateTo])) as Record<string, unknown>[];
 
   return rows.map((r) => ({
     orderUid: (r.order_uid as string) || `${r.barcode}:${r.date}:${r.warehouse}`,
@@ -1238,13 +1253,18 @@ export function getOrders(dateFrom: string, dateTo: string): OrderRecord[] {
   }));
 }
 
-export async function getOrdersPg(dateFrom: string, dateTo: string): Promise<OrderRecord[]> {
+export async function getOrdersPg(dateFrom: string, dateTo: string, limit?: number): Promise<OrderRecord[]> {
   await initShipmentTablesPg();
+  const safeLimit = Number.isSafeInteger(limit) && Number(limit) > 0 ? Number(limit) : null;
   const rows = await pgRows<Record<string, unknown>>(`
-    SELECT * FROM shipment_orders
+    SELECT order_uid, g_number, sticker, srid, date, warehouse, federal_district, region,
+      article_seller, article_wb, barcode, category, subject, brand, size, total_price,
+      discount_percent, spp, finished_price, price_with_disc, is_cancel, cancel_date
+    FROM shipment_orders
     WHERE date >= ? AND date < ?
     ORDER BY date DESC
-  `, [dateFrom, dateTo]);
+    ${safeLimit ? "LIMIT ?" : ""}
+  `, safeLimit ? [dateFrom, dateTo, safeLimit] : [dateFrom, dateTo]);
 
   return rows.map((r) => ({
     orderUid: (r.order_uid as string) || `${r.barcode}:${r.date}:${r.warehouse}`,

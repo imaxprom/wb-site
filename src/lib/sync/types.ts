@@ -3,7 +3,6 @@ import path from "path";
 import { getWbApiKey } from "../wb-api-key";
 
 export const STATUS_PATH = path.join(process.cwd(), "data", "daily-sync-status.json");
-export const DB_PATH = path.join(process.cwd(), "data", "finance.db");
 export const TOKENS_PATH = path.join(process.cwd(), "data", "wb-tokens.json");
 
 export interface SourceStatus {
@@ -24,12 +23,22 @@ export interface DaySyncStatus {
   complete: boolean;
 }
 
+export interface OrdersRefreshStatus {
+  ok: boolean;
+  lastAttempt: string;
+  checked: number;
+  updated: number;
+  windowDays: number;
+  error?: string;
+}
+
 export interface SyncStatus {
   today: DaySyncStatus | null;
   lastRun: string | null;
   nextRun: string | null;
   running: boolean;
   history: DaySyncStatus[];
+  ordersRefresh?: OrdersRefreshStatus | null;
 }
 
 export function emptySource(): SourceStatus {

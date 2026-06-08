@@ -14,11 +14,9 @@
 
 const fs = require("fs");
 const path = require("path");
-const Database = require("better-sqlite3");
 const { Pool } = require("pg");
 
 const PROJECT_DIR = path.join(__dirname, "..");
-const DB_PATH = path.join(PROJECT_DIR, "data", "finance.db");
 const API_KEY_PATH = path.join(PROJECT_DIR, "data", "wb-api-key.txt");
 const LOG_PATH = path.join(PROJECT_DIR, "data", "paid-storage-sync.log");
 const LOCK_PATH = "/tmp/paid-storage-sync.lock";
@@ -46,7 +44,6 @@ function loadEnvFile(filePath) {
 
 loadEnvFile(path.join(PROJECT_DIR, ".env.production.local"));
 
-const USE_PG = process.env.MPHUB_DB_ENGINE === "postgres";
 let pgPool = null;
 
 function getPgPool() {
@@ -121,16 +118,6 @@ function daysList(n) {
   return out.reverse();
 }
 
-function ensureTable(db) {
-  db.prepare("CREATE TABLE IF NOT EXISTS paid_storage (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, nm_id INTEGER NOT NULL, barcode TEXT, warehouse TEXT, warehouse_price REAL DEFAULT 0, barcodes_count INTEGER DEFAULT 0, vendor_code TEXT, subject TEXT, volume REAL DEFAULT 0)").run();
-  db.prepare("CREATE INDEX IF NOT EXISTS idx_ps_date_nm ON paid_storage(date, nm_id)").run();
-}
-
-function hasDayData(db, date) {
-  const row = db.prepare("SELECT COUNT(*) as cnt FROM paid_storage WHERE date = ?").get(date);
-  return row.cnt > 0;
-}
-
 async function hasDayDataPg(date) {
   const result = await getPgPool().query("SELECT COUNT(*)::int as cnt FROM paid_storage WHERE date = $1", [date]);
   return result.rows[0].cnt > 0;
@@ -180,35 +167,18 @@ async function syncDay(apiKey, date) {
     if (rows.length === 0) return { ok: true, total: 0, inserted: 0, note: "empty" };
 
     let inserted = 0, total = 0;
-    if (USE_PG) {
-      await withPgTransaction(async (client) => {
-        await client.query("DELETE FROM paid_storage WHERE date = $1", [date]);
-        for (const r of rows) {
-          if ((r.date || date) !== date) continue;
-          await client.query(
-            "INSERT INTO paid_storage (date, nm_id, barcode, warehouse, warehouse_price, barcodes_count, vendor_code, subject, volume) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-            [date, r.nmId || 0, r.barcode || "", r.warehouse || "", r.warehousePrice || 0, r.barcodesCount || 0, r.vendorCode || "", r.subject || "", r.volume || 0]
-          );
-          total += r.warehousePrice || 0;
-          inserted++;
-        }
-      });
-    } else {
-      const db = new Database(DB_PATH);
-      db.pragma("busy_timeout = 5000");
-      ensureTable(db);
-      db.prepare("DELETE FROM paid_storage WHERE date = ?").run(date);
-      const ins = db.prepare("INSERT INTO paid_storage (date, nm_id, barcode, warehouse, warehouse_price, barcodes_count, vendor_code, subject, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-      db.transaction(() => {
-        for (const r of rows) {
-          if ((r.date || date) !== date) continue;
-          ins.run(date, r.nmId || 0, r.barcode || "", r.warehouse || "", r.warehousePrice || 0, r.barcodesCount || 0, r.vendorCode || "", r.subject || "", r.volume || 0);
-          total += r.warehousePrice || 0;
-          inserted++;
-        }
-      })();
-      db.close();
-    }
+    await withPgTransaction(async (client) => {
+      await client.query("DELETE FROM paid_storage WHERE date = $1", [date]);
+      for (const r of rows) {
+        if ((r.date || date) !== date) continue;
+        await client.query(
+          "INSERT INTO paid_storage (date, nm_id, barcode, warehouse, warehouse_price, barcodes_count, vendor_code, subject, volume) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+          [date, r.nmId || 0, r.barcode || "", r.warehouse || "", r.warehousePrice || 0, r.barcodesCount || 0, r.vendorCode || "", r.subject || "", r.volume || 0]
+        );
+        total += r.warehousePrice || 0;
+        inserted++;
+      }
+    });
     return { ok: true, total: Math.round(total), inserted };
   } catch (err) {
     return { ok: false, err: err.message || String(err) };
@@ -224,15 +194,8 @@ async function main() {
 
   const dates = daysList(days);
   let pending = [];
-  if (USE_PG) {
-    for (const date of dates) {
-      if (!await hasDayDataPg(date)) pending.push(date);
-    }
-  } else {
-    const db = new Database(DB_PATH);
-    ensureTable(db);
-    pending = dates.filter(d => !hasDayData(db, d));
-    db.close();
+  for (const date of dates) {
+    if (!await hasDayDataPg(date)) pending.push(date);
   }
 
   log(`Window ${dates[0]}..${dates[dates.length - 1]}: ${dates.length} days, ${pending.length} pending`);

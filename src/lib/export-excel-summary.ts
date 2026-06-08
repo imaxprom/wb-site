@@ -3,13 +3,14 @@
  * Нейтральная палитра, чёрные рамки, чередование бело-зелёного, вшитые формулы.
  */
 import XLSX from "xlsx-js-style";
-import type { PackingSummaryEditableValues, SummaryArticle } from "@/modules/shipment/components/PackingSummaryTable";
+import type { ArticleLogisticsMetrics, PackingSummaryEditableValues, SummaryArticle } from "@/modules/shipment/components/PackingSummaryTable";
 
 interface ExportInput {
   articles: SummaryArticle[];
   regions: Array<{ id: string; shortName: string }>;
   viewMode: "units" | "boxes";
-  rowMeta?: Record<string, { plan: number; fact: number; need: number }>;
+  rowMeta?: Record<string, { plan: number; fact: number; need: number; factByRegion?: Record<string, number>; needByRegion?: Record<string, number> }>;
+  articleMetrics?: Record<string, ArticleLogisticsMetrics>;
   boxRounding?: number;
   editableValues?: PackingSummaryEditableValues;
 }
@@ -79,16 +80,29 @@ function parseStockNumber(value: string | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function fixedNumber(value: number | null | undefined, digits = 2): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  return new Intl.NumberFormat("ru-RU", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(value);
+}
+
+function fixedPercent(value: number | null | undefined, digits = 2): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  return `${fixedNumber(value, digits)}%`;
+}
+
 // ─── Main ──────────────────────────────────────────────────
-export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMeta, boxRounding = 0.5, editableValues }: ExportInput) {
+export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMeta, articleMetrics = {}, boxRounding = 0.5, editableValues }: ExportInput) {
   if (articles.length === 0) return;
   const isBoxes = viewMode === "boxes";
 
   const N = regions.length;
   // Col map: 0 Art | 1 Size | 2 perBox | 3 Barcode | 4 Plan | 5 Fact | 6 Need | 7 Stock
-  // boxes mode: regions N × 2 (Box, Units) | Sverka | ShipBoxes | ShipUnits | Delta
-  // units mode: regions N × 1 (Units)      | Sverka | ShipUnits | Delta
-  const regionColsPerRegion = isBoxes ? 2 : 1;
+  // boxes mode: regions N × 4 (Box, Plan, Fact, Need) | Sverka | ShipBoxes | ShipUnits | Delta
+  // units mode: regions N × 3 (Plan, Fact, Need)      | Sverka | ShipUnits | Delta
+  const regionColsPerRegion = isBoxes ? 4 : 3;
   const SVERKA_C = 8 + N * regionColsPerRegion;
   const SHIP_BOXES_C = isBoxes ? SVERKA_C + 1 : -1;
   const SHIP_UNITS_C = isBoxes ? SVERKA_C + 2 : SVERKA_C + 1;
@@ -125,14 +139,22 @@ export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMet
     if (isBoxes) {
       setV(ws, 0, colStart, regions[i].shortName, hdrMainWithSep);
       setV(ws, 0, colStart + 1, "", hdrMainWithSep);
-      merges.push({ s: { r: 0, c: colStart }, e: { r: 0, c: colStart + 1 } });
+      setV(ws, 0, colStart + 2, "", hdrMainWithSep);
+      setV(ws, 0, colStart + 3, "", hdrMainWithSep);
+      merges.push({ s: { r: 0, c: colStart }, e: { r: 0, c: colStart + 3 } });
       setV(ws, 1, colStart, "Коробов", { ...hdrSubStyle, border: { ...BORDER_ALL_THIN, left: BORDER_THICK } });
-      setV(ws, 1, colStart + 1, "Штук", { ...hdrSubStyle, border: { ...BORDER_ALL_THIN, right: BORDER_THICK } });
+      setV(ws, 1, colStart + 1, "План", hdrSubStyle);
+      setV(ws, 1, colStart + 2, "Факт", hdrSubStyle);
+      setV(ws, 1, colStart + 3, "Нужно", { ...hdrSubStyle, border: { ...BORDER_ALL_THIN, right: BORDER_THICK } });
     } else {
-      // Units mode: single column per region, rowspan 2
+      // Units mode: region group with shipment units and regional need.
       setV(ws, 0, colStart, regions[i].shortName, hdrMainWithSep);
-      setV(ws, 1, colStart, "Штук", hdrMainWithSep);
-      merges.push({ s: { r: 0, c: colStart }, e: { r: 1, c: colStart } });
+      setV(ws, 0, colStart + 1, "", hdrMainWithSep);
+      setV(ws, 0, colStart + 2, "", hdrMainWithSep);
+      merges.push({ s: { r: 0, c: colStart }, e: { r: 0, c: colStart + 2 } });
+      setV(ws, 1, colStart, "План", { ...hdrSubStyle, border: { ...BORDER_ALL_THIN, left: BORDER_THICK } });
+      setV(ws, 1, colStart + 1, "Факт", hdrSubStyle);
+      setV(ws, 1, colStart + 2, "Нужно", { ...hdrSubStyle, border: { ...BORDER_ALL_THIN, right: BORDER_THICK } });
     }
   }
   // Sverka (rowspan 2) — thick on both sides
@@ -164,6 +186,7 @@ export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMet
 
   articles.forEach((art, artIdx) => {
     const articleFill = artIdx % 2 === 0 ? FILL_WHITE : FILL_GREEN;
+    const metrics = articleMetrics[art.articleWB];
     const rowsInArticle = art.sizes.length + 1; // + образец
     const firstRow = r;
     // Article cell (merged vertically)
@@ -173,7 +196,13 @@ export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMet
       alignment: ALIGN_CENTER,
       border: { top: BORDER_THICK, bottom: BORDER_THICK, left: BORDER_THICK, right: BORDER_THICK },
     };
-    setV(ws, firstRow, 0, `${art.productName}\nWB: ${art.articleWB}`, artStyle);
+    setV(
+      ws,
+      firstRow,
+      0,
+      `${art.productName}\nWB: ${art.articleWB}\nИЛ: ${fixedNumber(metrics?.localizationIndex, 2)}\nИРП: ${fixedPercent(metrics?.salesDistributionIndexPercent, 2)}`,
+      artStyle,
+    );
     for (let rr = firstRow + 1; rr < firstRow + rowsInArticle; rr++) setV(ws, rr, 0, "", artStyle);
     merges.push({ s: { r: firstRow, c: 0 }, e: { r: firstRow + rowsInArticle - 1, c: 0 } });
 
@@ -210,31 +239,41 @@ export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMet
         const qty = sr.qtyByRegion[region.id] || 0;
         const editableKey = `${sr.item.barcode}-${region.id}`;
         const editableShipment = parseEditableNumber(editableValues?.shipmentByKey[editableKey], isBoxes);
+        const regionFact = Math.round(meta?.factByRegion?.[region.id] || 0);
+        const regionNeed = Math.round(meta?.needByRegion?.[region.id] || 0);
         if (isBoxes) {
           const boxes = editableShipment ?? (perBox > 0 ? roundBoxes(qty / perBox, boxRounding) : 0);
-          const boxesCol = 8 + i * 2;
+          const boxesCol = 8 + i * 4;
           const unitsCol = boxesCol + 1;
+          const factCol = boxesCol + 2;
+          const needCol = boxesCol + 3;
           const units = roundUnits(boxes * perBox);
           setV(ws, r, boxesCol, boxes > 0 ? boxes : null, { ...(boxes > 0 ? bold : muted), border: { ...baseBorder, left: BORDER_THICK } });
-          setF(ws, r, unitsCol, `=IFERROR(ROUND(${ref(r, boxesCol)}*${ref(r, 2)},0),"")`, units, { ...muted, border: { ...baseBorder, right: BORDER_THICK } });
+          setF(ws, r, unitsCol, `=IFERROR(ROUND(${ref(r, boxesCol)}*${ref(r, 2)},0),"")`, units, muted);
+          setV(ws, r, factCol, regionFact > 0 ? regionFact : null, regionFact > 0 ? muted : { ...muted, fill: articleFill });
+          setV(ws, r, needCol, regionNeed > 0 ? regionNeed : null, { ...(regionNeed > 0 ? bold : muted), border: { ...baseBorder, right: BORDER_THICK } });
           computedShipBoxes += boxes;
           computedShipUnits += units;
         } else {
-          const col = 8 + i;
+          const col = 8 + i * 3;
+          const factCol = col + 1;
+          const needCol = col + 2;
           const units = roundUnits(editableShipment ?? qty);
-          setV(ws, r, col, units > 0 ? units : null, { ...(units > 0 ? bold : muted), border: { ...baseBorder, left: BORDER_THICK, right: BORDER_THICK } });
+          setV(ws, r, col, units > 0 ? units : null, { ...(units > 0 ? bold : muted), border: { ...baseBorder, left: BORDER_THICK } });
+          setV(ws, r, factCol, regionFact > 0 ? regionFact : null, regionFact > 0 ? muted : { ...muted, fill: articleFill });
+          setV(ws, r, needCol, regionNeed > 0 ? regionNeed : null, { ...(regionNeed > 0 ? bold : muted), border: { ...baseBorder, right: BORDER_THICK } });
           computedShipUnits += units;
         }
       }
 
       // Shipped (sums) and Delta
       if (isBoxes) {
-        const regionBoxesRefs = Array.from({ length: N }, (_, i) => ref(r, 8 + i * 2));
-        const regionUnitsRefs = Array.from({ length: N }, (_, i) => ref(r, 8 + i * 2 + 1));
+        const regionBoxesRefs = Array.from({ length: N }, (_, i) => ref(r, 8 + i * 4));
+        const regionUnitsRefs = Array.from({ length: N }, (_, i) => ref(r, 8 + i * 4 + 1));
         setF(ws, r, SHIP_BOXES_C, `=SUM(${regionBoxesRefs.join(",")})`, computedShipBoxes, { ...bold, border: { ...baseBorder, left: BORDER_THICK } });
         setF(ws, r, SHIP_UNITS_C, `=SUM(${regionUnitsRefs.join(",")})`, computedShipUnits, bold);
       } else {
-        const regionUnitsRefs = Array.from({ length: N }, (_, i) => ref(r, 8 + i));
+        const regionUnitsRefs = Array.from({ length: N }, (_, i) => ref(r, 8 + i * 3));
         setF(ws, r, SHIP_UNITS_C, `=SUM(${regionUnitsRefs.join(",")})`, computedShipUnits, { ...bold, border: { ...baseBorder, left: BORDER_THICK } });
       }
 
@@ -264,11 +303,15 @@ export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMet
     for (let i = 0; i < N; i++) {
       if (isBoxes) {
         const sample = parseEditableNumber(editableValues?.sampleByKey[`${art.articleWB}-${regions[i].id}`], true);
-        setV(ws, r, 8 + i * 2, sample, { ...sampleStyle, border: { ...BORDER_ALL_THIN, left: BORDER_THICK } });
-        setV(ws, r, 8 + i * 2 + 1, null, { ...sampleStyle, border: { ...BORDER_ALL_THIN, right: BORDER_THICK } });
+        setV(ws, r, 8 + i * 4, sample, { ...sampleStyle, border: { ...BORDER_ALL_THIN, left: BORDER_THICK } });
+        setV(ws, r, 8 + i * 4 + 1, null, sampleStyle);
+        setV(ws, r, 8 + i * 4 + 2, null, sampleStyle);
+        setV(ws, r, 8 + i * 4 + 3, null, { ...sampleStyle, border: { ...BORDER_ALL_THIN, right: BORDER_THICK } });
       } else {
         const sample = parseEditableNumber(editableValues?.sampleByKey[`${art.articleWB}-${regions[i].id}`]);
-        setV(ws, r, 8 + i, sample, { ...sampleStyle, border: { ...BORDER_ALL_THIN, left: BORDER_THICK, right: BORDER_THICK } });
+        setV(ws, r, 8 + i * 3, sample, { ...sampleStyle, border: { ...BORDER_ALL_THIN, left: BORDER_THICK } });
+        setV(ws, r, 8 + i * 3 + 1, null, sampleStyle);
+        setV(ws, r, 8 + i * 3 + 2, null, { ...sampleStyle, border: { ...BORDER_ALL_THIN, right: BORDER_THICK } });
       }
     }
     setV(ws, r, SVERKA_C, null, { ...sampleStyle, border: { ...BORDER_ALL_THIN, left: BORDER_THICK, right: BORDER_THICK } });
@@ -295,16 +338,28 @@ export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMet
   }
   for (let i = 0; i < N; i++) {
     if (isBoxes) {
-      const cb = 8 + i * 2;
+      const cb = 8 + i * 4;
       const cu = cb + 1;
+      const cf = cb + 2;
+      const cn = cb + 3;
       const totalBoxesStyle = { ...totalStyle, border: { top: BORDER_THICK, bottom: BORDER_THICK, left: BORDER_THICK, right: BORDER_THIN } };
-      const totalUnitsStyle = { ...totalStyle, border: { top: BORDER_THICK, bottom: BORDER_THICK, left: BORDER_THIN, right: BORDER_THICK } };
+      const totalUnitsStyle = { ...totalStyle, border: { top: BORDER_THICK, bottom: BORDER_THICK, left: BORDER_THIN, right: BORDER_THIN } };
+      const totalFactStyle = { ...totalStyle, border: { top: BORDER_THICK, bottom: BORDER_THICK, left: BORDER_THIN, right: BORDER_THIN } };
+      const totalNeedStyle = { ...totalStyle, border: { top: BORDER_THICK, bottom: BORDER_THICK, left: BORDER_THIN, right: BORDER_THICK } };
       setF(ws, r, cb, `=SUM(${ref(dataFirstRow, cb)}:${ref(dataLastRow, cb)})`, 0, totalBoxesStyle);
       setF(ws, r, cu, `=SUM(${ref(dataFirstRow, cu)}:${ref(dataLastRow, cu)})`, 0, totalUnitsStyle);
+      setF(ws, r, cf, `=SUM(${ref(dataFirstRow, cf)}:${ref(dataLastRow, cf)})`, 0, totalFactStyle);
+      setF(ws, r, cn, `=SUM(${ref(dataFirstRow, cn)}:${ref(dataLastRow, cn)})`, 0, totalNeedStyle);
     } else {
-      const c = 8 + i;
-      const totalUnitsStyle = { ...totalStyle, border: { top: BORDER_THICK, bottom: BORDER_THICK, left: BORDER_THICK, right: BORDER_THICK } };
+      const c = 8 + i * 3;
+      const cf = c + 1;
+      const cn = c + 2;
+      const totalUnitsStyle = { ...totalStyle, border: { top: BORDER_THICK, bottom: BORDER_THICK, left: BORDER_THICK, right: BORDER_THIN } };
+      const totalFactStyle = { ...totalStyle, border: { top: BORDER_THICK, bottom: BORDER_THICK, left: BORDER_THIN, right: BORDER_THIN } };
+      const totalNeedStyle = { ...totalStyle, border: { top: BORDER_THICK, bottom: BORDER_THICK, left: BORDER_THIN, right: BORDER_THICK } };
       setF(ws, r, c, `=SUM(${ref(dataFirstRow, c)}:${ref(dataLastRow, c)})`, 0, totalUnitsStyle);
+      setF(ws, r, cf, `=SUM(${ref(dataFirstRow, cf)}:${ref(dataLastRow, cf)})`, 0, totalFactStyle);
+      setF(ws, r, cn, `=SUM(${ref(dataFirstRow, cn)}:${ref(dataLastRow, cn)})`, 0, totalNeedStyle);
     }
   }
   const totalSverkaStyle = { ...totalStyle, border: { top: BORDER_THICK, bottom: BORDER_THICK, left: BORDER_THICK, right: BORDER_THICK } };
@@ -324,8 +379,8 @@ export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMet
   cols.push({ wch: 32 }, { wch: 18 }, { wch: 14 }, { wch: 28 });
   cols.push({ wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 16 });
   for (let i = 0; i < N; i++) {
-    if (isBoxes) cols.push({ wch: 14 }, { wch: 14 });
-    else cols.push({ wch: 16 });
+    if (isBoxes) cols.push({ wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 });
+    else cols.push({ wch: 16 }, { wch: 14 }, { wch: 14 });
   }
   if (isBoxes) cols.push({ wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 12 });
   else cols.push({ wch: 14 }, { wch: 14 }, { wch: 12 });

@@ -6,13 +6,14 @@
 import { type SyncStatus, type DaySyncStatus, emptySource, hourInMoscow, loadStatus, saveStatus, yesterday } from "./sync/types";
 import { syncReport } from "./sync/realization";
 import { syncAdvertising } from "./sync/advertising";
-import { syncOrders } from "./sync/orders";
+import { syncOrders, refreshRecentOrders } from "./sync/orders";
 import { syncPaidStorage } from "./sync/storage";
 
 export type { SyncStatus, DaySyncStatus };
 
 const CRON_START_HOUR = 6;
 const CRON_END_HOUR = 23;
+const ORDERS_REFRESH_WINDOW_DAYS = 7;
 
 export function getSyncStatus(): SyncStatus {
   return loadStatus();
@@ -83,6 +84,47 @@ export async function syncAll(date?: string): Promise<DaySyncStatus> {
       day.storage.error = `CRASH: ${err instanceof Error ? err.message : String(err)}`;
       console.error("[daily-sync] Storage CRASHED:", err);
     }
+  }
+
+  try {
+    console.log(`[daily-sync] Refreshing orders_funnel for last ${ORDERS_REFRESH_WINDOW_DAYS} days...`);
+    const ordersRefresh = await refreshRecentOrders(ORDERS_REFRESH_WINDOW_DAYS);
+    status.ordersRefresh = {
+      ok: ordersRefresh.ok,
+      lastAttempt: ordersRefresh.lastAttempt,
+      checked: ordersRefresh.checked,
+      updated: ordersRefresh.updated,
+      windowDays: ordersRefresh.windowDays,
+      error: ordersRefresh.error,
+    };
+    if (ordersRefresh.ok) {
+      console.log(`[daily-sync] Orders refresh: checked ${ordersRefresh.checked}, updated ${ordersRefresh.updated}`);
+      for (const change of ordersRefresh.changes) {
+        console.log(`[daily-sync] orders_funnel ${change.date}: count ${change.orderCountFrom} → ${change.orderCountTo}, sum ${change.orderSumFrom} → ${change.orderSumTo}`);
+        const targets = [day, ...status.history.filter((item) => item.date === change.date)];
+        for (const item of targets) {
+          if (item.date !== change.date) continue;
+          item.orders.ok = true;
+          item.orders.value = change.orderSumTo;
+          item.orders.prevValue = change.orderSumFrom;
+          item.orders.stable = true;
+          item.orders.error = undefined;
+        }
+      }
+    } else {
+      console.log(`[daily-sync] Orders refresh FAIL: ${ordersRefresh.error}`);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    status.ordersRefresh = {
+      ok: false,
+      lastAttempt: new Date().toISOString(),
+      checked: 0,
+      updated: 0,
+      windowDays: ORDERS_REFRESH_WINDOW_DAYS,
+      error: `CRASH: ${message}`,
+    };
+    console.error("[daily-sync] Orders refresh CRASHED:", err);
   }
 
   day.complete = day.report.ok && day.advertising.ok && day.advertising.stable && day.orders.ok && day.orders.stable;

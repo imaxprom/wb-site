@@ -4,12 +4,11 @@
 - Рабочая директория: `/Users/octopus/Projects/website`
 - Git: https://github.com/imaxprom/wb-site
 - Production: https://hub.imaxprom.site
-- Production source of truth: `ssh wb-site`, `/home/makson/website`
+- Production source of truth: `ssh wb-site`, active release `/home/makson/current`
 
 ## Стек технологий
 - Next.js 16 + TypeScript + Tailwind CSS 4
-- PostgreSQL — основная production БД MpHub (VM 107, database `mphub`)
-- SQLite (better-sqlite3) — legacy/local fallback, старые snapshots и отдельные импорты вроде `weekly_reports.db`
+- PostgreSQL — единственная runtime БД MpHub (VM 107, database `mphub`); file-DB fallback отсутствует
 - exceljs — чтение Excel-отчётов WB; xlsx-js-style — клиентский Excel-экспорт с стилями
 - recharts — графики
 - Playwright (Python) — авторизация WB seller
@@ -30,13 +29,14 @@ docs/            — ТЗ и документация
 
 ## Рабочий процесс
 1. **Диагностика:** сначала сверять production (`ssh wb-site`), потому что локальный MacBook может отличаться от продовой схемы.
-2. **Разработка:** локально в `/Users/octopus/Projects/website`, `npm run dev -- -H 127.0.0.1 -p 3000` при необходимости. Для MpHub не использовать буквенный hostname `localhost`.
+2. **Разработка:** локально в `/Users/octopus/Projects/website`. Если нужны актуальные данные, сначала поднять PostgreSQL SSH-туннель: проверить `nc -zv 127.0.0.1 55432`; если закрыт — `ssh -N -L 55432:127.0.0.1:5432 -J proxmox-jump -i ~/.ssh/id_ed25519_backup makson@192.168.55.107`. Только после живого туннеля запускать/перезапускать `npm run dev -- -H 127.0.0.1 -p 3000`. Для MpHub не использовать буквенный hostname `localhost`.
 3. **Проверка:** минимум `npm run build` перед выкладкой.
-4. **Деплой:** `bash scripts/deploy.sh` (rsync → `scripts/prod-safe-build.sh` на VPS).
+4. **Деплой:** основной путь — `SOURCE_MODE=local bash scripts/release-deploy.sh`; для первого/аварийного bootstrap из текущего production-кода — `SOURCE_MODE=remote-current bash scripts/release-deploy.sh`.
 5. **После деплоя:** проверять PM2, health-check и конкретный изменённый endpoint.
-- `npm run save-session-state` обновляет `SESSION_STATE.md` через `scripts/save-session-state.js`: читает local legacy SQLite, production PostgreSQL/runtime/crontab через `ssh wb-site`, делает `rsync --dry-run` и пишет короткую карту старта. Ручные пункты Current Focus / Continue From Here лежат в `scripts/session-state-notes.json`; PM2 парсится из `pm2 jlist` JSON, а генератор подсвечивает local/prod drift, runtime-проблемы и непустой deploy dry-run.
+- `npm run save-session-state` обновляет `SESSION_STATE.md` через `scripts/save-session-state.js`: сверяет production PostgreSQL/runtime/crontab через `ssh wb-site`, делает `rsync --dry-run` и пишет короткую карту старта. Локальный PostgreSQL snapshot отключён. Ручные пункты Current Focus / Continue From Here лежат в `scripts/session-state-notes.json`; PM2 парсится из `pm2 jlist` JSON, а генератор подсвечивает runtime-проблемы и непустой deploy dry-run.
 - В Codex sandbox этот скрипт может требовать escalated permissions, потому что внутри вызывает `ssh` и `rsync`.
 - `KnowledgeBase.tsx` в репозитории сейчас отсутствует; база знаний сайта живёт в `src/app/docs/page.tsx` и `public/data/docs.json`.
+- Локальные симптомы `Unexpected end of JSON input`, вечная загрузка, пустые страницы или API `500` чаще всего означают, что туннель `127.0.0.1:55432` к production PostgreSQL не поднят/оборвался или локальный пул перегружает SSH-туннель. Первым делом проверять туннель, затем API, и только потом frontend.
 
 ## Инфраструктура
 - **VPS wb-site** (192.168.55.104): production, PM2, cron-задачи
@@ -57,13 +57,17 @@ docs/            — ТЗ и документация
 - Подробности: `docs/production-network.md`
 
 ## Production deploy
-- Основной скрипт: `bash scripts/deploy.sh`
-- `deploy.sh` синхронизирует код через `rsync`, исключая `node_modules`, `.next`, `.venv`, `.npm-cache`, `.deploy-backups`, `.git`, `.env.production.local*`, `/data/`, `__pycache__/`, `*.pyc` и runtime JSON мониторинга.
-- На VPS всегда используется `bash scripts/prod-safe-build.sh`.
-- `prod-safe-build.sh` делает backup текущей `.next`, останавливает PM2 пользователя `makson`, запускает `npm run build -- --webpack`, при наличии выполняет `node scripts/migrate-cogs-history.js`, перезапускает PM2 и проверяет `http://127.0.0.1:3000/login`.
-- Если build/start/health-check падает, скрипт восстанавливает предыдущую `.next` и перезапускает PM2.
+- С 2026-06-08 основной production deploy — release-based:
+  - `scripts/release-deploy.sh` создаёт новый `/home/makson/releases/<stamp>`, подключает shared `data`, env и `node_modules`, сохраняет общий `.next/cache`, собирает новую версию, поднимает preflight `next start` на `127.0.0.1:3100`, затем атомарно переключает `/home/makson/current` и перезапускает PM2.
+  - При старте PM2/preflight release-скрипт сначала source-ит `.env.local`, затем `.env.production.local`: production env должен перекрывать локальные значения. Это критично, потому что `.env.local` может содержать локальный туннель `127.0.0.1:55432`, который на проде ломает login/DB.
+  - PM2 `mphub` и production cron работают из `/home/makson/current`, не из жёсткого `/home/makson/website`.
+  - `scripts/release-rollback.sh` возвращает `/home/makson/current` на предыдущий release; если второго release ещё нет, fallback — `/home/makson/website`.
+  - `data/deploy.lock` заставляет `vps-watchdog.py` пропускать проверки во время деплоя.
+- `SOURCE_MODE=local bash scripts/release-deploy.sh` — обычный deploy из локального worktree. Перед ним обязательно смотреть `git status`, потому что worktree часто dirty.
+- `SOURCE_MODE=remote-current bash scripts/release-deploy.sh` — bootstrap/rebuild из уже работающего production-кода без подтягивания локальных dirty-файлов.
+- Старый `bash scripts/deploy.sh` + `scripts/prod-safe-build.sh` оставлены как fallback/clean rebuild: он останавливает PM2 до build, удаляет `.next` и поэтому медленнее/с большим простоем.
 - Старый `scripts/rebuild-server.sh` относится к локальной/macOS схеме и не является production deploy.
-- По состоянию на 2026-05-27 production runtime уже работает в PostgreSQL mode (`MPHUB_DB_ENGINE=postgres`). Локальный worktree намеренно dirty после миграции и последних production-правок; перед любым деплоем сначала смотреть `git status` и выкатывать только явно разрешённый пользователем scope. Broad deploy делается через `bash scripts/deploy.sh`; production-правки делать только по явной просьбе пользователя.
+- По состоянию на 2026-06-08 production runtime работает в PostgreSQL mode (`MPHUB_DB_ENGINE=postgres`) и release-based deploy mode. Локальный worktree намеренно dirty после миграции и последних production-правок; перед любым деплоем сначала смотреть `git status` и выкатывать только явно разрешённый пользователем scope.
 
 ## Отзывы WB и жалобы
 - Основной аккаунт отзывов на production: `ИП Белякова А. Л. / IMSI`, `supplier_id=1166225`.
@@ -71,10 +75,10 @@ docs/            — ТЗ и документация
 - После 2026-05-17 sync отзывов должен читать не только `GET /api/v1/feedbacks`, но и `GET /api/v1/feedbacks/archive`: WB хранит там обработанные и rating-only отзывы. Без архива динамика после 2026-04-23 выглядит ложно заниженной.
 - `scripts/reviews-sync.js` в обычном режиме работает как slow archive tick: один запрос к WB archive за запуск, запись progress/retry в `reviews_archive_sync_state`.
 - `scripts/reviews-sync.js` имеет lock-файл `data/reviews-sync.lock` и DB-retry state на WB `429`.
-- Production cron отзывов: `*/15 * * * * cd /home/makson/website && /usr/bin/node scripts/reviews-sync.js > /dev/null 2>&1`.
+- Production cron отзывов: `*/15 * * * * cd /home/makson/current && /usr/bin/node scripts/reviews-sync.js > /dev/null 2>&1`.
 - Watchdog для `reviews-sync` должен учитывать 15-минутный cron с запасом: `max_age_min=45`.
 - 2026-05-17 архивный backfill обработал 15000 архивных записей и добавил 3660 новых отзывов: всего стало 146670, `sync_status` содержит `Архив: +3 660`.
-- 2026-05-28 production snapshot: `reviews=148152`, `review_complaints=572`; archive sync advanced to `archive_skip=55000`, last status `ok`, last success `2026-05-28T10:30:07.184Z`.
+- 2026-06-03 09:16 МСК production snapshot: `reviews=148891`, `review_complaints=572`; archive sync advanced to `archive_skip=100000`, last status `ok`, last success `2026-06-03T06:15:07.091Z`.
 - Жалобы генерируются через Codex gateway (`data/codex-gateway.env`, default URL `http://192.168.55.106:8080`), не через Claude CLI.
 - Для WB жалоб текст должен отправляться в `feedbackComplaint.explanation`, не в `feedbackComplaint.text`. Перед отправкой нужно запрашивать доступные причины `/complaints/{feedbackId}` и выбирать только `explanationRequired=true`; для fallback предпочитать reason `19`.
 - `review_accounts.wb_seller_lk` хранит LK JWT для заголовка `wb-seller-lk`; публичный API не должен отдавать этот токен.
@@ -87,10 +91,28 @@ docs/            — ТЗ и документация
   - V2 Excel summary получает из UI ручные значения `Всего на складе`, ручные правки региональных ячеек и строки `образец`;
   - V3 smart export получил ручное поле `Всего на складе` в детализации и передаёт его в `export-excel-v2.ts`.
 - Эти shipment-правки были задеплоены не общим `scripts/deploy.sh`, а точечным `rsync` файлов + `npm run build` + `pm2 restart mphub`, потому что пользователь явно просил выкатывать только конкретный участок.
-- Production shipment DB на 2026-05-28: `shipment_products=30`, `shipment_stock=5432`, `shipment_orders=172292`, max order date `2026-05-28T11:45:22`. `shipment_orders` дедуплицируются по WB identity `order_uid` (`srid`/`gNumber`/`sticker`, fallback `barcode:date:warehouse`), не по старому `barcode,date,warehouse`.
+- Production shipment DB на 2026-06-03 09:16 МСК: `shipment_products=36`, `shipment_stock=5780`, `shipment_orders=179923`, max order date `2026-06-03T08:47:21`. `shipment_orders` дедуплицируются по WB identity `order_uid` (`srid`/`gNumber`/`sticker`, fallback `barcode:date:warehouse`), не по старому `barcode,date,warehouse`; sync удаляет старую fallback-строку, если тот же заказ пришёл с настоящим WB identity.
 - `/shipment` → `Товары` использует левый/правый `ProductsSplitView`: слева поиск и артикулы, справа размерная таблица выбранного артикула; старая раскрывающаяся таблица не используется в основной вкладке. В основной вкладке скрыта внутренняя дублирующая шапка, `/shipment/products-test` оставлен как тестовый маршрут.
 - В товарах редактирование custom name включается только через карандаш; `Остатки по складам` свёрнуты по умолчанию.
 - `/warehouse` deployed на production: Google Sheets → PostgreSQL складской учёт, левый/правый вид, поиск `Артикул или название`, план упаковки на базе 30 дней × множитель `1/1.25/1.5/2`. Production содержит 127 размерных строк готового склада.
+- План упаковки вычитает активные поставки как `упаковано - поступило в продажу`, чтобы товары, уже попавшие в WB-остатки, не учитывались дважды. Для коробочных поставок, где WB отдаёт `readyForSaleQuantity` только итогом по поставке, значение распределяется по баркодам пропорционально упакованному количеству.
+- В расчёте отгрузки V2/V3 активен ручной режим `Учитывать отгрузки`: пользователь выбирает поставки из списка, их состав вычитается по barcode из текущего плана. Старая автоматическая дедукция из раздела `/supplies` не должна использоваться как основной путь планирования.
+- В сводке и Excel-экспорте расчёта отгрузки региональные колонки идут как `Коробов / План / Факт / Нужно`: `План` — планируемые к отгрузке штуки по региону, `Факт` — базовый WB-остаток до ручных вычитаний, `Нужно` — остаточная потребность после выбранных поставок. В блоке `Отгружено` подпись `Штук` остаётся, потому что это итоговое количество отгрузки.
+
+## Финансы и daily sync
+- `/finance` и forecast берут дневную сумму и количество заказов из `orders_funnel`. Tooltip метрики `Заказы` показывает сумму и `Кол-во`; динамика показателей не должна дублировать количество отдельно.
+- `daily-sync` каждый запуск дополнительно сверяет последние 7 закрытых дней через WB Sales Funnel API (`seller-analytics-api ... /api/analytics/v3/sales-funnel/grouped/history`) независимо от `stable` и обновляет `order_sum`, `order_count`, `buyout_sum`, `buyout_count` в `orders_funnel`, если WB пересчитал прошлые дни.
+- Результат этой сверки хранится в `data/daily-sync-status.json` как `ordersRefresh` (`ok`, `checked`, `updated`, `windowDays`) и показывается в monitor/data-health как `orders7d✓ checked 7, upd N`.
+- На 2026-06-08 прямой WB API отклонил 30-дневный range для sales funnel с `invalid start day: excess limit on days`; не расширять окно переписывания заказов старше 7 дней без нового фактического подтверждения доступной глубины API.
+
+## Закупки
+- `/purchases` использует `src/app/purchases/test/page.tsx` как основную страницу; `/purchases/test` остаётся тем же калькулятором с тестовым заголовком.
+- API `/api/purchases/stock` читает Google Sheets через `data/google-service-account.json`: таблицу закупочных остатков `1wJeiTYl6rRX3Ij7qcNfRFAV2DYIYj7PS-BR5L9QLyA4` и складскую таблицу `1BXtl8hX_mp2sbde9lzkF_uS43WCnnSn_wNNxcse9daM`.
+- Категории закупок: `Трусы в рубчик`, `Трусы гладкие`, `Трусы-стринги в рубчик`; настройки позволяют включать/отключать артикулы и относить их к категории, `none` не участвует в расчёте.
+- Расчёт: продажи за 30 дней из `/api/data/orders-aggregated?days=30` × коэффициент `1/1.5/2/2.5/3`, минус текущие WB-остатки из `/api/data/stock`, минус остатки склада из Google Sheets. Закупка считается в штуках и пачках (`12` шт. в пачке, округление вверх).
+- Размер `40-42` в закупках не отображается отдельной колонкой, но объединяется в `42-44` для расчёта потребности и складского остатка; в складском учёте это остаются отдельные позиции.
+- В Google Sheets закупок маленькие размеры используют `1 мешок = 600 пачек`, большие — `1 мешок = 300 пачек`; `1 короб = 50 пачек`, `1 пачка = 12 шт` по 3 размера × 4 шт.
+- Верхние 6 summary-карточек `/purchases` должны идти одной горизонтальной строкой: `grid-cols-6` внутри строки `min-w-[1080px]`, карточки растягиваются по доступной ширине; `К закупке в штуках` и `К закупке в пачках` используют оранжевый `tone="need"`.
 
 ## Расчёт логистики
 - Раздел `/logistics` и sidebar item `Расчёт логистики` выкачены на production 2026-05-21/22.
@@ -103,15 +125,16 @@ docs/            — ТЗ и документация
 - Таблица логистики агрегируется по уникальному WB артикулу без размеров/баркодов.
 - Отображаемая логистика считается от объёма карточки: `length_cm * width_cm * height_cm / 1000`, fallback — `paid_storage.volume`.
 - Production `shipment_products` уже содержит `length_cm`, `width_cm`, `height_cm`.
-- Production logistics data на 2026-05-28: `shipment_stock=5432`, `shipment_orders=172292`, `paid_storage=53716` max date `2026-05-27`, `warehouse_remains_volume=134`, `warehouse_measurements=36`, `logistics_tariff_cache=8`.
+- Production logistics data на 2026-06-03 09:16 МСК: `shipment_stock=5780`, `shipment_orders=179923`, `paid_storage=60217` max date `2026-06-02`, `warehouse_remains_volume=137`, `warehouse_measurements=38`, `logistics_tariff_cache=13`.
 - UI показывает:
   - `Объём из карточки`;
   - `Объём из отчёта остатков`;
   - последние 3 замера WB;
   - складские тарифные колонки.
 - Видимый столбец `Объём из хранения` удалён из UI; данные `paid_storage.volume` остаются fallback/source в API.
-- Если последний замер WB больше объёма карточки, ячейка замеров подсвечивается красным.
-- Sidebar показывает красный треугольник на `Расчёт логистики` с числом критичных замеров. Сейчас production count = 1: article `178439058`, WB `3.059 л` против карточки `2.5 л`.
+- Если последний замер WB больше объёма карточки, ячейка замеров подсвечивается красным только когда объём из отчёта остатков отсутствует или тоже выше карточки. Если `warehouse_remains_volume <= cardVolume`, считаем, что WB уже скорректировал фактический объём, и красный гаснет.
+- Article `178439058` больше не критичный: WB latest measurement `3.059 л`, card volume `2.5 л`, remains volume `0.99 л`; новая логика даёт `new_red=false`.
+- Sidebar показывает красный треугольник на `Расчёт логистики` с числом критичных замеров из `/api/logistics/alerts`.
 - `/logistics` показывает плашку новых замеров WB за последние 7 дней и кнопку `Посмотреть новые`; свежие замеры получают синюю метку `NEW`. Последняя проверка production: новых замеров = 4.
 - Автосинк логистических объёмов:
   - `scripts/logistics-volume-sync.js --source remains` — WB `GET /api/v1/warehouse_remains` + task download, cron `0 3,6,9,12,15,18 * * *` UTC (06:00/09:00/12:00/15:00/18:00/21:00 MSK);
@@ -140,10 +163,10 @@ docs/            — ТЗ и документация
 - `/api/monitor/*` использует `src/lib/monitor-auth.ts`, сейчас это тот же admin-check.
 - Закрытые группы: `/api/finance/*`, `/api/data/*`, `/api/reviews/*`, `/api/wb/*`, `/api/monitor/*`.
 - В production `JWT_SECRET` обязателен во время runtime. Dev fallback допустим только вне production runtime.
-- Login rate-limit хранится в БД (`auth_login_attempts`): в production PostgreSQL, в legacy/dev fallback SQLite; не в памяти процесса.
+- Login rate-limit хранится в PostgreSQL (`auth_login_attempts`), не в памяти процесса.
 - Security headers задаются в `next.config.ts`: noindex, nosniff, DENY frame, referrer/permissions policy, HSTS и CSP в production.
 - Локальный nginx на VPS должен иметь `server_tokens off`.
-- SQL со значениями из переменных писать параметризованно: `?` для SQLite и helpers `pgRows`/`pgGet`, `$1...` для raw `pg` client; не собирать значения строковой вставкой.
+- SQL со значениями из переменных писать параметризованно: `?` для helpers `pgRows`/`pgGet`, `$1...` для raw `pg` client; не собирать значения строковой вставкой.
 
 ## Режим работы
 - Перед каждым ответом используй extended thinking (глубокий анализ)

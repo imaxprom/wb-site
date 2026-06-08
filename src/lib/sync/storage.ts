@@ -2,9 +2,8 @@
  * Sync Source 4: Платное хранение (WB Paid Storage API)
  * Независим от других sync-модулей.
  */
-import Database from "better-sqlite3";
-import { SourceStatus, emptySource, DB_PATH, getApiKey } from "./types";
-import { isPostgresEnabled, withPgTransaction } from "@/lib/postgres";
+import { SourceStatus, emptySource, getApiKey } from "./types";
+import { withPgTransaction } from "@/lib/postgres";
 
 export async function syncPaidStorage(date: string): Promise<SourceStatus> {
   const s: SourceStatus = { ...emptySource(), lastAttempt: new Date().toISOString() };
@@ -48,37 +47,17 @@ export async function syncPaidStorage(date: string): Promise<SourceStatus> {
     }
 
     let total = 0;
-    if (isPostgresEnabled()) {
-      await withPgTransaction(async (client) => {
-        await client.query("DELETE FROM paid_storage WHERE date = $1", [date]);
-        for (const r of rows) {
-          if ((r.date || date) !== date) continue;
-          await client.query(
-            "INSERT INTO paid_storage (date, nm_id, barcode, warehouse, warehouse_price, barcodes_count, vendor_code, subject, volume) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-            [date, r.nmId || 0, r.barcode || "", r.warehouse || "", r.warehousePrice || 0, r.barcodesCount || 0, r.vendorCode || "", r.subject || "", r.volume || 0]
-          );
-          total += r.warehousePrice || 0;
-        }
-      });
-    } else {
-      const db = new Database(DB_PATH);
-      db.pragma("busy_timeout = 5000");
-      db.prepare("CREATE TABLE IF NOT EXISTS paid_storage (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, nm_id INTEGER NOT NULL, barcode TEXT, warehouse TEXT, warehouse_price REAL DEFAULT 0, barcodes_count INTEGER DEFAULT 0, vendor_code TEXT, subject TEXT, volume REAL DEFAULT 0)");
-      db.prepare("CREATE INDEX IF NOT EXISTS idx_ps_date_nm ON paid_storage(date, nm_id)");
-      db.prepare("DELETE FROM paid_storage WHERE date = ?").run(date);
-
-      const ins = db.prepare("INSERT INTO paid_storage (date, nm_id, barcode, warehouse, warehouse_price, barcodes_count, vendor_code, subject, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-      total = db.transaction(() => {
-        let sum = 0;
-        for (const r of rows) {
-          if ((r.date || date) !== date) continue;
-          ins.run(date, r.nmId || 0, r.barcode || "", r.warehouse || "", r.warehousePrice || 0, r.barcodesCount || 0, r.vendorCode || "", r.subject || "", r.volume || 0);
-          sum += r.warehousePrice || 0;
-        }
-        return sum;
-      })();
-      db.close();
-    }
+    await withPgTransaction(async (client) => {
+      await client.query("DELETE FROM paid_storage WHERE date = $1", [date]);
+      for (const r of rows) {
+        if ((r.date || date) !== date) continue;
+        await client.query(
+          "INSERT INTO paid_storage (date, nm_id, barcode, warehouse, warehouse_price, barcodes_count, vendor_code, subject, volume) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+          [date, r.nmId || 0, r.barcode || "", r.warehouse || "", r.warehousePrice || 0, r.barcodesCount || 0, r.vendorCode || "", r.subject || "", r.volume || 0]
+        );
+        total += r.warehousePrice || 0;
+      }
+    });
     total = Math.round(total);
 
     s.ok = true;

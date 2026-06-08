@@ -2,7 +2,7 @@
 /**
  * Read warehouse Google Sheet and print a parsed stock summary.
  *
- * This is a local inspection helper. It does not write to SQLite.
+ * This is a local inspection helper. It does not write to PostgreSQL.
  */
 
 const crypto = require("crypto");

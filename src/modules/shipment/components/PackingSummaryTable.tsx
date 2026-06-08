@@ -25,6 +25,11 @@ export interface SummaryArticle {
 
 export type ViewMode = "units" | "boxes";
 
+export interface ArticleLogisticsMetrics {
+  localizationIndex: number | null;
+  salesDistributionIndexPercent: number | null;
+}
+
 export interface PackingSummaryEditableValues {
   stockByBarcode: Record<string, string>;
   shipmentByKey: Record<string, string>;
@@ -53,8 +58,33 @@ function signedBoxes(boxes: number): string {
   return normalized > 0 ? `+${formatBoxes(normalized)}` : formatBoxes(normalized);
 }
 
+function metricNumber(value: number | null | undefined, digits = 2): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  return new Intl.NumberFormat("ru-RU", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(value);
+}
+
+function metricPercent(value: number | null | undefined, digits = 2): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  return `${new Intl.NumberFormat("ru-RU", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(value)}%`;
+}
+
 function roundUnits(units: number): number {
   return Math.round(units);
+}
+
+function CompactHeaderLabel({ full, short }: { full: string; short: string }) {
+  return (
+    <span className="shipment-compact-header-label" title={full}>
+      <span className="shipment-compact-header-label-full">{full}</span>
+      <span className="shipment-compact-header-label-short">{short}</span>
+    </span>
+  );
 }
 
 /** Helper: aggregate packing-by-region into SummaryArticle[] (for boxes mode) */
@@ -117,6 +147,7 @@ export function PackingSummaryTable({
   regions,
   viewMode,
   rowMeta,
+  articleMetrics = {},
   boxRounding = 0.5,
   editableValues,
   onEditableValuesChange,
@@ -125,7 +156,8 @@ export function PackingSummaryTable({
   articles: SummaryArticle[];
   regions: Array<{ id: string; shortName: string }>;
   viewMode: ViewMode;
-  rowMeta?: Record<string, { plan: number; fact: number; need: number }>;
+  rowMeta?: Record<string, { plan: number; fact: number; need: number; factByRegion?: Record<string, number>; needByRegion?: Record<string, number> }>;
+  articleMetrics?: Record<string, ArticleLogisticsMetrics>;
   boxRounding?: number;
   editableValues?: PackingSummaryEditableValues;
   onEditableValuesChange?: React.Dispatch<React.SetStateAction<PackingSummaryEditableValues>>;
@@ -166,9 +198,9 @@ export function PackingSummaryTable({
 
   // Column count:
   // Article + Size + perBox + Barcode + Plan + Fact + Need + Stock = 8
-  // regions: N × (2 if boxes, 1 if units)
+  // regions: N × (4 if boxes, 3 if units)
   // Sverka + Shipped: 3 (Коробов+Штук+Δ) if boxes, 2 (Штук+Δ) if units
-  const regionColsPerRegion = isBoxes ? 2 : 1;
+  const regionColsPerRegion = isBoxes ? 4 : 3;
   const shippedCols = isBoxes ? 3 : 2;
   const totalCols = 8 + regions.length * regionColsPerRegion + 1 /* sverka */ + shippedCols;
 
@@ -181,11 +213,14 @@ export function PackingSummaryTable({
   }
 
   const headerBase: React.CSSProperties = { padding: "6px 10px", border: "1px solid var(--border)", textAlign: "center", whiteSpace: "nowrap", background: "var(--bg)", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.3, fontWeight: 600 };
+  const compactHeaderBase: React.CSSProperties = { ...headerBase, padding: "6px 4px" };
   const cellBase: React.CSSProperties = { padding: "6px 10px", border: "1px solid var(--border)", textAlign: "center", whiteSpace: "nowrap", fontSize: 12 };
 
   // Totals
   const totalQtyByRegion: Record<string, number> = {};
   const totalBoxesByRegion: Record<string, number> = {};
+  const totalFactByRegion: Record<string, number> = {};
+  const totalNeedByRegion: Record<string, number> = {};
   let totalStock = 0;
   let totalShippedBoxes = 0;
   let totalShippedUnits = 0;
@@ -237,6 +272,10 @@ export function PackingSummaryTable({
         totalPlan += meta.plan;
         totalFact += meta.fact;
         totalNeed += meta.need;
+        for (const region of regions) {
+          totalFactByRegion[region.id] = (totalFactByRegion[region.id] || 0) + (meta.factByRegion?.[region.id] || 0);
+          totalNeedByRegion[region.id] = (totalNeedByRegion[region.id] || 0) + (meta.needByRegion?.[region.id] || 0);
+        }
       }
     }
     // Sample row contributes to totals
@@ -276,9 +315,15 @@ export function PackingSummaryTable({
               <React.Fragment key={r.id}>
                 <col />
                 <col />
+                <col />
+                <col />
               </React.Fragment>
             ) : (
-              <col key={r.id} />
+              <React.Fragment key={r.id}>
+                <col />
+                <col />
+                <col />
+              </React.Fragment>
             )
           ))}
           <col style={{ width: 60 }} />
@@ -298,11 +343,11 @@ export function PackingSummaryTable({
             <th rowSpan={2} style={{ ...headerBase, background: "var(--bg-card)", width: 70 }}>Всего на<br/>складе</th>
             {regions.map(r => (
               isBoxes ? (
-                <th key={r.id} colSpan={2} style={{ ...headerBase, background: "rgba(129, 140, 248, 0.1)", color: "var(--accent)", minWidth: 120, whiteSpace: "normal", wordBreak: "break-word", lineHeight: 1.3 }}>
+                <th key={r.id} colSpan={4} style={{ ...headerBase, background: "rgba(129, 140, 248, 0.1)", color: "var(--accent)", minWidth: 190, whiteSpace: "normal", wordBreak: "break-word", lineHeight: 1.3 }}>
                   {r.shortName}
                 </th>
               ) : (
-                <th key={r.id} style={{ ...headerBase, background: "rgba(129, 140, 248, 0.1)", color: "var(--accent)", whiteSpace: "normal", wordBreak: "break-word", lineHeight: 1.3 }}>
+                <th key={r.id} colSpan={3} style={{ ...headerBase, background: "rgba(129, 140, 248, 0.1)", color: "var(--accent)", whiteSpace: "normal", wordBreak: "break-word", lineHeight: 1.3 }}>
                   {r.shortName}
                 </th>
               )
@@ -331,21 +376,45 @@ export function PackingSummaryTable({
           <tr>
             {isBoxes && regions.map(r => (
               <React.Fragment key={r.id}>
-                <th style={{ ...headerBase, background: "var(--bg-card)", borderBottom: "2px solid var(--accent)", minWidth: 60 }}>Коробов</th>
-                <th style={{ ...headerBase, background: "var(--bg-card)", borderBottom: "2px solid var(--accent)", minWidth: 60 }}>Штук</th>
+                <th className="shipment-compact-header-cell" style={{ ...compactHeaderBase, background: "var(--bg-card)", borderBottom: "2px solid var(--accent)", minWidth: 46 }}>
+                  <CompactHeaderLabel full="Коробов" short="Кор" />
+                </th>
+                <th className="shipment-compact-header-cell" style={{ ...compactHeaderBase, background: "var(--bg-card)", borderBottom: "2px solid var(--accent)", minWidth: 46 }}>
+                  <CompactHeaderLabel full="План" short="План" />
+                </th>
+                <th className="shipment-compact-header-cell" style={{ ...compactHeaderBase, background: "var(--bg-card)", borderBottom: "2px solid var(--accent)", minWidth: 54 }}>
+                  <CompactHeaderLabel full="Факт" short="Факт" />
+                </th>
+                <th className="shipment-compact-header-cell" style={{ ...compactHeaderBase, background: "var(--bg-card)", borderBottom: "2px solid var(--accent)", minWidth: 54 }}>
+                  <CompactHeaderLabel full="Нужно" short="Нужно" />
+                </th>
               </React.Fragment>
             ))}
             {!isBoxes && regions.map(r => (
-              <th key={r.id} style={{ ...headerBase, background: "var(--bg)", color: "var(--text-muted)", textTransform: "none", fontWeight: 500, fontSize: 10, borderBottom: "2px solid var(--accent)" }}>Штук</th>
+              <React.Fragment key={r.id}>
+                <th className="shipment-compact-header-cell" style={{ ...compactHeaderBase, background: "var(--bg)", color: "var(--text-muted)", textTransform: "none", fontWeight: 500, fontSize: 10, borderBottom: "2px solid var(--accent)" }}>
+                  <CompactHeaderLabel full="План" short="План" />
+                </th>
+                <th className="shipment-compact-header-cell" style={{ ...compactHeaderBase, background: "var(--bg)", color: "var(--text-muted)", textTransform: "none", fontWeight: 500, fontSize: 10, borderBottom: "2px solid var(--accent)" }}>
+                  <CompactHeaderLabel full="Факт" short="Факт" />
+                </th>
+                <th className="shipment-compact-header-cell" style={{ ...compactHeaderBase, background: "var(--bg)", color: "var(--text-muted)", textTransform: "none", fontWeight: 500, fontSize: 10, borderBottom: "2px solid var(--accent)" }}>
+                  <CompactHeaderLabel full="Нужно" short="Нужно" />
+                </th>
+              </React.Fragment>
             ))}
             {isBoxes && (
               <>
-                <th style={{ ...headerBase, background: "var(--bg-card)", borderBottom: "2px solid var(--accent)", minWidth: 60 }}>Кор.</th>
-                <th style={{ ...headerBase, background: "var(--bg-card)", borderBottom: "2px solid var(--accent)", minWidth: 60 }}>Штук</th>
+                <th style={{ ...compactHeaderBase, background: "var(--bg-card)", borderBottom: "2px solid var(--accent)", minWidth: 46 }}>Кор.</th>
+                <th className="shipment-compact-header-cell" style={{ ...compactHeaderBase, background: "var(--bg-card)", borderBottom: "2px solid var(--accent)", minWidth: 46 }}>
+                  <CompactHeaderLabel full="Штук" short="Шт" />
+                </th>
               </>
             )}
             {!isBoxes && (
-              <th style={{ ...headerBase, background: "var(--bg)", color: "var(--text-muted)", textTransform: "none", fontWeight: 500, fontSize: 10, borderBottom: "2px solid var(--accent)", minWidth: 60 }}>Штук</th>
+              <th className="shipment-compact-header-cell" style={{ ...compactHeaderBase, background: "var(--bg)", color: "var(--text-muted)", textTransform: "none", fontWeight: 500, fontSize: 10, borderBottom: "2px solid var(--accent)", minWidth: 46 }}>
+                <CompactHeaderLabel full="Штук" short="Шт" />
+              </th>
             )}
             <th
               style={{ ...headerBase, background: "var(--bg-card)", textTransform: "none", fontWeight: 600, fontSize: 11, borderBottom: "2px solid var(--accent)", minWidth: 72, cursor: "help", position: "relative" }}
@@ -369,6 +438,7 @@ export function PackingSummaryTable({
           {articles.map((art, artIdx) => {
             const color = ARTICLE_PALETTE[artIdx % ARTICLE_PALETTE.length];
             const rowSpan = art.sizes.length + 1;
+            const metrics = articleMetrics[art.articleWB];
             return (
               <React.Fragment key={art.articleWB}>
                 {artIdx > 0 && (
@@ -391,6 +461,8 @@ export function PackingSummaryTable({
                     const key = `${sr.item.barcode}-${region.id}`;
                     const overrideStr = boxesByKey[key];
                     const hasOverride = overrideStr !== undefined && overrideStr !== "";
+                    const regionFact = Math.round(meta?.factByRegion?.[region.id] || 0);
+                    const regionNeed = Math.round(meta?.needByRegion?.[region.id] || 0);
                     if (isBoxes) {
                       const autoBoxes = perBox > 0 ? roundBoxes(qty / perBox, boxRounding) : 0;
                       const parsedOverride = hasOverride ? Number((overrideStr as string).replace(",", ".")) : NaN;
@@ -405,6 +477,12 @@ export function PackingSummaryTable({
                         </td>,
                         <td key={`${region.id}-u`} style={{ ...cellBase, color: "var(--text-muted)", fontVariantNumeric: "tabular-nums", background: "rgba(255,255,255,0.02)" }}>
                           {units > 0 ? units : <span style={{ color: "var(--border)" }}>—</span>}
+                        </td>,
+                        <td key={`${region.id}-f`} style={{ ...cellBase, color: regionFact > 0 ? "var(--text-muted)" : "var(--border)", fontVariantNumeric: "tabular-nums", background: "rgba(255,255,255,0.015)", fontWeight: regionFact > 0 ? 600 : 400 }}>
+                          {regionFact > 0 ? regionFact : "—"}
+                        </td>,
+                        <td key={`${region.id}-n`} style={{ ...cellBase, color: regionNeed > 0 ? "var(--text)" : "var(--border)", fontVariantNumeric: "tabular-nums", background: "rgba(129, 140, 248, 0.04)", fontWeight: regionNeed > 0 ? 600 : 400 }}>
+                          {regionNeed > 0 ? regionNeed : "—"}
                         </td>
                       );
                     } else {
@@ -416,6 +494,12 @@ export function PackingSummaryTable({
                       regionCells.push(
                         <td key={`${region.id}-u`} style={{ ...cellBase, padding: 0, background: isOverridden ? "rgba(129, 140, 248, 0.1)" : "transparent" }}>
                           <input type="text" inputMode="numeric" value={overrideStr ?? (qty > 0 ? String(qty) : "")} onChange={(e) => updateEditableValues({ shipmentByKey: { ...boxesByKey, [key]: e.target.value } })} placeholder="—" style={{ width: "100%", padding: "6px 10px", background: "transparent", border: "none", outline: "none", textAlign: "center", color: isOverridden ? "var(--accent)" : "var(--text)", fontWeight: 600, fontVariantNumeric: "tabular-nums", fontSize: 12 }} />
+                        </td>,
+                        <td key={`${region.id}-f`} style={{ ...cellBase, color: regionFact > 0 ? "var(--text-muted)" : "var(--border)", fontVariantNumeric: "tabular-nums", background: "rgba(255,255,255,0.015)", fontWeight: regionFact > 0 ? 600 : 400 }}>
+                          {regionFact > 0 ? regionFact : "—"}
+                        </td>,
+                        <td key={`${region.id}-n`} style={{ ...cellBase, color: regionNeed > 0 ? "var(--text)" : "var(--border)", fontVariantNumeric: "tabular-nums", background: "rgba(129, 140, 248, 0.04)", fontWeight: regionNeed > 0 ? 600 : 400 }}>
+                          {regionNeed > 0 ? regionNeed : "—"}
                         </td>
                       );
                     }
@@ -431,6 +515,10 @@ export function PackingSummaryTable({
                         <td rowSpan={rowSpan} style={{ ...cellBase, textAlign: "center", padding: "10px 12px", verticalAlign: "middle", width: 180, minWidth: 160, maxWidth: 200, whiteSpace: "normal", wordBreak: "break-word", overflowWrap: "anywhere", background: color.bg, borderLeft: `3px solid ${color.accent}` }}>
                           <div style={{ fontSize: 15, fontWeight: 700, color: color.text, marginBottom: 6, lineHeight: 1.3 }}>{art.productName}</div>
                           <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.5 }}>Артикул WB:<br/><b style={{ color: "var(--text)", fontFamily: "SF Mono, Menlo, monospace", fontSize: 14 }}>{art.articleWB}</b></div>
+                          <div style={{ marginTop: 8, paddingTop: 7, borderTop: "1px solid color-mix(in srgb, var(--border) 65%, transparent)", fontSize: 12, color: "var(--text-muted)", lineHeight: 1.45 }}>
+                            <div>ИЛ: <b style={{ color: "var(--text)", fontVariantNumeric: "tabular-nums" }}>{metricNumber(metrics?.localizationIndex, 2)}</b></div>
+                            <div>ИРП: <b style={{ color: "var(--text)", fontVariantNumeric: "tabular-nums" }}>{metricPercent(metrics?.salesDistributionIndexPercent, 2)}</b></div>
+                          </div>
                         </td>
                       )}
                       <td style={{ ...cellBase, textAlign: "left", paddingLeft: 12, fontFamily: "SF Mono, Menlo, monospace", color: "var(--text)", fontWeight: 500 }}>{sr.item.size}</td>
@@ -510,13 +598,17 @@ export function PackingSummaryTable({
                         <td key={`s-${region.id}-b`} style={{ ...cellBase, padding: 0, background: "rgba(129, 140, 248, 0.04)" }}>
                           <input type="text" value={v} onChange={(e) => updateEditableValues({ sampleByKey: { ...sampleByKey, [key]: e.target.value } })} style={{ width: "100%", padding: "6px 10px", background: "transparent", border: "none", outline: "none", textAlign: "center", color: "var(--text)", fontVariantNumeric: "tabular-nums", fontSize: 12 }} />
                         </td>,
-                        <td key={`s-${region.id}-u`} style={{ ...cellBase, color: "var(--border)" }}>—</td>
+                        <td key={`s-${region.id}-u`} style={{ ...cellBase, color: "var(--border)" }}>—</td>,
+                        <td key={`s-${region.id}-f`} style={{ ...cellBase, color: "var(--border)" }}>—</td>,
+                        <td key={`s-${region.id}-n`} style={{ ...cellBase, color: "var(--border)" }}>—</td>
                       );
                     } else {
                       sampleCells.push(
                         <td key={`s-${region.id}-u`} style={{ ...cellBase, padding: 0, background: "rgba(129, 140, 248, 0.04)" }}>
                           <input type="text" value={v} onChange={(e) => updateEditableValues({ sampleByKey: { ...sampleByKey, [key]: e.target.value } })} style={{ width: "100%", padding: "6px 10px", background: "transparent", border: "none", outline: "none", textAlign: "center", color: "var(--text)", fontVariantNumeric: "tabular-nums", fontSize: 12 }} />
-                        </td>
+                        </td>,
+                        <td key={`s-${region.id}-f`} style={{ ...cellBase, color: "var(--border)" }}>—</td>,
+                        <td key={`s-${region.id}-n`} style={{ ...cellBase, color: "var(--border)" }}>—</td>
                       );
                     }
                   }
@@ -559,9 +651,15 @@ export function PackingSummaryTable({
                 <React.Fragment key={r.id}>
                   <td style={{ ...cellBase, fontWeight: 700, background: "rgba(34, 197, 94, 0.08)", borderTop: "2px solid var(--success)", fontVariantNumeric: "tabular-nums" }}>{totalBoxesByRegion[r.id] ? formatBoxes(totalBoxesByRegion[r.id]) : "0,0"}</td>
                   <td style={{ ...cellBase, fontWeight: 700, background: "rgba(34, 197, 94, 0.08)", borderTop: "2px solid var(--success)", fontVariantNumeric: "tabular-nums" }}>{totalQtyByRegion[r.id] || 0}</td>
+                  <td style={{ ...cellBase, fontWeight: 700, background: "rgba(34, 197, 94, 0.08)", borderTop: "2px solid var(--success)", fontVariantNumeric: "tabular-nums" }}>{Math.round(totalFactByRegion[r.id] || 0)}</td>
+                  <td style={{ ...cellBase, fontWeight: 700, background: "rgba(34, 197, 94, 0.08)", borderTop: "2px solid var(--success)", fontVariantNumeric: "tabular-nums" }}>{totalNeedByRegion[r.id] || 0}</td>
                 </React.Fragment>
               ) : (
-                <td key={r.id} style={{ ...cellBase, fontWeight: 700, background: "rgba(34, 197, 94, 0.08)", borderTop: "2px solid var(--success)", fontVariantNumeric: "tabular-nums" }}>{totalQtyByRegion[r.id] || 0}</td>
+                <React.Fragment key={r.id}>
+                  <td style={{ ...cellBase, fontWeight: 700, background: "rgba(34, 197, 94, 0.08)", borderTop: "2px solid var(--success)", fontVariantNumeric: "tabular-nums" }}>{totalQtyByRegion[r.id] || 0}</td>
+                  <td style={{ ...cellBase, fontWeight: 700, background: "rgba(34, 197, 94, 0.08)", borderTop: "2px solid var(--success)", fontVariantNumeric: "tabular-nums" }}>{Math.round(totalFactByRegion[r.id] || 0)}</td>
+                  <td style={{ ...cellBase, fontWeight: 700, background: "rgba(34, 197, 94, 0.08)", borderTop: "2px solid var(--success)", fontVariantNumeric: "tabular-nums" }}>{totalNeedByRegion[r.id] || 0}</td>
+                </React.Fragment>
               )
             ))}
             <td style={{ ...cellBase, fontWeight: 700, background: "rgba(34, 197, 94, 0.08)", borderTop: "2px solid var(--success)", color: totalSverka > 0 ? "var(--success)" : totalSverka < 0 ? "#f87171" : "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>

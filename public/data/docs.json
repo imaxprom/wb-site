@@ -35,12 +35,12 @@
           "title": "Технологии",
           "items": [
             "Next.js 16 + React 19 + TypeScript + Tailwind CSS 4 — веб-дашборд",
-            "PostgreSQL — основная production БД MpHub; SQLite finance.db/weekly_reports.db оставлены как legacy/backup и источник отдельных импортов",
+            "PostgreSQL — единственная runtime БД MpHub; PostgreSQL-only runtime",
             "PM2 — production-процесс сайта mphub на VPS",
             "cron — production-расписание синхронизаций и watchdog",
             "Puppeteer / Playwright — авторизация WB Seller и браузерные сценарии",
             "recharts — графики; exceljs — чтение Excel-отчётов WB; xlsx-js-style — клиентский Excel-экспорт",
-            "rsync + scripts/prod-safe-build.sh — безопасный деплой с .next rollback"
+            "release-based deploy: scripts/release-deploy.sh собирает новый /home/makson/releases/<stamp>, проверяет preflight и переключает /home/makson/current"
           ]
         },
         {
@@ -87,7 +87,7 @@
             "└──────────┬────────────┬────────────┬────────────────────┘",
             "           ▼            ▼            ▼",
             "     ┌──────────┐  ┌─────────┐  ┌──────────┐",
-            "     │ SQLite   │  │ WB API  │  │Puppeteer │",
+            "     │ PostgreSQL-only runtime",
             "     │ ads.db   │  │ (7 API) │  │ (auth)   │",
             "     │ 22 табл. │  │         │  │          │",
             "     └──────────┘  └─────────┘  └──────────┘"
@@ -99,7 +99,7 @@
           "items": [
             "Next.js 16 — App Router + TypeScript",
             "Tailwind CSS 4 — тёмная тема, 3 варианта (Violet/Arctic/Neon)",
-            "SQLite (better-sqlite3) — БД data/ads.db, 23 таблицы",
+            "PostgreSQL-only runtime",
             "Puppeteer — авторизация WB через headless Chrome (CDP)",
             "recharts — графики (установлен, пока не используется в дашборде)"
           ]
@@ -308,8 +308,10 @@
           "title": "Гибридный подход к данным",
           "lines": [
             "Два источника данных:",
-            "  PostgreSQL weekly_reports/weekly_rows + legacy weekly_reports.db (Excel) — еженедельные отчёты из ЛК WB, эталон",
+            "  PostgreSQL weekly_reports/weekly_rows — еженедельные отчёты из ЛК WB, эталон",
             "  PostgreSQL realization/advertising/orders_funnel (API) — ежедневная синхронизация через daily-sync-api.sh",
+            "  orders_funnel дополнительно сверяется с WB Sales Funnel за последние 7 закрытых дней на каждом запуске daily-sync; результат пишется в daily-sync-status.json.ordersRefresh",
+            "  WB Sales Funnel API не подтвердил доступную глубину в месяц: запрос 30 дней вернул invalid start day / excess limit, поэтому старше 7 дней автоматически не переписываем",
             "  weekly Excel importer поддерживает alias-названия WB колонок для платёжных услуг/эквайринга, платформенной скидки, базового кВВ и лояльности",
             "  sync-weekly-report.js читает все .xlsx-части внутри ZIP архива WB; крупные отчёты могут быть разбиты по 20000 строк",
             "  sync-weekly-report.js считает отчёт неполным и перезагружает его, если reports.rows_count меньше detailsCount из WB",
@@ -396,9 +398,9 @@
           "title": "Источники данных WB",
           "items": [
             "reportDetailByPeriod — реализация (продажи, возвраты, комиссия, логистика, хранение) → PostgreSQL realization",
-            "sync-weekly-report.js — Excel-отчёты из ЛК WB (эталон) → PostgreSQL weekly_reports/weekly_rows; legacy weekly_reports.db остаётся для импорта/сверки",
+            "sync-weekly-report.js — Excel-отчёты из ЛК WB (эталон) → PostgreSQL weekly_reports/weekly_rows",
             "/adv/v1/upd — расход на рекламу по дням → PostgreSQL advertising",
-            "/api/wb/adv в PostgreSQL mode читает/обновляет PostgreSQL advertising, не legacy finance.db",
+            "/api/wb/adv читает/обновляет PostgreSQL advertising; PostgreSQL-only runtime",
             "/api/analytics/v3/sales-funnel/products — заказы → PostgreSQL orders_funnel"
           ]
         },
@@ -532,7 +534,7 @@
       "blocks": [
         {
           "type": "text",
-          "content": "Раздел /shipment — расчёт отгрузки на склады WB. Production-данные хранятся в PostgreSQL; SQLite остаётся legacy/local fallback. Процент выкупа из realization (~80-83%). Код в src/modules/shipment/."
+          "content": "Раздел /shipment — расчёт отгрузки на склады WB. Production-данные хранятся в PostgreSQL; PostgreSQL-only runtime"
         },
         {
           "type": "schema",
@@ -541,7 +543,7 @@
             "1. Загрузка данных (вкладка «Загрузка данных»)",
             "   → Кнопка «Загрузить всё из WB» → POST /api/data/sync",
             "   → Карточки, остатки, заказы загружаются из WB API",
-            "   → Заказы накапливаются в production PostgreSQL по WB orderUid (srid/gNumber/sticker), legacy fallback сохраняет тот же ключ",
+            "   → Заказы накапливаются в production PostgreSQL по WB orderUid (srid/gNumber/sticker), PostgreSQL сохраняет тот же ключ",
             "   → Остатки перезаписываются (текущее состояние)",
             "   → API запрашивает с буфером +7 дней (WB фильтрует по lastChangeDate)",
             "   → Сегодняшний день не учитывается (неполный)",
@@ -571,13 +573,20 @@
             "   → V2 + укладка в физические короба",
             "   → Карточки: Smart коробов | На складе | Потребность | Баланс",
             "   → Детализация по регионам подтягивает готовые короба склада в колонку «Всего на складе»",
-            "   → Настройки: позиций/кор, отгрузок/мес, мін.штук, вид А/Б/В"
+            "   → Настройки: позиций/кор, отгрузок/мес, мін.штук, вид А/Б/В",
+            "",
+            "7. Ручной учёт отгрузок",
+            "   → Переключатель «Учитывать отгрузки» показывает последние поставки и позволяет выбрать, что вычитать из текущего плана",
+            "   → Выбранные поставки вычитаются по barcode из потребности; старая автоматическая дедукция из /supplies больше не основной путь",
+            "   → В сводке и Excel региональные колонки: Коробов / План / Факт / Нужно",
+            "   → Факт = базовый WB-остаток до ручного вычитания, Нужно = остаточная потребность после выбранных поставок"
           ]
         },
         {
           "type": "list",
           "title": "4 вкладки",
           "items": [
+            "Страница /shipment начинается сразу с табов; отдельный верхний заголовок «Расчёт отгрузки» не показывается, чтобы не дублировать пункт меню",
             "Расчёт — переключатель V1 Стандарт / V2 Динамика / V3 Умный (по умолчанию V3)",
             "Товары — рабочий вид слева/справа: слева поиск и список артикулов, справа размерная таблица выбранного артикула; строки больше не раскрываются",
             "В товарах можно редактировать своё наименование через кнопку-карандаш, менять perBox и включать/отключать размеры из расчёта",
@@ -696,7 +705,7 @@
             "GET /api/warehouse/stock обогащает складские строки баркодом из локальной shipment_products.sizes_json по article_wb + размер; Google-таблица не является источником баркода",
             "scripts/warehouse-google-sync.js сохраняет все размерные колонки из складской Google-таблицы, включая нулевые остатки; артикулы/размеры не добавляются из карточной базы",
             "GET /api/warehouse/stock считает план упаковки по фиксированной базе 30 дней: все заказы за 30 дней, включая отмены и корректировку последних 7 дней, × эффективный % выкупа × артикульный trend.multiplier из V2/V3 × warehousePackingMultiplier − остаток WB − активные поставки к вычету − уже готово на складе; активные поставки к вычету = упаковано − поступило в продажу; отрицательная дельта показывается как 0",
-            "POST /api/warehouse/sync запускает ручной импорт Google Sheets → PostgreSQL из кнопки «Обновить» на странице /warehouse",
+            "POST /api/warehouse/sync запускает импорт Google Sheets → PostgreSQL: автоматически один раз при входе на /warehouse и вручную из кнопки «Обновить»",
             "MpHub подставляет эти значения в расчёт отгрузки V2/V3 по article_wb + размер"
           ]
         },
@@ -711,7 +720,7 @@
             "Карточка «Настройка плана упаковки» сохраняет warehousePackingMultiplier в user_settings; база всегда 30 дней расчёта, доступны множители ×1,00/×1,25/×1,50/×2,00",
             "В размерной таблице показывается колонка «План упаковки»: сколько штук/коробов нужно допаковать на складе по формуле расчёта отгрузки с учётом остатка WB, готового склада и поставок. Из плана вычитается активная часть поставок: упаковано минус поступило в продажу; принято/раскладывается/поступило в продажу показываются в подсказке как диагностические этапы.",
             "Тестовая страница /warehouse/test показывает 5 вариантов нижней таблицы склада на актуальных локальных данных: слева/справа, карточки, раскрытие, вкладки, группы по объёму",
-            "В карточке «Последний импорт» есть кнопка «Обновить»: запускает scripts/warehouse-google-sync.js и перечитывает данные",
+            "При входе на /warehouse страница сначала показывает текущие данные, затем в фоне запускает scripts/warehouse-google-sync.js и после успеха перечитывает данные; в карточке «Последний импорт» остаётся кнопка «Обновить» для ручного запуска",
             "PostgreSQL содержит warehouse_sync_runs и warehouse_ready_stock",
             "Актуальный production импорт после снятия фильтра нулевых остатков: 19 листов, 127 размерных строк, 20 344 шт, 242,07 коробов; ручной production sync проверен 2026-05-24 02:05 МСК",
             "Формулы «Короб склад» заменены во всех 19 листах; BERFIN обработан отдельным правилом из-за сдвига правого блока",
@@ -937,7 +946,7 @@
             "PUT /api/reviews/accounts/[id] — обновить аккаунт (токены, настройки)",
             "DELETE /api/reviews/accounts/[id] — удалить аккаунт",
             "PATCH /api/reviews/[id]/status — изменить статус отзыва (new/replied/processed)",
-            "В PostgreSQL mode write-path аккаунтов, статусов и жалоб пишет в PostgreSQL, не в legacy finance.db",
+            "Write-path аккаунтов, статусов и жалоб пишет в PostgreSQL; PostgreSQL-only runtime",
             "GET /api/reviews/stats — статистика (review_stats + complaint_stats)",
             "POST /api/reviews/complaints — подать жалобу (ручная или auto)",
             "GET /api/reviews/complaints?sync=true — синхронизация статусов + история"
@@ -1271,7 +1280,7 @@
       "blocks": [
         {
           "type": "text",
-          "content": "Telegram-бот @parser_wb_octopus_bot — мониторинг позиций товаров в поиске Wildberries. Python 3.13, aiogram 3, SQLite (per-user БД). 24/7 через launchd. Проект: /Users/octopus/Projects/wb-parser/"
+          "content": "Telegram-бот @parser_wb_octopus_bot — мониторинг позиций товаров в поиске Wildberries. Python 3.13, aiogram 3, PostgreSQL-only runtime"
         },
         {
           "type": "schema",
@@ -1737,7 +1746,7 @@
       "blocks": [
         {
           "type": "text",
-          "content": "Production хранит основное состояние в PostgreSQL. В /home/makson/website/data остаются JSON-секреты/логи и legacy SQLite-файлы; data/ никогда не синхронизируется с локальной машины при деплое."
+          "content": "Production хранит основное состояние в PostgreSQL. В shared data остаются JSON-секреты/логи и архивные legacy PostgreSQL-only runtime"
         },
         {
           "type": "schema",
@@ -1760,8 +1769,8 @@
             "│                     product_overrides            │",
             "│       Настройки: settings, tax_settings          │",
             "│                                                 │",
-            "│     legacy SQLite-файлы в data/:                │",
-            "│       finance.db / weekly_reports.db — backup   │",
+            "│     legacy PostgreSQL-only runtime",
+            "│       PostgreSQL / PostgreSQL weekly tables — removed archive   │",
             "│                                                 │",
             "│  2. JSON-файлы (data/)                          │",
             "│     wb-tokens.json — токены WB Seller Portal    │",
@@ -1867,7 +1876,7 @@
             "  await client.query('INSERT ... ON CONFLICT ...', params);",
             "});",
             "",
-            "// SQLite better-sqlite3 — только legacy/backup и локальная совместимость"
+            "// PostgreSQL-only runtime"
           ]
         },
         {
@@ -1981,6 +1990,7 @@
           "items": [
             "Расписание — каждый час по production crontab",
             "Задача — тянет реализацию, рекламу, заказы/воронку, paid storage",
+            "Заказы — последние 7 закрытых дней orders_funnel принудительно сверяются с WB Sales Funnel независимо от stable; мониторинг показывает orders7d✓ checked/upd",
             "WB API — seller-services, advert-api, seller-analytics/statistics APIs",
             "Таблицы — realization, advertising, orders_funnel, paid_storage",
             "Токены — wb-tokens.json и wb-api-key.txt из production data/",
@@ -2030,7 +2040,7 @@
           "title": "5. sync-weekly-report.js — Еженедельные отчёты",
           "items": [
             "Расписание — Пн-Ср 10:00-23:00 МСК по production crontab",
-            "Задача — скачивает Excel-отчёты из ЛК WB и загружает weekly_reports.db",
+            "Задача — скачивает Excel-отчёты из ЛК WB и загружает PostgreSQL weekly_reports/weekly_rows",
             "Дополнительно — пересчитывает buyout_rates и weekly_buyout_stats",
             "Дедупликация — report_id и период",
             "Лог — data/weekly-sync.log"
@@ -2138,7 +2148,9 @@
           "title": "Как запускается production",
           "lines": [
             "ssh wb-site",
-            "  Путь проекта: /home/makson/website",
+            "  Активный путь приложения: /home/makson/current -> /home/makson/releases/<stamp>",
+            "  Legacy/bootstrap дерево: /home/makson/website",
+            "  Shared runtime: /home/makson/shared/data, env, node_modules, .next/cache",
             "  Local nginx: 0.0.0.0:80 -> 127.0.0.1:3000",
             "  Nginx hardening: server_tokens off",
             "  PM2 process: mphub, user makson",
@@ -2159,23 +2171,33 @@
           "type": "schema",
           "title": "Как деплоить изменения",
           "lines": [
-            "Основной путь:",
+            "Основной путь release-deploy:",
             "  1. Локально: npm run build",
-            "  2. bash scripts/deploy.sh",
+            "  2. Проверить git status и scope",
+            "  3. SOURCE_MODE=local bash scripts/release-deploy.sh",
             "",
-            "scripts/deploy.sh:",
-            "  rsync -az --delete на wb-site:~/website/",
-            "  исключает node_modules, .next, .deploy-backups, .git, /data/",
-            "  исключает runtime JSON мониторинга public/data/monitor/status/repair/log/auth-status",
-            "  затем запускает на VPS: bash scripts/prod-safe-build.sh",
-            "",
-            "scripts/prod-safe-build.sh:",
-            "  backup текущей .next в .deploy-backups/.next-<stamp>",
-            "  pm2 stop mphub  # от пользователя makson",
-            "  npm run build",
-            "  pm2 restart mphub  # от пользователя makson",
+            "scripts/release-deploy.sh:",
+            "  создаёт /home/makson/releases/<stamp>",
+            "  подключает shared data/env/node_modules и общий .next/cache",
+            "  при старте PM2/preflight применяет .env.local, затем .env.production.local; production DATABASE_URL должен перекрывать локальный 127.0.0.1:55432",
+            "  собирает новую версию, пока старая продолжает работать",
+            "  запускает preflight next start на 127.0.0.1:3100",
+            "  после успешного preflight переключает /home/makson/current",
+            "  пересоздаёт PM2 mphub из /home/makson/current",
             "  health-check http://127.0.0.1:3000/login",
-            "  при сбое сборки/старта/health — восстановление предыдущей .next и restart PM2"
+            "  при сбое сборки/preflight/health — current остаётся на предыдущем release или откатывается назад",
+            "",
+            "SOURCE_MODE=remote-current bash scripts/release-deploy.sh:",
+            "  bootstrap/rebuild из текущего production-кода без подтягивания локальных dirty-файлов",
+            "",
+            "Rollback:",
+            "  bash scripts/release-rollback.sh",
+            "  переключает /home/makson/current на предыдущий release и restart PM2",
+            "  если второго release ещё нет, fallback — /home/makson/website",
+            "",
+            "Fallback/clean rebuild:",
+            "  bash scripts/deploy.sh + scripts/prod-safe-build.sh оставлены для аварийной чистой сборки",
+            "  этот путь останавливает PM2 до build и поэтому медленнее"
           ]
         },
         {
@@ -2187,7 +2209,7 @@
             "shipment-sync.sh — каждый час, POST /api/data/sync с days=28; lock защищает от параллельного запуска",
             "reviews-sync.js — каждые 15 минут, slow archive tick отзывов + DB retry state",
             "reviews-complaints.js — каждые 30 минут, автожалобы + статусы",
-            "vps-watchdog.py — каждые 5 минут, PM2/cron/HTTP проверки и Telegram-алерты",
+            "vps-watchdog.py — каждые 5 минут, PM2/cron/HTTP проверки и Telegram-алерты; во время release deploy пропускает проверки при активном data/deploy.lock",
             "data-health-cron.sh — каждый час, снимок здоровья данных для мониторинга",
             "auth-check.js — ежедневно 22:00 МСК, проверка WB API/auth",
             "paid-storage-sync.js — ежедневно ночью, догон paid_storage"
@@ -2197,7 +2219,9 @@
           "type": "list",
           "title": "Важные нюансы",
           "items": [
-            "Production data/ не синхронизировать и не удалять при деплое: там WB-токены, JSON-логи и legacy SQLite backup",
+            "Production/shared data не синхронизировать и не удалять при деплое: там WB-токены, JSON-логи и архивные legacy PostgreSQL-only runtime",
+            "Production cron должен использовать /home/makson/current, чтобы фоновые задачи шли из активного release",
+            "Следить за диском: старые .deploy-backups и release retention не должны поднимать usage выше watchdog threshold",
             "Внутренний health-check делать через http://127.0.0.1, не через https://hub.imaxprom.site с самого VPS",
             "PM2 error-log может содержать старые записи; проверять timestamp/size до и после диагностики",
             "Перед точечными правками на проде делать backup изменяемого файла/каталога в /home/makson",
@@ -2320,17 +2344,17 @@
       "blocks": [
         {
           "type": "text",
-          "content": "Модули в src/lib/ (shared) + src/modules/ (domain-specific). Production runtime — PostgreSQL через MPHUB_DB_ENGINE=postgres, DATABASE_URL и helpers pgRows/pgGet/withPgTransaction; SQLite/better-sqlite3 остаётся legacy/local fallback и источником отдельных импортов."
+          "content": "Модули в src/lib/ (shared) + src/modules/ (domain-specific). Production runtime — PostgreSQL через MPHUB_DB_ENGINE=postgres, DATABASE_URL и helpers pgRows/pgGet/withPgTransaction; PostgreSQL-only runtime"
         },
         {
           "type": "list",
           "title": "Данные и БД",
           "items": [
             "db.ts — базовые подключения (shared). Финансовые запросы в src/modules/finance/lib/queries.ts",
-            "db-import.ts — импорт данных в finance.db",
+            "db-import.ts — legacy stub; импорт в PostgreSQL отключён",
             "shipment-db.ts — CRUD для shipment-данных (заказы, остатки, товары, мета)",
             "reviews-db.ts — CRUD для модуля отзывов (аккаунты, отзывы, статистика)",
-            "parse-daily-report.ts — парсинг строк реализации WB → структура для SQLite",
+            "parse-daily-report.ts — парсинг строк реализации WB → структура для PostgreSQL",
             "src/modules/finance/lib/queries.ts — getPnl, getDaily, getFilters",
             "src/modules/analytics/lib/db.ts — подключение для аналитики"
           ]
@@ -2467,7 +2491,7 @@
           "title": "Синхронизация данных",
           "items": [
             "daily-sync-api.sh — каждый час: вызывает production API sync для реализации, рекламы, заказов и хранения → PostgreSQL",
-            "sync-weekly-report.js — Пн-Ср 10:00-23:00 МСК: Excel-отчёты ЛК WB → PostgreSQL weekly_reports/weekly_rows + buyout_rates; legacy weekly_reports.db остаётся источником импорта/сверки",
+            "sync-weekly-report.js — Пн-Ср 10:00-23:00 МСК: Excel-отчёты ЛК WB → PostgreSQL weekly_reports/weekly_rows + buyout_rates",
             "shipment-sync.sh — каждый час: POST /api/data/sync, days=28 по умолчанию, lock от дублей",
             "reviews-sync.js — каждые 15 минут: slow archive tick отзывов + DB retry state",
             "reviews-complaints.js — каждые 30 мин: автожалобы + синхронизация статусов",
@@ -2479,11 +2503,13 @@
           "type": "list",
           "title": "Мониторинг и деплой",
           "items": [
-            "vps-watchdog.py — production watchdog для PM2/cron/HTTP, каждые 5 мин",
+            "vps-watchdog.py — production watchdog для PM2/cron/HTTP, каждые 5 мин; уважает data/deploy.lock во время release deploy",
             "health-collector.py — сбор статусов PM2/cron/логов для /monitor",
             "data-health-cron.sh — ежечасный снимок здоровья данных",
-            "deploy.sh — rsync локальной копии на wb-site + safe build",
-            "prod-safe-build.sh — backup .next, stop PM2, build, restart, health-check, rollback",
+            "release-deploy.sh — основной release-based deploy: build в /home/makson/releases/<stamp>, preflight, switch /home/makson/current, restart PM2",
+            "release-rollback.sh — rollback на предыдущий release или legacy /home/makson/website",
+            "deploy.sh — legacy/fallback rsync локальной копии на wb-site + safe build",
+            "prod-safe-build.sh — fallback clean build: backup .next, stop PM2, build, restart, health-check, rollback",
             "rebuild-server.sh — legacy/local macOS helper, не основной production deploy"
           ]
         },
@@ -2494,7 +2520,7 @@
             "test-api.sh — smoke/API проверки",
             "e2e-test.js — архивный E2E через Puppeteer; не входит в актуальный production-хвост",
             "screenshot.js — скриншот страницы",
-            "save-session-state.js — генерирует SESSION_STATE.md из local legacy SQLite, production PostgreSQL, PM2 JSON/cron/health, rsync dry-run и scripts/session-state-notes.json",
+            "save-session-state.js — генерирует SESSION_STATE.md из production PostgreSQL, PM2 JSON/cron/health, rsync dry-run и scripts/session-state-notes.json; local PostgreSQL-only runtime",
             "wb-seller-login.py — вспомогательная авторизация WB Seller",
             "wb-auth-sniffer.py / wb-sniff.mjs — диагностика WB auth/API через браузер/CDP",
             "docs-audit-checklist.md — чеклист актуализации базы знаний"
@@ -2517,7 +2543,7 @@
           "items": [
             "src/lib/postgres.ts — PostgreSQL helpers: pgRows, pgGet, withPgTransaction, readonly detection по mphub_readonly",
             "src/lib/shipment-db.ts — shipment/users/settings storage, PostgreSQL DDL только при MPHUB_ALLOW_PG_DDL=1, order_uid для заказов",
-            "src/lib/reviews-db.ts — reviews/accounts/complaints storage: PostgreSQL-first helpers + legacy SQLite fallback",
+            "src/lib/reviews-db.ts — reviews/accounts/complaints storage: PostgreSQL helpers; legacy PostgreSQL-only runtime",
             "src/lib/daily-sync.ts и src/lib/sync/types.ts — daily sync, московская дата/час для cron-window",
             "src/app/api/wb/adv/route.ts — реклама WB: в PG mode читает/пишет PostgreSQL advertising",
             "src/app/api/finance/articles/route.ts — юнит-экономика по артикулам с weekly_final dedup и налогами от ppvz",

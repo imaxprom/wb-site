@@ -8,13 +8,10 @@
 
 const fs = require("fs");
 const path = require("path");
-const Database = require("better-sqlite3");
 const { Pool } = require("pg");
 
 const PROJECT_DIR = path.join(__dirname, "..");
 const DATA_DIR = path.join(PROJECT_DIR, "data");
-const FINANCE_DB = path.join(DATA_DIR, "finance.db");
-const WEEKLY_DB = path.join(DATA_DIR, "weekly_reports.db");
 const API_KEY_PATH = path.join(DATA_DIR, "wb-api-key.txt");
 
 function loadEnvFile(filePath) {
@@ -33,7 +30,6 @@ function loadEnvFile(filePath) {
 
 loadEnvFile(path.join(PROJECT_DIR, ".env.production.local"));
 
-const USE_PG = process.env.MPHUB_DB_ENGINE === "postgres";
 let pgPool = null;
 
 function getPgPool() {
@@ -85,6 +81,12 @@ function formatAge(minutes) {
   return `${Math.floor(hours / 24)} д назад`;
 }
 
+function formatDbTimestamp(value) {
+  if (!value) return "";
+  if (value instanceof Date) return value.toISOString();
+  return String(value);
+}
+
 function addCheck(checks, id, name, status, value, detail) {
   const check = { id, name, status, value };
   if (detail) check.detail = detail;
@@ -100,11 +102,15 @@ function latestLogState(filePath, okPattern, errorPattern) {
     const lines = fs.readFileSync(filePath, "utf-8").trim().split(/\r?\n/).slice(-400);
     let lastOk = null;
     let lastError = null;
+    const remember = (current, line, timestamp) => {
+      if (timestamp || !current || !current.timestamp) return { line, timestamp };
+      return current;
+    };
     for (const line of lines) {
       const timeMatch = line.match(/\[(\d{4}-\d{2}-\d{2}[T ][^\]]+)\]/);
       const timestamp = timeMatch ? timeMatch[1] : null;
-      if (okPattern.test(line)) lastOk = { line, timestamp };
-      if (errorPattern.test(line)) lastError = { line, timestamp };
+      if (okPattern.test(line)) lastOk = remember(lastOk, line, timestamp);
+      if (errorPattern.test(line)) lastError = remember(lastError, line, timestamp);
     }
     return { lastOk, lastError };
   } catch {
@@ -142,10 +148,6 @@ function checkLogFreshness(checks, { id, name, logPath, okPattern, errorPattern,
 async function pgGet(sql, params = []) {
   const result = await getPgPool().query(sql, params);
   return result.rows[0];
-}
-
-function sqliteGet(db, sql, params = []) {
-  return db.prepare(sql).get(...params);
 }
 
 async function checkWbApi(checks) {
@@ -288,6 +290,36 @@ async function checkPgData(checks) {
     reports.last_to ? `до ${reports.last_to}, ${reports.cnt} отчётов` : "Нет отчётов"
   );
 
+  const weeklyStatusTable = await pgGet("SELECT to_regclass('public.weekly_import_status') AS table_name");
+  if (!weeklyStatusTable.table_name) {
+    addCheck(
+      checks,
+      "weekly_import_status",
+      "Импорт weekly reports",
+      "warn",
+      "Нет статуса",
+      "Скрипт ещё не записывал weekly_import_status"
+    );
+  } else {
+    const weeklyStatus = await pgGet("SELECT status, loaded, total, message, updated_at, details_json FROM weekly_import_status WHERE id = $1", ["weekly-reports"]);
+    if (!weeklyStatus) {
+      addCheck(checks, "weekly_import_status", "Импорт weekly reports", "warn", "Нет статуса");
+    } else {
+      const details = weeklyStatus.details_json && typeof weeklyStatus.details_json === "object" ? weeklyStatus.details_json : {};
+      const warnings = Array.isArray(details.warnings) ? details.warnings.length : 0;
+      const errors = Array.isArray(details.errors) ? details.errors.length : 0;
+      const suffix = warnings || errors ? `; warn ${warnings}, err ${errors}` : "";
+      addCheck(
+        checks,
+        "weekly_import_status",
+        "Импорт weekly reports",
+        weeklyStatus.status === "error" ? "error" : weeklyStatus.status === "warn" ? "warn" : "ok",
+        `${weeklyStatus.message || weeklyStatus.status}${suffix}`,
+        weeklyStatus.updated_at ? `Последний запуск: ${formatDbTimestamp(weeklyStatus.updated_at)}; отчётов в БД: ${weeklyStatus.total}` : undefined
+      );
+    }
+  }
+
   const reviewsStatus = await pgGet("SELECT MAX(updated_at) AS updated_at FROM sync_status");
   const reviewsAge = ageMinutes(reviewsStatus.updated_at);
   addCheck(
@@ -300,37 +332,6 @@ async function checkPgData(checks) {
   );
 }
 
-function checkSqliteData(checks) {
-  const yd = mskDate(-1);
-  const today = mskDate(0);
-  const db = new Database(FINANCE_DB, { readonly: true });
-  const wdb = fs.existsSync(WEEKLY_DB) ? new Database(WEEKLY_DB, { readonly: true }) : null;
-  try {
-    addCheck(checks, "finance_db", "finance.db", "ok", "Доступна");
-
-    const realization = sqliteGet(db, "SELECT COUNT(*) AS cnt FROM realization WHERE substr(coalesce(nullif(sale_dt,''), rr_dt),1,10) = ?", [yd]) || { cnt: 0 };
-    addCheck(checks, "fresh_realization_yesterday", `Реализация за ${yd}`, realization.cnt > 100 ? "ok" : realization.cnt > 0 ? "warn" : "error", `${realization.cnt} строк`);
-
-    const ads = sqliteGet(db, "SELECT COUNT(*) AS cnt, COALESCE(SUM(amount),0) AS sum FROM advertising WHERE date = ?", [yd]) || { cnt: 0, sum: 0 };
-    addCheck(checks, "fresh_advertising_yesterday", `Реклама за ${yd}`, ads.cnt > 0 ? "ok" : "error", ads.cnt > 0 ? `${Math.round(ads.sum).toLocaleString("ru-RU")}₽, ${ads.cnt} строк` : "Нет данных");
-
-    const orders = sqliteGet(db, "SELECT COALESCE(SUM(order_count),0) AS cnt FROM orders_funnel WHERE date = ?", [yd]) || { cnt: 0 };
-    addCheck(checks, "fresh_orders_funnel_yesterday", `Заказы воронки за ${yd}`, orders.cnt > 0 ? "ok" : "error", orders.cnt > 0 ? `${orders.cnt} заказов` : "Нет данных");
-
-    const shipment = sqliteGet(db, "SELECT MAX(date) AS max_date, SUM(CASE WHEN substr(date,1,10)=? THEN 1 ELSE 0 END) AS today_cnt, SUM(CASE WHEN substr(date,1,10)=? THEN 1 ELSE 0 END) AS yd_cnt FROM shipment_orders", [today, yd]) || { max_date: null, today_cnt: 0, yd_cnt: 0 };
-    addCheck(checks, "fresh_shipment_orders", "Заказы отгрузки", shipment.today_cnt > 0 || shipment.yd_cnt > 0 ? "ok" : "error", `сегодня ${shipment.today_cnt || 0}, вчера ${shipment.yd_cnt || 0}`, shipment.max_date ? `Последний заказ: ${shipment.max_date}` : "Нет заказов");
-
-    if (wdb) {
-      const reports = sqliteGet(wdb, "SELECT COUNT(*) AS cnt, MAX(period_to) AS last_to FROM reports") || { cnt: 0, last_to: null };
-      const reportAgeDays = reports.last_to ? Math.round((Date.now() - new Date(reports.last_to).getTime()) / 86400000) : 999;
-      addCheck(checks, "fresh_weekly_reports", "Еженедельные Excel-отчёты", reports.cnt > 0 && reportAgeDays <= 14 ? "ok" : reports.cnt > 0 && reportAgeDays <= 21 ? "warn" : "error", reports.last_to ? `до ${reports.last_to}, ${reports.cnt} отчётов` : "Нет отчётов");
-    }
-  } finally {
-    try { db.close(); } catch { /* ignore */ }
-    try { wdb?.close(); } catch { /* ignore */ }
-  }
-}
-
 function checkCronLogs(checks) {
   checkLogFreshness(checks, {
     id: "cron_daily_sync",
@@ -339,6 +340,15 @@ function checkCronLogs(checks) {
     okPattern: /Daily sync API OK/i,
     errorPattern: /ERROR: daily sync API failed/i,
     maxOkAgeMin: 130,
+  });
+
+  checkLogFreshness(checks, {
+    id: "cron_weekly_sync",
+    name: "Cron weekly-sync",
+    logPath: path.join(DATA_DIR, "weekly-sync.log"),
+    okPattern: /Новых отчётов нет|Загружено новых|загружено \d+ строк/i,
+    errorPattern: /❌|Не найдены критичные колонки|Критическая ошибка|ERROR/i,
+    maxOkAgeMin: 96 * 60,
   });
 
   checkLogFreshness(checks, {
@@ -393,13 +403,7 @@ async function main() {
   await checkWbApi(checks);
 
   try {
-    if (USE_PG) {
-      await checkPgData(checks);
-    } else if (fs.existsSync(FINANCE_DB)) {
-      checkSqliteData(checks);
-    } else {
-      addCheck(checks, "runtime_db", "Runtime DB", "error", "Не найдена", "Нет PostgreSQL engine и нет data/finance.db");
-    }
+    await checkPgData(checks);
   } catch (err) {
     addCheck(checks, "runtime_db", "Runtime DB", "error", "Проверка упала", String(err));
   }

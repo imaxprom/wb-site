@@ -20,6 +20,7 @@ PROJECT_DIR = Path(__file__).parent.parent
 DATA_DIR = PROJECT_DIR / "data"
 STATE_PATH = DATA_DIR / "vps-watchdog-state.json"
 LOCK_PATH = Path("/tmp/vps-watchdog.lock")
+DEPLOY_LOCK_PATH = DATA_DIR / "deploy.lock"
 LOG_PATH = DATA_DIR / "watchdog.log"
 NOTIFY_SH = PROJECT_DIR / "scripts" / "notify.sh"
 
@@ -213,6 +214,16 @@ def main():
 
     state = load_state()
     alerts = []
+
+    if DEPLOY_LOCK_PATH.exists():
+        age_min = (datetime.now() - datetime.fromtimestamp(DEPLOY_LOCK_PATH.stat().st_mtime)).total_seconds() / 60
+        if age_min <= 120:
+            log(f"Deploy lock is active ({round(age_min)} min); skipping watchdog checks")
+            state["last_run"] = datetime.now().isoformat()
+            save_state(state)
+            log("Alerts: 0 | === Watchdog skipped for deploy ===\n")
+            return
+        log(f"Deploy lock is stale ({round(age_min)} min); continuing checks")
 
     # 1. Check PM2
     pm2 = check_pm2()

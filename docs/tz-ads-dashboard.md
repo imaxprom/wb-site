@@ -256,7 +256,7 @@
     FROM reviews
     GROUP BY product_article
     ```
-  - DB файл: `data/finance.db` (таблица `reviews`, доступ через `src/lib/reviews-db.ts`)
+  - DB файл: `data/PostgreSQL` (таблица `reviews`, доступ через `src/lib/reviews-db.ts`)
   - Поля в DB: `product_article` (артикул), `rating` (1-5)
 
 - **Вариант B (публичный WB API, без авторизации):**
@@ -533,7 +533,7 @@
   WHERE date >= ? AND date <= ? AND nm_id > 0
   GROUP BY nm_id
   ```
-  - DB: `data/finance.db`, таблица `advertising`
+  - DB: `data/PostgreSQL`, таблица `advertising`
   - Поля: `date`, `campaign_name`, `campaign_id`, `amount`, `payment_type`, `nm_id`
   - Колонка `nm_id` заполняется через маппинг из sync (`src/lib/sync/advertising.ts`). Может быть 0, если маппинг не сработал.
 

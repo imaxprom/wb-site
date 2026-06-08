@@ -206,14 +206,14 @@ cat public/data/mphub-database-guide.md
 ```
 Для КАЖДОЙ таблицы:
 ```bash
-sqlite3 data/finance.db ".schema ИМЯ_ТАБЛИЦЫ"
+psql data/PostgreSQL ".schema ИМЯ_ТАБЛИЦЫ"
 ```
 - [ ] Все колонки совпадают?
 - [ ] Все индексы указаны?
 - [ ] Нет ли таблиц в БД, которых нет в документе?
 ```bash
-sqlite3 data/finance.db ".tables"
-sqlite3 data/weekly_reports.db ".tables"
+psql data/PostgreSQL ".tables"
+psql data/PostgreSQL weekly tables ".tables"
 ```
 
 ### 4.2 REFACTORING.md

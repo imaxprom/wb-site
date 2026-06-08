@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
-import { getDb } from "@/modules/finance/lib/queries";
-import { isPostgresEnabled, pgRows } from "@/lib/postgres";
+import { pgRows } from "@/lib/postgres";
 
 /**
  * GET /api/finance/ads?from=YYYY-MM-DD&to=YYYY-MM-DD
@@ -25,9 +24,7 @@ export async function GET(request: NextRequest) {
       GROUP BY campaign_id, campaign_name
       ORDER BY total DESC
     `;
-    const campaigns = isPostgresEnabled()
-      ? await pgRows<{ id: number; name: string; total: number }>(campaignsSql, [dateFrom, dateTo])
-      : getDb().prepare(campaignsSql).all(dateFrom, dateTo) as { id: number; name: string; total: number }[];
+    const campaigns = await pgRows<{ id: number; name: string; total: number }>(campaignsSql, [dateFrom, dateTo]);
 
     // Get daily breakdown for each campaign
     const dailySql = `
@@ -37,9 +34,7 @@ export async function GET(request: NextRequest) {
     `;
 
     const result = await Promise.all(campaigns.map(async (c) => {
-      const rows = isPostgresEnabled()
-        ? await pgRows<{ date: string; amount: number }>(dailySql, [c.id, dateFrom, dateTo])
-        : getDb().prepare(dailySql).all(c.id, dateFrom, dateTo) as { date: string; amount: number }[];
+      const rows = await pgRows<{ date: string; amount: number }>(dailySql, [c.id, dateFrom, dateTo]);
       const daily: Record<string, number> = {};
       for (const r of rows) daily[r.date] = r.amount;
       return { id: c.id, name: c.name, total: Math.round(c.total), daily };

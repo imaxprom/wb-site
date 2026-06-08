@@ -21,7 +21,9 @@ interface DateRangePickerProps {
   dateTo: string;
   minDate?: string; // full data range start (for reset)
   maxDate?: string; // full data range end (for reset)
+  highlightMaxDate?: boolean;
   onChange: (from: string, to: string) => void;
+  onPreviewChange?: (from: string, to: string) => void;
   onClose: () => void;
 }
 
@@ -65,18 +67,14 @@ function buildMonthGrid(year: number, month: number): DayCell[] {
   return cells;
 }
 
-function formatDisplayDate(d: string): string {
-  if (!d) return "";
-  // "YYYY-MM-DD" → "DD.MM.YY"
-  return `${d.slice(8)}.${d.slice(5, 7)}.${d.slice(2, 4)}`;
-}
-
 export default function DateRangePicker({
   dateFrom,
   dateTo,
   minDate,
   maxDate,
+  highlightMaxDate = false,
   onChange,
+  onPreviewChange,
   onClose,
 }: DateRangePickerProps) {
   const ref = useRef<HTMLDivElement>(null);
@@ -97,7 +95,8 @@ export default function DateRangePicker({
   const [selecting, setSelecting] = useState(false);
   const [tempStart, setTempStart] = useState<string>(dateFrom);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const todayDate = new Date();
+  const today = `${todayDate.getFullYear()}-${String(todayDate.getMonth() + 1).padStart(2, "0")}-${String(todayDate.getDate()).padStart(2, "0")}`;
 
   // Right month
   let rightMonth = baseMonth + 1;
@@ -117,6 +116,15 @@ export default function DateRangePicker({
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [onClose]);
+
+  useEffect(() => {
+    if (!onPreviewChange) return;
+    if (selecting) {
+      onPreviewChange(tempStart, hoverDate);
+    } else {
+      onPreviewChange(dateFrom, dateTo);
+    }
+  }, [dateFrom, dateTo, hoverDate, onPreviewChange, selecting, tempStart]);
 
   function prevMonth() {
     if (baseMonth === 0) {
@@ -138,6 +146,7 @@ export default function DateRangePicker({
 
   function isDisabled(date: string): boolean {
     if (minDate && date < minDate) return true;
+    if (maxDate && date > maxDate) return true;
     if (date > today) return true;
     return false;
   }
@@ -219,6 +228,7 @@ export default function DateRangePicker({
             const start = isStart(cell.date);
             const end = isEnd(cell.date);
             const isToday = cell.date === today;
+            const isHighlightedMaxDate = highlightMaxDate && Boolean(maxDate) && cell.date === maxDate;
             const selected = start || end;
             const disabled = isDisabled(cell.date);
 
@@ -244,6 +254,8 @@ export default function DateRangePicker({
                   !disabled && !selected && !inRange && "hover:bg-[var(--bg-card-hover)] hover:rounded",
                   // Today ring
                   isToday && !selected && !disabled && "ring-1 ring-[var(--accent)] rounded-full",
+                  // Last available date marker
+                  isHighlightedMaxDate && !selected && !disabled && "ring-1 ring-[var(--accent)] rounded-full",
                   // Selected: full accent circle
                   selected && !disabled && "bg-[var(--accent)] text-white rounded-full z-10"
                 )}
@@ -262,31 +274,19 @@ export default function DateRangePicker({
     );
   }
 
-  const displayFrom = selecting ? formatDisplayDate(tempStart) : formatDisplayDate(dateFrom);
-  const displayTo = selecting
-    ? hoverDate
-      ? formatDisplayDate(hoverDate)
-      : "..."
-    : formatDisplayDate(dateTo);
-
   return (
     <div
       ref={ref}
       className="absolute left-0 top-full mt-2 z-50 bg-[var(--bg-card)] border border-[var(--border)] rounded-xl shadow-xl p-4"
       style={{ minWidth: 540 }}
     >
-      {/* Input display */}
-      <div className="mb-4 flex items-center justify-between">
-        <p className="text-sm font-medium text-white">
-          📅 {displayFrom} – {displayTo}
-        </p>
-        <button
-          onClick={onClose}
-          className="text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors ml-4"
-        >
-          ✕
-        </button>
-      </div>
+      <button
+        onClick={onClose}
+        className="absolute right-3 top-2 text-xs text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+        aria-label="Закрыть календарь"
+      >
+        ✕
+      </button>
 
       {/* Navigation + Two months */}
       <div className="flex items-start gap-2">

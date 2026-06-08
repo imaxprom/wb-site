@@ -11,21 +11,41 @@ import { saveAuthTokensCommon, checkApiSession } from "./wb-seller-api";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const SELLER_AUTH_URL = "https://seller-auth.wildberries.ru/";
+const BROWSER_IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 
 // Singleton (survives hot-reload)
 const g = globalThis as unknown as {
   __wbCdpBrowser?: Browser | null;
   __wbCdpPage?: Page | null;
   __wbCdpSticker?: string;
+  __wbCdpBrowserIdleTimer?: ReturnType<typeof setTimeout> | null;
 };
 
 function ensureDirs() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
+function clearBrowserIdleTimer() {
+  if (g.__wbCdpBrowserIdleTimer) {
+    clearTimeout(g.__wbCdpBrowserIdleTimer);
+    g.__wbCdpBrowserIdleTimer = null;
+  }
+}
+
+function scheduleBrowserIdleClose() {
+  clearBrowserIdleTimer();
+  g.__wbCdpBrowserIdleTimer = setTimeout(() => {
+    closeBrowser().catch((err) => console.warn("[wb-auth-cdp] idle browser close failed:", err));
+  }, BROWSER_IDLE_TIMEOUT_MS);
+  g.__wbCdpBrowserIdleTimer.unref?.();
+}
+
 async function getBrowser(): Promise<Browser> {
   const existing = g.__wbCdpBrowser;
-  if (existing && existing.connected) return existing;
+  if (existing && existing.connected) {
+    scheduleBrowserIdleClose();
+    return existing;
+  }
   const browser = await puppeteer.launch({
     headless: "new" as unknown as boolean,
     args: [
@@ -37,13 +57,17 @@ async function getBrowser(): Promise<Browser> {
     ],
   });
   g.__wbCdpBrowser = browser;
+  scheduleBrowserIdleClose();
   return browser;
 }
 
 async function getPage(): Promise<Page> {
   const browser = await getBrowser();
   const existing = g.__wbCdpPage;
-  if (existing && !existing.isClosed()) return existing;
+  if (existing && !existing.isClosed()) {
+    scheduleBrowserIdleClose();
+    return existing;
+  }
   const pages = await browser.pages();
   const page = pages.length > 0 ? pages[0] : await browser.newPage();
   await page.setViewport({ width: 1280, height: 800 });
@@ -51,10 +75,12 @@ async function getPage(): Promise<Page> {
     Object.defineProperty(navigator, "webdriver", { get: () => false });
   });
   g.__wbCdpPage = page;
+  scheduleBrowserIdleClose();
   return page;
 }
 
 async function closeBrowser() {
+  clearBrowserIdleTimer();
   const pg = g.__wbCdpPage;
   if (pg && !pg.isClosed()) { await pg.close().catch(() => {}); g.__wbCdpPage = null; }
   const br = g.__wbCdpBrowser;

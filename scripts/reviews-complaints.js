@@ -9,13 +9,11 @@
  * Usage: node scripts/reviews-complaints.js
  */
 
-const Database = require("better-sqlite3");
 const path = require("path");
 const fs = require("fs");
 const { Pool } = require("pg");
 
 const PROJECT_DIR = path.join(__dirname, "..");
-const DB_PATH = path.join(PROJECT_DIR, "data", "finance.db");
 const LOG_PATH = path.join(PROJECT_DIR, "data", "reviews-complaints.log");
 const CODEX_GATEWAY_ENV_PATH = path.join(PROJECT_DIR, "data", "codex-gateway.env");
 
@@ -53,7 +51,7 @@ function loadEnvFile(filePath) {
 
 loadEnvFile(path.join(PROJECT_DIR, ".env.production.local"));
 
-const USE_PG = process.env.MPHUB_DB_ENGINE === "postgres";
+const USE_PG = true;
 let pgPool = null;
 
 function getPgPool() {
@@ -81,9 +79,7 @@ function getCodexGatewayConfig() {
 // ─── DB helpers ─────────────────────────────────────────────
 
 function getDb() {
-  const db = new Database(DB_PATH, { readonly: false });
-  db.pragma("journal_mode = WAL");
-  return db;
+  throw new Error("Removed file-DB review complaints sync is disabled. Use PostgreSQL runtime only.");
 }
 
 function initComplaintsTable(db) {

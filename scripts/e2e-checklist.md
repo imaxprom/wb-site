@@ -77,13 +77,13 @@
 ## Верификация данных (ОБЯЗАТЕЛЬНО после каждой загрузки)
 
 ### Остатки
-- [ ] Total stock в UI = SUM(quantity) из SQLite
+- [ ] Total stock в UI = SUM(quantity) из PostgreSQL-only runtime
 - [ ] Total stock в UI = total из WB API supplier/stocks (dateFrom=2019)
 - [ ] Выборочно: 2-3 баркода — количество совпадает с ЛК WB
 - [ ] Количество складов на баркод — не подозрительно мало (должно быть 10-60+)
 
 ### Заказы
-- [ ] Заказы в UI = count из SQLite за выбранный период
+- [ ] Заказы в UI = count из PostgreSQL-only runtime
 - [ ] Сумма по неделям = заказы в UI
 - [ ] Нет заказов за сегодня (неполный день)
 

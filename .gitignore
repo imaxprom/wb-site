@@ -1,6 +1,10 @@
 node_modules/
 .next/
 .npm-cache/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
 *.xlsx
 !src/**/*.xlsx
 .DS_Store

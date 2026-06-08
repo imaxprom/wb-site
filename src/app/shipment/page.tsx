@@ -7,6 +7,7 @@ import ProductsTab from "@/modules/shipment/components/ProductsTab";
 import UploadTab from "@/modules/shipment/components/UploadTab";
 import ShipmentSettings from "@/modules/shipment/components/ShipmentSettings";
 import { useData } from "@/components/DataProvider";
+import { SupplyDeductionSelector, useManualSupplyDeductionData } from "@/modules/shipment/components/SupplyDeductionSelector";
 
 function TabBtn({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
@@ -30,6 +31,9 @@ type CalcMode = "v1" | "v2" | "v3";
 export default function ShipmentPage() {
   const { settings, updateSettings, isLoaded } = useData();
   const [tab, setTab] = useState<Tab>("calc");
+  const [manualSupplyDeductionEnabled, setManualSupplyDeductionEnabled] = useState(false);
+  const [selectedSupplyIds, setSelectedSupplyIds] = useState<Set<number>>(new Set());
+  const manualSupplyDeduction = useManualSupplyDeductionData(manualSupplyDeductionEnabled, selectedSupplyIds);
   const calcMode = settings.shipmentCalcMode as CalcMode | undefined;
 
   const switchCalcMode = (mode: CalcMode) => {
@@ -38,7 +42,6 @@ export default function ShipmentPage() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">Расчёт отгрузки</h2>
       <div className="flex flex-wrap gap-2">
         <TabBtn label="Расчёт" active={tab === "calc"} onClick={() => setTab("calc")} />
         <TabBtn label="Товары" active={tab === "products"} onClick={() => setTab("products")} />
@@ -94,9 +97,24 @@ export default function ShipmentPage() {
             </button>
           </div>
 
+          {(calcMode === "v2" || calcMode === "v3") && (
+            <SupplyDeductionSelector
+              enabled={manualSupplyDeductionEnabled}
+              selectedSupplyIds={selectedSupplyIds}
+              onEnabledChange={setManualSupplyDeductionEnabled}
+              onSelectedSupplyIdsChange={setSelectedSupplyIds}
+              data={manualSupplyDeduction}
+            />
+          )}
+
           {/* Render based on mode */}
-          {calcMode === "v3" && <ShipmentCalcV3 />}
-          {(calcMode === "v1" || calcMode === "v2") && <ShipmentCalcV2 initialMode={calcMode} />}
+          {calcMode === "v3" && <ShipmentCalcV3 manualSupplyDeductByBarcode={manualSupplyDeduction.deductByBarcode} />}
+          {(calcMode === "v1" || calcMode === "v2") && (
+            <ShipmentCalcV2
+              initialMode={calcMode}
+              manualSupplyDeductByBarcode={calcMode === "v2" ? manualSupplyDeduction.deductByBarcode : undefined}
+            />
+          )}
           {!calcMode && (
             <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-8 text-center text-[var(--text-muted)]">
               Выберите режим расчёта: V1 Стандарт, V2 Динамика или V3 Умный.

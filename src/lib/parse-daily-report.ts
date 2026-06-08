@@ -2,7 +2,7 @@ import fs from "fs";
 import { readFirstSheetRows } from "@/lib/server/excel-rows";
 
 /**
- * Row structure matching the `realization` table in SQLite.
+ * Row structure matching the `realization` table in PostgreSQL.
  * Only fields we can extract from the daily report.
  */
 export interface RealizationRow {

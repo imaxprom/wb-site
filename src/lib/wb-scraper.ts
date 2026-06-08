@@ -10,13 +10,33 @@ const SELLER_URL = "https://seller.wildberries.ru";
 const REPORT_URL = "https://seller.wildberries.ru/suppliers-mutual-settlements/reports-implementations/reports-weekly-new";
 const COOKIES_PATH = path.join(process.cwd(), "data", "wb-cookies.json");
 const DOWNLOADS_DIR = path.join(process.cwd(), "data", "reports");
+const BROWSER_IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 
 // --- Singleton browser (survives Next.js hot-reload via globalThis) ---
-const g = globalThis as unknown as { __wbBrowser?: Browser | null; __wbPage?: Page | null };
+const g = globalThis as unknown as {
+  __wbBrowser?: Browser | null;
+  __wbPage?: Page | null;
+  __wbBrowserIdleTimer?: ReturnType<typeof setTimeout> | null;
+};
 function getBrowserInstance() { return g.__wbBrowser ?? null; }
 function setBrowserInstance(b: Browser | null) { g.__wbBrowser = b; }
 function getPageInstance() { return g.__wbPage ?? null; }
 function setPageInstance(p: Page | null) { g.__wbPage = p; }
+
+function clearBrowserIdleTimer() {
+  if (g.__wbBrowserIdleTimer) {
+    clearTimeout(g.__wbBrowserIdleTimer);
+    g.__wbBrowserIdleTimer = null;
+  }
+}
+
+function scheduleBrowserIdleClose() {
+  clearBrowserIdleTimer();
+  g.__wbBrowserIdleTimer = setTimeout(() => {
+    closeBrowser().catch((err) => console.warn("[wb-scraper] idle browser close failed:", err));
+  }, BROWSER_IDLE_TIMEOUT_MS);
+  g.__wbBrowserIdleTimer.unref?.();
+}
 
 function ensureDirs() {
   const dataDir = path.join(process.cwd(), "data");
@@ -26,7 +46,10 @@ function ensureDirs() {
 
 async function getBrowser(): Promise<Browser> {
   const existing = getBrowserInstance();
-  if (existing && existing.connected) return existing;
+  if (existing && existing.connected) {
+    scheduleBrowserIdleClose();
+    return existing;
+  }
   const browser = await puppeteer.launch({
     headless: false,
     args: [
@@ -38,13 +61,17 @@ async function getBrowser(): Promise<Browser> {
     ],
   });
   setBrowserInstance(browser);
+  scheduleBrowserIdleClose();
   return browser;
 }
 
 async function getPage(): Promise<Page> {
   const browser = await getBrowser();
   const existing = getPageInstance();
-  if (existing && !existing.isClosed()) return existing;
+  if (existing && !existing.isClosed()) {
+    scheduleBrowserIdleClose();
+    return existing;
+  }
   // Reuse the default about:blank tab instead of creating a new one
   const pages = await browser.pages();
   const page = pages.length > 0 ? pages[0] : await browser.newPage();
@@ -56,6 +83,7 @@ async function getPage(): Promise<Page> {
   });
 
   setPageInstance(page);
+  scheduleBrowserIdleClose();
   return page;
 }
 
@@ -836,6 +864,7 @@ export function listReports() {
 }
 
 export async function closeBrowser() {
+  clearBrowserIdleTimer();
   const pg = getPageInstance();
   if (pg && !pg.isClosed()) { await pg.close(); setPageInstance(null); }
   const br = getBrowserInstance();

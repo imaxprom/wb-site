@@ -84,6 +84,24 @@ body {
   text-align: center;
 }
 
+.shipment-compact-header-cell {
+  container-type: inline-size;
+}
+
+.shipment-compact-header-label-short {
+  display: none;
+}
+
+@container (max-width: 68px) {
+  .shipment-compact-header-label-full {
+    display: none;
+  }
+
+  .shipment-compact-header-label-short {
+    display: inline;
+  }
+}
+
 .logistics-table th,
 .logistics-table td {
   padding-left: 10px;

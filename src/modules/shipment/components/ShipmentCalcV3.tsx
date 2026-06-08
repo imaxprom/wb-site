@@ -13,6 +13,7 @@ import { calculateTrend, type TrendResult } from "@/modules/shipment/lib/trend-e
 import type { ShipmentRowExtended } from "@/types";
 import { ArticleMultiSelect } from "./ArticleMultiSelect";
 import { buildWarehouseStockByBarcode } from "@/modules/shipment/lib/warehouse-ready-stock";
+import { applyManualSupplyDeductions } from "@/modules/shipment/lib/manual-supply-deductions";
 
 // ─── Packing Visualization ──────────────────────────────────
 
@@ -452,7 +453,11 @@ function TrendBadge({ trend, v2Need, v3Total }: { trend: TrendResult; v2Need?: n
 
 // ─── Main Component ─────────────────────────────────────────
 
-export default function ShipmentCalcV3() {
+export default function ShipmentCalcV3({
+  manualSupplyDeductByBarcode,
+}: {
+  manualSupplyDeductByBarcode?: Map<string, number>;
+}) {
   const { stock, orderAggregates, products, warehouseReadyStock, settings, overrides, updateSettings, isLoaded } = useData();
   const effectiveRegions = useEffectiveRegions();
   const getBuyout = useEffectiveBuyout();
@@ -542,7 +547,7 @@ export default function ShipmentCalcV3() {
   }, [activeProducts, isAllMode, stock, orderAggregates, effectiveRegions, overrides, getBuyout, uploadDays]);
 
   // Effective rows and trend
-  const { rows, trend, regionConfigs } = useMemo<{ rows: ShipmentRowExtended[]; trend: TrendResult | null; regionConfigs: typeof effectiveRegions }>(() => {
+  const { rows: baseRows, trend, regionConfigs } = useMemo<{ rows: ShipmentRowExtended[]; trend: TrendResult | null; regionConfigs: typeof effectiveRegions }>(() => {
     if (isAllMode && allCalcs.length > 0) {
       // Merge all rows
       const merged = allCalcs.flatMap((c) =>
@@ -566,6 +571,12 @@ export default function ShipmentCalcV3() {
     }
     return { rows: [] as ShipmentRowExtended[], trend: null, regionConfigs: effectiveRegions };
   }, [isAllMode, allCalcs, singleCalc, effectiveRegions, activeProducts]);
+
+  const manualDeduction = useMemo(
+    () => applyManualSupplyDeductions(baseRows, manualSupplyDeductByBarcode),
+    [baseRows, manualSupplyDeductByBarcode]
+  );
+  const rows = manualDeduction.rows;
 
   const warehouseStock = useMemo(() => buildWarehouseStockByBarcode(
     warehouseReadyStock,

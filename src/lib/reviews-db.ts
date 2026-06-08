@@ -1,22 +1,12 @@
 /**
- * SQLite storage for reviews module (accounts, reviews, stats).
- * Uses the existing finance.db database.
+ * PostgreSQL storage for reviews module (accounts, reviews, stats).
+ * Local file-based DB access has been removed.
  */
 
-import Database from "better-sqlite3";
-import path from "path";
-import { isPostgresEnabled, pgGet, pgRows, withPgTransaction } from "@/lib/postgres";
+import { pgGet, pgRows, withPgTransaction } from "@/lib/postgres";
 
-const DB_PATH = path.join(process.cwd(), "data", "finance.db");
-
-let db: Database.Database | null = null;
-
-function getDb(): Database.Database {
-  if (!db) {
-    db = new Database(DB_PATH, { readonly: false });
-    db.pragma("journal_mode = WAL");
-  }
-  return db;
+function getDb(): any {
+  throw new Error("Removed reviews file DB helper. Use PostgreSQL helpers instead.");
 }
 
 // ─── Types ───────────────────────────────────────────────────
@@ -112,120 +102,8 @@ export interface ReviewStat {
 // ─── Init ────────────────────────────────────────────────────
 
 export function initReviewTables(): void {
-  if (isPostgresEnabled()) return;
-
-  const d = getDb();
-
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS review_accounts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      store_name TEXT,
-      inn TEXT,
-      supplier_id TEXT,
-      api_key TEXT NOT NULL,
-      cookie_status TEXT DEFAULT 'inactive',
-      api_status TEXT DEFAULT 'inactive',
-      auto_replies INTEGER DEFAULT 0,
-      auto_dialogs INTEGER DEFAULT 0,
-      auto_complaints INTEGER DEFAULT 0,
-      use_auto_proxy INTEGER DEFAULT 1,
-      settings_json TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  // Migrate: add cabinet auth columns
-  try {
-    d.exec(`ALTER TABLE review_accounts ADD COLUMN wb_authorize_v3 TEXT`);
-  } catch { /* already exists */ }
-  try {
-    d.exec(`ALTER TABLE review_accounts ADD COLUMN wb_validation_key TEXT`);
-  } catch { /* already exists */ }
-  try {
-    d.exec(`ALTER TABLE review_accounts ADD COLUMN wb_cookie_updated_at DATETIME`);
-  } catch { /* already exists */ }
-  try {
-    d.exec(`ALTER TABLE review_accounts ADD COLUMN wb_seller_lk TEXT`);
-  } catch { /* already exists */ }
-
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS reviews (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      account_id INTEGER REFERENCES review_accounts(id),
-      wb_review_id TEXT UNIQUE,
-      date DATETIME,
-      rating INTEGER,
-      product_name TEXT,
-      product_article TEXT,
-      brand TEXT,
-      review_text TEXT,
-      pros TEXT,
-      cons TEXT,
-      buyer_name TEXT,
-      buyer_chat_id TEXT,
-      price REAL,
-      status TEXT DEFAULT 'new',
-      complaint_status TEXT,
-      is_hidden INTEGER DEFAULT 0,
-      is_updated INTEGER DEFAULT 0,
-      is_excluded_rating INTEGER DEFAULT 0,
-      purchase_type TEXT,
-      store_name TEXT,
-      pickup_point TEXT,
-      comment TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  // Migrate: add shk_id and order_date for price/pickup enrichment
-  try {
-    d.exec(`ALTER TABLE reviews ADD COLUMN shk_id INTEGER`);
-  } catch { /* already exists */ }
-  try {
-    d.exec(`ALTER TABLE reviews ADD COLUMN order_date DATETIME`);
-  } catch { /* already exists */ }
-  try {
-    d.exec(`ALTER TABLE reviews ADD COLUMN bables TEXT`);
-  } catch { /* already exists */ }
-
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS review_complaints (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      review_id INTEGER REFERENCES reviews(id),
-      account_id INTEGER REFERENCES review_accounts(id),
-      wb_review_id TEXT NOT NULL,
-      complaint_reason_id INTEGER NOT NULL,
-      explanation TEXT,
-      status TEXT DEFAULT 'pending',
-      error_message TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      submitted_at DATETIME,
-      resolved_at DATETIME
-    )
-  `);
-
-  // Migrate: add manager_name to review_complaints
-  try {
-    d.exec(`ALTER TABLE review_complaints ADD COLUMN manager_name TEXT`);
-  } catch { /* already exists */ }
-
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS review_stats (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      account_id INTEGER REFERENCES review_accounts(id),
-      date DATE,
-      total_reviews INTEGER DEFAULT 0,
-      negative_reviews INTEGER DEFAULT 0,
-      complaints INTEGER DEFAULT 0,
-      UNIQUE(account_id, date)
-    )
-  `);
+  throw new Error("Removed reviews file DB helper. Use PostgreSQL helpers instead.");
 }
-
-// Initialize once at module load
-initReviewTables();
 
 // ─── Sync Status ────────────────────────────────────────────
 

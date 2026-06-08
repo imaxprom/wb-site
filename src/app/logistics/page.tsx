@@ -246,6 +246,12 @@ function latestMeasurementVolume(measurements: MeasurementEntry[]): number | nul
   return latestMeasurement(measurements)?.volumeLiters || null;
 }
 
+function isCriticalMeasurement(row: Pick<LogisticsArticleRow, "cardVolumeLiters" | "remainsVolumeLiters" | "measurementHistory">): boolean {
+  const measuredVolume = latestMeasurementVolume(row.measurementHistory);
+  if (!row.cardVolumeLiters || !measuredVolume || measuredVolume <= row.cardVolumeLiters) return false;
+  return !row.remainsVolumeLiters || row.remainsVolumeLiters > row.cardVolumeLiters;
+}
+
 function isRecentMeasurement(measurement: MeasurementEntry | null): boolean {
   if (!measurement?.measuredAt) return false;
   const measuredAt = new Date(measurement.measuredAt).getTime();
@@ -426,9 +432,7 @@ export default function LogisticsPage() {
     for (const row of allArticleRows) {
       const latest = latestMeasurement(row.measurementHistory);
       if (isRecentMeasurement(latest)) newCount++;
-      if (row.cardVolumeLiters && latest?.volumeLiters && latest.volumeLiters > row.cardVolumeLiters) {
-        criticalCount++;
-      }
+      if (isCriticalMeasurement(row)) criticalCount++;
     }
 
     return { newCount, criticalCount };
@@ -769,12 +773,7 @@ export default function LogisticsPage() {
             <tbody>
               {products.map((product) => {
                 const deliveryValues = warehouses.map((warehouse) => calcDelivery(product.volumeLiters, warehouse));
-                const measuredVolume = latestMeasurementVolume(product.measurementHistory);
-                const measurementOverCard = Boolean(
-                  product.cardVolumeLiters &&
-                  measuredVolume &&
-                  measuredVolume > product.cardVolumeLiters
-                );
+                const measurementOverCard = isCriticalMeasurement(product);
                 return (
                   <tr key={product.articleWB || product.articleSeller}>
                     <td className="sticky left-0 z-10 min-w-[200px] bg-[var(--bg-card)] align-middle">

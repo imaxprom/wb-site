@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Boxes, Database, RefreshCw, Search, Sheet, TrendingUp, Warehouse } from "lucide-react";
 
 interface WarehouseSizeRow {
@@ -94,7 +94,7 @@ function formatDateTime(value: string | null | undefined) {
 }
 
 function packingPlanTitle(row: WarehouseSizeRow) {
-  const rawPlan = Number(row.warehouse_required_units || 0) - Number(row.supply_plan_deduct_qty || 0) - Number(row.units_qty || 0);
+  const rawPlan = Number(row.warehouse_required_units || 0) - Number(row.units_qty || 0);
   return [
     `Заказы ${row.packing_days || 30} дней: ${formatNumber(row.base_orders_qty ?? row.base_sales_qty ?? row.target_sales_qty ?? row.target_sales_45d)}`,
     `% выкупа: ${formatNumber((row.buyout_rate ?? 1) * 100, 1)}%`,
@@ -104,13 +104,8 @@ function packingPlanTitle(row: WarehouseSizeRow) {
     `Цель с коэффициентом: ${formatNumber(row.target_sales_qty ?? row.target_sales_45d)}`,
     `Остаток WB: ${formatNumber(row.wb_stock_qty)}`,
     `Потребность после WB: ${formatNumber(row.warehouse_required_units)}`,
-    `Упаковано в поставках: ${formatNumber(row.supply_packed_qty)}`,
-    `Принято WB: ${formatNumber(row.supply_accepted_qty)}`,
-    `Раскладывается: ${formatNumber(row.supply_unloading_qty)}`,
-    `Поступило в продажу: ${formatNumber(row.supply_ready_for_sale_qty)}`,
-    `Вычитаем активные поставки: ${formatNumber(row.supply_plan_deduct_qty)}`,
     `Готово на складе: ${formatNumber(row.units_qty)}`,
-    `Расчёт: ${formatNumber(row.warehouse_required_units)} - ${formatNumber(row.supply_plan_deduct_qty)} - ${formatNumber(row.units_qty)} = ${formatNumber(rawPlan)} шт`,
+    `Расчёт: ${formatNumber(row.warehouse_required_units)} - ${formatNumber(row.units_qty)} = ${formatNumber(rawPlan)} шт`,
     `Итоговый план: ${formatNumber(row.plan_pack_units)} шт`,
     "Если расчёт меньше 0, показываем 0",
   ].join("\n");
@@ -222,6 +217,7 @@ export default function WarehousePage() {
   const [selectedArticle, setSelectedArticle] = useState("");
   const [articleQuery, setArticleQuery] = useState("");
   const [packingMultiplier, setPackingMultiplier] = useState<number>(1);
+  const autoSyncStartedRef = useRef(false);
 
   const loadWarehouse = useCallback((multiplier: number, cancelled?: () => boolean) => {
     return fetch(`/api/warehouse/stock?packingMultiplier=${multiplier}`, { cache: "no-store" })
@@ -240,18 +236,58 @@ export default function WarehousePage() {
       });
   }, []);
 
+  const syncWarehouse = useCallback(async (
+    multiplier: number,
+    options?: {
+      cancelled?: () => boolean;
+      silentReadonly?: boolean;
+    },
+  ) => {
+    if (options?.cancelled?.()) return;
+    setSyncing(true);
+    setError("");
+    try {
+      const res = await fetch("/api/warehouse/sync", { method: "POST" });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({})) as { error?: string };
+        if (
+          options?.silentReadonly &&
+          res.status === 403 &&
+          payload.error?.includes("local PostgreSQL readonly mode")
+        ) {
+          return;
+        }
+        throw new Error(payload.error || `HTTP ${res.status}`);
+      }
+      await loadWarehouse(multiplier, options?.cancelled);
+    } catch (err) {
+      if (!options?.cancelled?.()) {
+        setError(err instanceof Error ? err.message : "Не удалось обновить склад");
+      }
+    } finally {
+      if (!options?.cancelled?.()) setSyncing(false);
+    }
+  }, [loadWarehouse]);
+
   useEffect(() => {
     let cancelled = false;
 
     fetch("/api/settings", { cache: "no-store" })
       .then((res) => (res.ok ? res.json() : {}))
-      .then((settings: { warehousePackingMultiplier?: number }) => {
+      .then(async (settings: { warehousePackingMultiplier?: number }) => {
         if (cancelled) return;
         const savedMultiplier = PACKING_MULTIPLIER_OPTIONS.includes(settings.warehousePackingMultiplier as typeof PACKING_MULTIPLIER_OPTIONS[number])
           ? Number(settings.warehousePackingMultiplier)
           : 1;
         setPackingMultiplier(savedMultiplier);
-        return loadWarehouse(savedMultiplier, () => cancelled);
+        await loadWarehouse(savedMultiplier, () => cancelled);
+        if (!cancelled && !autoSyncStartedRef.current) {
+          autoSyncStartedRef.current = true;
+          void syncWarehouse(savedMultiplier, {
+            cancelled: () => cancelled,
+            silentReadonly: true,
+          });
+        }
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : "Не удалось загрузить настройки склада");
@@ -263,24 +299,11 @@ export default function WarehousePage() {
     return () => {
       cancelled = true;
     };
-  }, [loadWarehouse]);
+  }, [loadWarehouse, syncWarehouse]);
 
   const handleSync = useCallback(async () => {
-    setSyncing(true);
-    setError("");
-    try {
-      const res = await fetch("/api/warehouse/sync", { method: "POST" });
-      if (!res.ok) {
-        const payload = await res.json().catch(() => ({})) as { error?: string };
-        throw new Error(payload.error || `HTTP ${res.status}`);
-      }
-      await loadWarehouse(packingMultiplier);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Не удалось обновить склад");
-    } finally {
-      setSyncing(false);
-    }
-  }, [loadWarehouse, packingMultiplier]);
+    await syncWarehouse(packingMultiplier);
+  }, [packingMultiplier, syncWarehouse]);
 
   const handlePackingMultiplierChange = useCallback(async (multiplier: number) => {
     setPackingMultiplier(multiplier);
@@ -435,7 +458,7 @@ export default function WarehousePage() {
             </div>
             <div className="mt-4 text-base font-medium text-white">Данных склада пока нет</div>
             <div className="mt-2 max-w-xl text-sm leading-6 text-[var(--text-muted)]">
-              Запусти локальный импорт `node scripts/warehouse-google-sync.js`, чтобы заполнить SQLite.
+              Запусти локальный импорт `node scripts/warehouse-google-sync.js`, чтобы заполнить PostgreSQL.
             </div>
           </div>
         ) : (data?.articles.length || 0) > 0 ? (

@@ -6,15 +6,32 @@ STATUS:{"state":"...","message":"..."}
 States: sms_sent, blocked, code_error, code_expired, supplier_select, success, failed
 """
 from playwright.sync_api import sync_playwright
-import base64, json, time, sys, os, re, sqlite3, urllib.request
+import base64, json, time, sys, os, re, subprocess, urllib.request
 
 PHONE = os.environ.get("WB_PHONE", "9641521652")
 WEBSITE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOKENS_PATH = os.path.join(WEBSITE_DIR, "data", "wb-tokens.json")
-FINANCE_DB_PATH = os.path.join(WEBSITE_DIR, "data", "finance.db")
+ENV_PATH = os.path.join(WEBSITE_DIR, ".env.production.local")
 LOG_PATH = "/tmp/wb_auth_log.txt"
 SMS_CODE_PATH = "/tmp/wb_sms_code"
 SUPPLIER_CHOICE_PATH = "/tmp/wb_supplier_choice"
+
+def load_env_file(path):
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                key, value = stripped.split("=", 1)
+                key = key.strip()
+                value = value.strip().strip("'\"")
+                if key and key not in os.environ:
+                    os.environ[key] = value
+    except Exception:
+        pass
 
 def write_secret_json(path, data):
     data_dir = os.path.dirname(path)
@@ -45,33 +62,60 @@ def write_secret_json(path, data):
 
 def sync_review_account_tokens(tokens, cookies_dict):
     supplier_id = str(tokens.get("supplierId") or "")
-    if not supplier_id or not os.path.exists(FINANCE_DB_PATH):
+    if not supplier_id:
         return
 
     validation_key = cookies_dict.get("wbx-validation-key") or ""
+    load_env_file(ENV_PATH)
+    if not os.environ.get("DATABASE_URL"):
+        print("Review account token sync skipped: DATABASE_URL is not set")
+        return
+
+    payload = {
+        "supplierId": supplier_id,
+        "authorizev3": tokens.get("authorizev3") or "",
+        "validationKey": validation_key,
+        "wbSellerLk": tokens.get("wbSellerLk") or "",
+    }
+    js = """
+const { Pool } = require("pg");
+const payload = JSON.parse(process.argv[1]);
+(async () => {
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    max: 1,
+    application_name: "mphub-wb-seller-login",
+  });
+  try {
+    const result = await pool.query(`
+      UPDATE review_accounts
+         SET wb_authorize_v3 = $1,
+             wb_validation_key = COALESCE(NULLIF($2, ''), wb_validation_key),
+             wb_seller_lk = COALESCE(NULLIF($3, ''), wb_seller_lk),
+             wb_cookie_updated_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP
+       WHERE supplier_id = $4
+    `, [payload.authorizev3, payload.validationKey, payload.wbSellerLk, payload.supplierId]);
+    console.log(String(result.rowCount || 0));
+  } finally {
+    await pool.end();
+  }
+})().catch((error) => {
+  console.error(error.message);
+  process.exit(1);
+});
+"""
     try:
-        conn = sqlite3.connect(FINANCE_DB_PATH)
-        cur = conn.execute(
-            """
-            UPDATE review_accounts
-               SET wb_authorize_v3 = ?,
-                   wb_validation_key = COALESCE(NULLIF(?, ''), wb_validation_key),
-                   wb_seller_lk = COALESCE(NULLIF(?, ''), wb_seller_lk),
-                   wb_cookie_updated_at = CURRENT_TIMESTAMP,
-                   updated_at = CURRENT_TIMESTAMP
-             WHERE supplier_id = ?
-            """,
-            (
-                tokens.get("authorizev3") or "",
-                validation_key,
-                tokens.get("wbSellerLk") or "",
-                supplier_id,
-            ),
+        result = subprocess.run(
+            ["node", "-e", js, json.dumps(payload, ensure_ascii=False)],
+            cwd=WEBSITE_DIR,
+            text=True,
+            capture_output=True,
+            timeout=20,
+            check=True,
         )
-        conn.commit()
-        if cur.rowcount:
+        if int((result.stdout or "0").strip() or "0") > 0:
             print("Review account tokens synced for supplierId", supplier_id)
-        conn.close()
     except Exception as exc:
         print("Review account token sync failed:", str(exc))
 

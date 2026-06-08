@@ -3,20 +3,15 @@ import { requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { isCronRequest } from "@/lib/cron-auth";
 import {
-  initShipmentTables,
   saveOrdersPg,
-  saveOrders,
   saveProductsPg,
-  saveStock,
   saveStockPg,
-  saveProducts,
-  setUploadDate,
   setUploadDatePg,
 } from "@/lib/shipment-db";
 import { transformCards, transformStocks, transformOrders } from "@/lib/wb-transformers";
 import type { WBCard, WBStockItem, WBOrder, WBCardsResponse } from "@/lib/wb-api";
 import { getWbApiKey } from "@/lib/wb-api-key";
-import { isPostgresEnabled, isPostgresReadonlyConnection } from "@/lib/postgres";
+import { isPostgresReadonlyConnection } from "@/lib/postgres";
 
 function readApiKey(headerKey?: string | null): string {
   if (headerKey) return headerKey;
@@ -103,7 +98,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({})) as { days?: number };
     const days = Number(body.days) || 28;
 
-    if (isPostgresEnabled() && isPostgresReadonlyConnection()) {
+    if (isPostgresReadonlyConnection()) {
       return NextResponse.json(
         { error: "Sync is disabled in local PostgreSQL readonly mode" },
         { status: 403 }
@@ -114,9 +109,6 @@ export async function POST(req: NextRequest) {
     if (!apiKey) {
       return NextResponse.json({ error: "API key not found" }, { status: 401 });
     }
-
-    // Init tables
-    initShipmentTables();
 
     // Fetch all 3 in parallel (cards + stocks, then orders separately since they're independent)
     const [rawCards, rawStocks, rawOrders] = await Promise.all([
@@ -130,22 +122,13 @@ export async function POST(req: NextRequest) {
     const stock = transformStocks(rawStocks);
     const allOrders = transformOrders(rawOrders);
 
-    // Save ALL orders to SQLite (accumulate, no trimming)
-    // Duplicates handled by INSERT OR IGNORE / ON CONFLICT in shipment-db
+    // Save ALL orders (accumulate, no trimming). Duplicates are handled by
+    // PostgreSQL ON CONFLICT in shipment-db.
     // Stock is always replaced (current state), products are upserted
-    const productsResult = isPostgresEnabled()
-      ? await saveProductsPg(products)
-      : saveProducts(products);
-    const stockResult = isPostgresEnabled()
-      ? await saveStockPg(stock)
-      : saveStock(stock);
-    if (isPostgresEnabled()) {
-      await saveOrdersPg(allOrders);
-      await setUploadDatePg(new Date().toISOString());
-    } else {
-      saveOrders(allOrders);
-      setUploadDate(new Date().toISOString());
-    }
+    const productsResult = await saveProductsPg(products);
+    const stockResult = await saveStockPg(stock);
+    await saveOrdersPg(allOrders);
+    await setUploadDatePg(new Date().toISOString());
 
     return NextResponse.json({
       orders: allOrders.length,

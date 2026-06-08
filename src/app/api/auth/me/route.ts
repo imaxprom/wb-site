@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getUserById, getUserByIdPg, initShipmentTables, initShipmentTablesPg } from "@/lib/shipment-db";
+import { getUserByIdPg, initShipmentTablesPg } from "@/lib/shipment-db";
 import { verifyToken } from "@/lib/auth";
-import { isPostgresEnabled } from "@/lib/postgres";
+import { isPostgresReadonlyConnection } from "@/lib/postgres";
 
-initShipmentTables();
+const DEV_READONLY_ADMIN_ID = 7218;
 
 export async function GET(req: NextRequest) {
   const token = req.cookies.get("mphub-token")?.value;
@@ -16,9 +16,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const user = isPostgresEnabled()
-    ? (await initShipmentTablesPg(), await getUserByIdPg(payload.userId))
-    : getUserById(payload.userId);
+  if (
+    process.env.NODE_ENV !== "production" &&
+    isPostgresReadonlyConnection() &&
+    payload.userId === DEV_READONLY_ADMIN_ID
+  ) {
+    return NextResponse.json({ id: DEV_READONLY_ADMIN_ID, email: "admin", name: "Максим", role: "admin" });
+  }
+
+  await initShipmentTablesPg();
+  const user = await getUserByIdPg(payload.userId);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

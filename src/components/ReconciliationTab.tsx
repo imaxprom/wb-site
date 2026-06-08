@@ -153,7 +153,7 @@ export default function ReconciliationTab() {
       {/* Description */}
       <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] px-4 py-3">
         <p className="text-xs text-[var(--text-muted)]">
-          Сверка сравнивает два источника данных WB: <strong className="text-[var(--text)]">API</strong> (weekly_final из finance.db) и <strong className="text-[var(--text)]">Excel</strong> (еженедельные отчёты из ЛК WB). Расхождение &lt;1% — норма.
+          Сверка сравнивает два источника данных WB: <strong className="text-[var(--text)]">API</strong> (weekly_final в PostgreSQL) и <strong className="text-[var(--text)]">Excel</strong> (еженедельные отчёты ЛК WB в weekly_rows). Расхождение &lt;1% — норма.
         </p>
       </div>
 
