@@ -10,15 +10,17 @@ import {
 const RUB = (v: number) => formatNumber(v) + " ₽";
 const fmtDate = (d: string) => d.slice(8) + "." + d.slice(5, 7);
 const PCT = (v: number) => `${Math.round(v * 10) / 10}%`;
+const DEFAULT_COMMISSION_SHIFT_FROM = "2026-07-07";
+const DEFAULT_COMMISSION_SHIFT_PP = "9";
 
 interface ForecastArticle {
   nm_id: number; article: string; custom_name: string; orders: number; orders_rub: number; buyout: number;
   avg_price: number; cogs_unit: number; logistics_unit: number;
   commission_unit: number; tax_unit: number; profit_per_unit: number;
   estimated_sales: number; cogs_total: number; logistics_total: number;
-  commission_total: number; tax_total: number; gross_profit: number;
+  commission_total: number; commission_delta: number; tax_total: number; gross_profit: number;
   ad_spend: number; storage: number; penalties: number;
-  estimated_revenue: number; estimated_profit: number; estimated?: boolean;
+  estimated_revenue: number; estimated_profit: number; estimated_profit_baseline: number; estimated?: boolean;
 }
 
 interface ForecastDay {
@@ -26,9 +28,9 @@ interface ForecastDay {
   estimated_sales: number;
   estimated_revenue: number; estimated_profit_before_ads: number;
   cogs_total: number; logistics_total: number; commission_total: number;
-  tax_total: number; gross_profit: number;
+  commission_delta_total: number; tax_total: number; gross_profit: number;
   ad_spend: number; storage: number; penalties: number; overhead: number;
-  estimated_profit: number; running_profit: number; running_revenue: number;
+  estimated_profit: number; estimated_profit_baseline: number; running_profit: number; running_revenue: number;
   articles: ForecastArticle[];
 }
 
@@ -65,6 +67,7 @@ const COLUMNS: ColDef[] = [
   { key: "est_rev",         label: "Прогн. выручка",   dayFn: d => RUB(d.estimated_revenue),          artFn: a => RUB(a.estimated_revenue), defaultOn: true },
   { key: "cogs_total",      label: "Себестоимость",    dayFn: d => RUB(d.cogs_total),                 artFn: a => RUB(a.cogs_total),      defaultOn: true },
   { key: "commission_total", label: "Комиссия WB",     dayFn: d => RUB(d.commission_total),           artFn: a => RUB(a.commission_total), defaultOn: true },
+  { key: "commission_delta", label: "+комиссия",        dayFn: d => d.commission_delta_total ? RUB(d.commission_delta_total) : "—", artFn: a => a.commission_delta ? RUB(a.commission_delta) : "—", defaultOn: true },
   { key: "logistics_total", label: "Логистика",        dayFn: d => RUB(d.logistics_total),            artFn: a => RUB(a.logistics_total), defaultOn: true },
   { key: "tax_total",       label: "Налоги",           dayFn: d => RUB(d.tax_total),                  artFn: a => RUB(a.tax_total),       defaultOn: true },
   { key: "gross_profit",    label: "Валовая прибыль",  dayFn: d => RUB(d.gross_profit),               artFn: a => RUB(a.gross_profit),    defaultOn: true },
@@ -87,14 +90,34 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
   const [data, setData] = useState<ForecastDay[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
-  const [meta, setMeta] = useState<{ econFrom: string; econTo: string; econDays: number; articlesCount: number; estimatedArticlesCount?: number } | null>(null);
+  const [meta, setMeta] = useState<{
+    econFrom: string;
+    econTo: string;
+    econDays: number;
+    articlesCount: number;
+    estimatedArticlesCount?: number;
+    commissionScenario?: { from: string; shiftPp: number } | null;
+  } | null>(null);
   const [visibleCols, setVisibleCols] = useState<Set<string>>(() => new Set(COLUMNS.filter(c => c.defaultOn).map(c => c.key)));
   const [showSettings, setShowSettings] = useState(false);
+  const [commissionScenarioEnabled, setCommissionScenarioEnabled] = useState(true);
+  const [commissionShiftPp, setCommissionShiftPp] = useState(DEFAULT_COMMISSION_SHIFT_PP);
+  const [commissionShiftFrom, setCommissionShiftFrom] = useState(DEFAULT_COMMISSION_SHIFT_FROM);
 
   useEffect(() => {
     if (!dateFrom || !dateTo) return;
     setLoading(true);
-    fetch(`/api/finance/forecast?from=${dateFrom}&to=${dateTo}`)
+    const params = new URLSearchParams({ from: dateFrom, to: dateTo });
+    const numericCommissionShift = Number(commissionShiftPp.replace(",", "."));
+    if (
+      commissionScenarioEnabled &&
+      Number.isFinite(numericCommissionShift) &&
+      /^\d{4}-\d{2}-\d{2}$/.test(commissionShiftFrom)
+    ) {
+      params.set("commissionShiftPp", String(numericCommissionShift));
+      params.set("commissionShiftFrom", commissionShiftFrom);
+    }
+    fetch(`/api/finance/forecast?${params.toString()}`)
       .then(r => r.json())
       .then(resp => {
         setData(Array.isArray(resp?.days) ? resp.days : (Array.isArray(resp) ? resp : []));
@@ -102,7 +125,7 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, [dateFrom, dateTo]);
+  }, [dateFrom, dateTo, commissionScenarioEnabled, commissionShiftPp, commissionShiftFrom]);
 
   if (loading) {
     return <div className="text-center py-12 text-[var(--text-muted)]">Расчёт прогноза...</div>;
@@ -121,6 +144,9 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
   const totalRevenue = data.reduce((s, d) => s + d.estimated_revenue, 0);
   const totalAds = data.reduce((s, d) => s + d.ad_spend, 0);
   const totalProfit = data.reduce((s, d) => s + d.estimated_profit, 0);
+  const totalBaselineProfit = data.reduce((s, d) => s + (d.estimated_profit_baseline ?? d.estimated_profit), 0);
+  const totalCommissionDelta = data.reduce((s, d) => s + (d.commission_delta_total || 0), 0);
+  const totalProfitDelta = totalProfit - totalBaselineProfit;
   const totalProfitBeforeAds = data.reduce((s, d) => s + d.estimated_profit_before_ads, 0);
   const fmtM = (v: number) => {
     if (Math.abs(v) >= 1e6) {
@@ -160,6 +186,61 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
         </p>
       </div>
 
+      <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <label className="flex min-w-[220px] items-center gap-3 text-sm text-[var(--text)]">
+            <input
+              type="checkbox"
+              checked={commissionScenarioEnabled}
+              onChange={(event) => setCommissionScenarioEnabled(event.target.checked)}
+              className="h-4 w-4"
+            />
+            <span className="font-medium">Сценарий комиссии WB</span>
+          </label>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+              + п.п.
+              <input
+                type="number"
+                min="-100"
+                max="100"
+                step="0.1"
+                value={commissionShiftPp}
+                disabled={!commissionScenarioEnabled}
+                onChange={(event) => setCommissionShiftPp(event.target.value)}
+                className="w-20 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-sm text-[var(--text)] disabled:opacity-50"
+              />
+            </label>
+            <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+              с даты
+              <input
+                type="date"
+                value={commissionShiftFrom}
+                disabled={!commissionScenarioEnabled}
+                onChange={(event) => setCommissionShiftFrom(event.target.value)}
+                className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-sm text-[var(--text)] disabled:opacity-50"
+              />
+            </label>
+          </div>
+        </div>
+        {commissionScenarioEnabled && (
+          <div className="mt-3 grid grid-cols-1 gap-3 border-t border-[var(--border)] pt-3 text-sm sm:grid-cols-3">
+            <div>
+              <p className="text-xs uppercase text-[var(--text-muted)]">Доп. комиссия</p>
+              <p className="mt-1 font-semibold text-[var(--warning)]">{RUB(totalCommissionDelta)}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase text-[var(--text-muted)]">Прибыль без сценария</p>
+              <p className={totalBaselineProfit >= 0 ? "mt-1 font-semibold text-[var(--success)]" : "mt-1 font-semibold text-[var(--danger)]"}>{RUB(totalBaselineProfit)}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase text-[var(--text-muted)]">Влияние на прибыль</p>
+              <p className={totalProfitDelta >= 0 ? "mt-1 font-semibold text-[var(--success)]" : "mt-1 font-semibold text-[var(--danger)]"}>{RUB(totalProfitDelta)}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-4">
@@ -177,7 +258,10 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
         <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-4">
           <p className="text-xs text-[var(--text-muted)] uppercase">Прогноз прибыли</p>
           <p className={`text-2xl font-bold mt-1 ${totalProfit >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}`}>{RUB(totalProfit)}</p>
-          <p className="text-xs text-[var(--text-muted)] mt-1">без рекламы: {RUB(totalProfitBeforeAds)}</p>
+          <p className="text-xs text-[var(--text-muted)] mt-1">
+            без рекламы: {RUB(totalProfitBeforeAds)}
+            {commissionScenarioEnabled && totalCommissionDelta !== 0 ? ` · без +комиссии: ${RUB(totalBaselineProfit)}` : ""}
+          </p>
         </div>
       </div>
 

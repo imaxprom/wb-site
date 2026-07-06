@@ -40,6 +40,10 @@ function getCostForDate(cogsHistory: Map<string, CogsHistoryRow[]>, barcode: str
   return 0;
 }
 
+function isDateString(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
 /**
  * GET /api/finance/forecast?from=YYYY-MM-DD&to=YYYY-MM-DD
  *
@@ -69,6 +73,17 @@ export async function GET(request: NextRequest) {
   if (!dateFrom || !dateTo) {
     return NextResponse.json({ error: "from and to required" }, { status: 400 });
   }
+  const commissionShiftPpParam = searchParams.get("commissionShiftPp");
+  const commissionShiftFrom = searchParams.get("commissionShiftFrom") || "";
+  const commissionShiftPp = commissionShiftPpParam === null ? 0 : Number(commissionShiftPpParam);
+  if (commissionShiftPpParam !== null && (!Number.isFinite(commissionShiftPp) || Math.abs(commissionShiftPp) > 100)) {
+    return NextResponse.json({ error: "commissionShiftPp must be a number between -100 and 100" }, { status: 400 });
+  }
+  if (commissionShiftPp !== 0 && !isDateString(commissionShiftFrom)) {
+    return NextResponse.json({ error: "commissionShiftFrom must be YYYY-MM-DD when commissionShiftPp is set" }, { status: 400 });
+  }
+  const commissionShiftRate = commissionShiftPp / 100;
+  const hasCommissionScenario = commissionShiftPp !== 0;
 
   try {
     const all = async <T>(sql: string, params: unknown[] = []): Promise<T[]> => {
@@ -571,6 +586,7 @@ export async function GET(request: NextRequest) {
       cogs_total: number;
       logistics_total: number;
       commission_total: number;
+      commission_delta_total: number;
       tax_total: number;
       gross_profit: number;
       estimated_profit_before_ads: number;
@@ -579,6 +595,7 @@ export async function GET(request: NextRequest) {
       penalties: number;
       overhead: number;
       estimated_profit: number;
+      estimated_profit_baseline: number;
       articles: ForecastArticle[];
     }
     interface ForecastArticle {
@@ -586,9 +603,9 @@ export async function GET(request: NextRequest) {
       avg_price: number; cogs_unit: number; logistics_unit: number;
       commission_unit: number; tax_unit: number; profit_per_unit: number;
       estimated_sales: number; cogs_total: number; logistics_total: number;
-      commission_total: number; tax_total: number; gross_profit: number;
+      commission_total: number; commission_delta: number; tax_total: number; gross_profit: number;
       ad_spend: number; storage: number; penalties: number;
-      estimated_revenue: number; estimated_profit: number; estimated?: boolean;
+      estimated_revenue: number; estimated_profit: number; estimated_profit_baseline: number; estimated?: boolean;
     }
 
     const dayMap = new Map<string, DayForecast>();
@@ -636,8 +653,18 @@ export async function GET(request: NextRequest) {
       const estRevenue = estSales * econ.avgPrice;
       const estCogs = estSales * econ.cogsUnit;
       const estLogistics = estSales * econ.logUnit;
-      const estCommission = estSales * econ.commissionUnit;
+      const commissionDeltaUnit = hasCommissionScenario && o.day >= commissionShiftFrom
+        ? econ.avgPrice * commissionShiftRate
+        : 0;
+      const commissionUnit = econ.commissionUnit + commissionDeltaUnit;
+      const profitPerUnit = econ.avgPrice - econ.cogsUnit - econ.logUnit - commissionUnit - econ.taxUnit;
+      const estCommissionBaseline = estSales * econ.commissionUnit;
+      const estCommissionDelta = estSales * commissionDeltaUnit;
+      const estCommission = estCommissionBaseline + estCommissionDelta;
       const estTax = estSales * econ.taxUnit;
+      const baselineGrossProfit = estRevenue - estCogs - estLogistics - estCommissionBaseline - estTax;
+      const baselineProfitBeforeAds = baselineGrossProfit - storageDaily - penaltyDaily;
+      const baselineProfit = baselineProfitBeforeAds - adSpend;
       const grossProfit = estRevenue - estCogs - estLogistics - estCommission - estTax;
       const estProfitBeforeAds = grossProfit - storageDaily - penaltyDaily;
       const estProfit = estProfitBeforeAds - adSpend;
@@ -648,10 +675,10 @@ export async function GET(request: NextRequest) {
         dayMap.set(o.day, {
           date: o.day, orders: 0, orders_rub: funnel?.order_sum || 0,
           estimated_sales: 0, estimated_revenue: 0,
-          cogs_total: 0, logistics_total: 0, commission_total: 0, tax_total: 0,
+          cogs_total: 0, logistics_total: 0, commission_total: 0, commission_delta_total: 0, tax_total: 0,
           gross_profit: 0, estimated_profit_before_ads: 0,
           ad_spend: 0, storage: 0, penalties: 0, overhead: Math.round(overheadDaily),
-          estimated_profit: 0, articles: [],
+          estimated_profit: 0, estimated_profit_baseline: 0, articles: [],
         });
       }
       const day = dayMap.get(o.day)!;
@@ -661,6 +688,7 @@ export async function GET(request: NextRequest) {
       day.cogs_total += estCogs;
       day.logistics_total += estLogistics;
       day.commission_total += estCommission;
+      day.commission_delta_total += estCommissionDelta;
       day.tax_total += estTax;
       day.gross_profit += grossProfit;
       day.estimated_profit_before_ads += estProfitBeforeAds;
@@ -668,6 +696,7 @@ export async function GET(request: NextRequest) {
       day.storage += storageDaily;
       day.penalties += penaltyDaily;
       day.estimated_profit += estProfit;
+      day.estimated_profit_baseline += baselineProfit;
       day.articles.push({
         nm_id: o.nm_id, article: econ.article, custom_name: econ.customName,
         orders: scaledOrders,
@@ -676,13 +705,14 @@ export async function GET(request: NextRequest) {
         avg_price: Math.round(econ.avgPrice),
         cogs_unit: Math.round(econ.cogsUnit),
         logistics_unit: Math.round(econ.logUnit),
-        commission_unit: Math.round(econ.commissionUnit),
+        commission_unit: Math.round(commissionUnit),
         tax_unit: Math.round(econ.taxUnit),
-        profit_per_unit: Math.round(econ.profitPerUnit),
+        profit_per_unit: Math.round(profitPerUnit),
         estimated_sales: Math.round(estSales),
         cogs_total: Math.round(estCogs),
         logistics_total: Math.round(estLogistics),
         commission_total: Math.round(estCommission),
+        commission_delta: Math.round(estCommissionDelta),
         tax_total: Math.round(estTax),
         gross_profit: Math.round(grossProfit),
         ad_spend: Math.round(adSpend),
@@ -690,6 +720,7 @@ export async function GET(request: NextRequest) {
         penalties: Math.round(penaltyDaily),
         estimated_revenue: Math.round(estRevenue),
         estimated_profit: Math.round(estProfit),
+        estimated_profit_baseline: Math.round(baselineProfit),
         estimated: econ.estimated,
       });
     }
@@ -707,6 +738,7 @@ export async function GET(request: NextRequest) {
           cogs_total: Math.round(day.cogs_total),
           logistics_total: Math.round(day.logistics_total),
           commission_total: Math.round(day.commission_total),
+          commission_delta_total: Math.round(day.commission_delta_total),
           tax_total: Math.round(day.tax_total),
           gross_profit: Math.round(day.gross_profit),
           estimated_profit_before_ads: Math.round(day.estimated_profit_before_ads),
@@ -714,6 +746,7 @@ export async function GET(request: NextRequest) {
           storage: Math.round(day.storage),
           penalties: Math.round(day.penalties),
           estimated_profit: Math.round(day.estimated_profit - overheadDaily - unmapped),
+          estimated_profit_baseline: Math.round(day.estimated_profit_baseline - overheadDaily - unmapped),
           articles: day.articles
             .map(a => ({ ...a, orders: Math.round(a.orders) }))
             .sort((a, b) => b.orders - a.orders),
@@ -731,7 +764,17 @@ export async function GET(request: NextRequest) {
 
     // Meta: какой период использован для юнит-экономики
     const estimatedArticlesCount = Array.from(unitEcon.values()).filter(e => e.estimated).length;
-    const meta = { econFrom, econTo, econDays, articlesCount: unitEcon.size, estimatedArticlesCount, estimatedFallbackArticlesCount };
+    const meta = {
+      econFrom,
+      econTo,
+      econDays,
+      articlesCount: unitEcon.size,
+      estimatedArticlesCount,
+      estimatedFallbackArticlesCount,
+      commissionScenario: hasCommissionScenario
+        ? { from: commissionShiftFrom, shiftPp: commissionShiftPp }
+        : null,
+    };
 
     return NextResponse.json({ days: withRunning, meta });
   } catch (error) {

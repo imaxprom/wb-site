@@ -40,7 +40,7 @@
             "cron — production-расписание синхронизаций и watchdog",
             "Puppeteer / Playwright — авторизация WB Seller и браузерные сценарии",
             "recharts — графики; exceljs — чтение Excel-отчётов WB; xlsx-js-style — клиентский Excel-экспорт",
-            "release-based deploy: scripts/release-deploy.sh собирает новый /home/makson/releases/<stamp>, проверяет preflight и переключает /home/makson/current"
+            "release-based deploy: scripts/release-deploy.sh валидирует обязательные файлы, собирает новый /home/makson/releases/<stamp>, проверяет preflight и переключает /home/makson/current"
           ]
         },
         {
@@ -52,6 +52,7 @@
             "/home/makson/releases/<stamp> — release-based production-копии",
             "/home/makson/shared/data — production runtime-данные и логи; при деплое не затирать",
             "public/data/docs.json — база знаний, которую показывает приложение",
+            "Git baseline production-кода: 2290e97 Fix COGS history save on production (pushed to origin/main)",
             "public/data/monitor/*.json — данные мониторинга",
             "docs/production-network.md — фактическая сетевая схема production"
           ]
@@ -350,7 +351,7 @@
             "✓ Отчёты — сводный P&L: 4 summary-карточки (Реализация, Услуги, Налоги и затраты, Оп. прибыль), 5 метрик со sparkline, график «Динамика показателей». Tooltip метрики «Заказы» показывает сумму order_sum и количество order_count из orders_funnel; tooltip метрики «Продажи» показывает сумму продаж и sales_qty из realization",
             "Артикулы — юнит-экономика по каждому артикулу (выручка, расходы, маржа, реклама точная по nm_id)",
             "✓ Сверка — сравнение наших расчётов с данными ЛК WB (Excel vs API), итог по неделям",
-            "✓ Прогноз — прогноз прибыли: заказы × выкуп × unit economics − реклама − хранение − штрафы. Таблица по дням показывает цепочку расчёта: заказы, выкуп, прогноз продаж, выручка, себестоимость, комиссия WB, логистика, налоги, валовая прибыль, хранение, штрафы, реклама, общие расходы, прогноз прибыли. Нераспределённая реклама (nm_id=0) учитывается."
+            "✓ Прогноз — прогноз прибыли: заказы × выкуп × unit economics − реклама − хранение − штрафы. Есть сценарий изменения комиссии WB: по умолчанию +9 п.п. с 2026-07-07, можно менять дату и величину; прогноз показывает дополнительную комиссию, прибыль без сценария и влияние на прибыль. Таблица по дням показывает цепочку расчёта: заказы, выкуп, прогноз продаж, выручка, себестоимость, комиссия WB, +комиссия, логистика, налоги, валовая прибыль, хранение, штрафы, реклама, общие расходы, прогноз прибыли. Нераспределённая реклама (nm_id=0) учитывается."
           ]
         },
         {
@@ -387,7 +388,7 @@
             "/api/finance/reconciliation — сверка Excel vs API",
             "/api/finance/tax-settings — ставки налогов (чтение/запись)",
             "/api/finance/cogs — себестоимость по баркодам",
-            "/api/finance/forecast — прогноз прибыли; отдаёт цепочку расчёта по дням и артикулам: orders_rub, estimated_sales, estimated_revenue, cogs_total, commission_total, logistics_total, tax_total, gross_profit, storage, penalties, ad_spend, overhead, estimated_profit; дневной orders_rub берётся из orders_funnel, артикульный orders_rub распределяется пропорционально shipment_orders.price_with_disc; nm_id=0 реклама учитывается в итогах дня"
+            "/api/finance/forecast — прогноз прибыли; отдаёт цепочку расчёта по дням и артикулам: orders_rub, estimated_sales, estimated_revenue, cogs_total, commission_total, commission_delta_total, logistics_total, tax_total, gross_profit, storage, penalties, ad_spend, overhead, estimated_profit, estimated_profit_baseline; дневной orders_rub берётся из orders_funnel, артикульный orders_rub распределяется пропорционально shipment_orders.price_with_disc; nm_id=0 реклама учитывается в итогах дня; параметры commissionShiftPp и commissionShiftFrom добавляют сценарий изменения комиссии WB"
           ]
         },
         {
@@ -607,6 +608,7 @@
           "title": "Хранение данных",
           "items": [
             "Заказы → PostgreSQL shipment_orders (накопительно, ON CONFLICT(order_uid) DO UPDATE — обновляет отмены; при появлении реального WB identity удаляется старая fallback-строка barcode:date:warehouse)",
+            "Остатки → старый WB supplier/stocks пока остаётся текущим источником, но endpoint deprecated и отдаёт 429 по глобальному лимиту продавца; health/auth/WB-test используют /ping, shipment sync делает retry/последовательные Statistics-запросы и при stockSkipped сохраняет прежнюю таблицу shipment_stock",
             "Остатки → PostgreSQL shipment_stock (перезаписываются при каждой загрузке)",
             "Карточки → PostgreSQL shipment_products (UPSERT)",
             "Готовые короба склада → PostgreSQL warehouse_ready_stock, читается через /api/warehouse/stock",
@@ -1060,7 +1062,7 @@
       "blocks": [
         {
           "type": "text",
-          "content": "Мониторинг production смотрит на сервисы VPS: PM2-процесс mphub и cron-скрипты в /home/makson/website. Все /api/monitor/* закрыты admin-cookie через requireMonitorAdmin. Ручной запуск /api/monitor/run считаем deprecated: функцию не развиваем и при следующей чистке можно вырезать вместе с UI-кнопками."
+          "content": "Мониторинг production смотрит на сервисы VPS: PM2-процесс mphub и cron-скрипты из /home/makson/current. Все /api/monitor/* закрыты admin-cookie через requireMonitorAdmin. Ручной запуск /api/monitor/run считаем deprecated: функцию не развиваем и при следующей чистке можно вырезать вместе с UI-кнопками."
         },
         {
           "type": "schema",
@@ -1921,7 +1923,7 @@
           "type": "list",
           "title": "Мониторинг (public/data/monitor/)",
           "items": [
-            "monitor-registry.json — production-реестр 12 сервисов: PM2 website + cron-скрипты, включая auth-check и data-health-cron",
+            "monitor-registry.json — shared production-реестр сервисов: PM2 mphub + cron-скрипты, включая auth-check и data-health-cron",
             "status.json — текущий снимок статусов PM2/cron/логов",
             "data-health-cron.json — ежечасный снимок здоровья данных",
             "repair-state.json — состояние watchdog/circuit breaker",
@@ -1975,20 +1977,20 @@
       "blocks": [
         {
           "type": "text",
-          "content": "Фоновые агенты MpHub на production запускаются cron на VPS wb-site, а сайт живёт под PM2. Этот раздел описывает фактическую production-схему /home/makson/website; старые macOS launchd-инструкции не применять к проду."
+          "content": "Фоновые агенты MpHub на production запускаются cron на VPS wb-site, а сайт живёт под PM2. Фактическая production-схема — /home/makson/current -> /home/makson/releases/<stamp> с shared runtime-данными; старые macOS launchd-инструкции не применять к проду."
         },
         {
           "type": "schema",
           "title": "Карта production-агентов и расписание",
           "lines": [
             "mphub-website        → PM2 process mphub, Next.js port 80, всегда online",
-            "daily-sync-api.sh    → cron: каждый час",
-            "sync-weekly-report.js → cron: Пн-Ср 10:00-23:00 МСК",
-            "shipment-sync.sh     → cron: каждый час, days=28, lock от дублей",
+            "daily-sync-api.sh    → cron: каждый час на минуте 03",
+            "sync-weekly-report.js → cron: Пн-Ср 10:00-23:00 МСК на минуте 12",
+            "shipment-sync.sh     → cron: каждый час на минуте 23, days=28, lock от дублей",
             "reviews-sync.js      → cron: каждые 15 минут",
             "reviews-complaints.js → cron: каждые 30 минут",
             "vps-watchdog.py      → cron: каждые 5 минут",
-            "data-health-cron.sh  → cron: каждый час",
+            "data-health-cron.sh  → cron: каждый час на минуте 42",
             "auth-check.js        → cron: ежедневно 22:00 МСК",
             "paid-storage-sync.js → cron: ежедневно ночью",
             "logistics-volume-sync.js --source remains → cron: 06:00/09:00/12:00/15:00/18:00/21:00 МСК",
@@ -2132,7 +2134,7 @@
             "*/15 * * * * reviews-sync.js",
             "*/30 * * * * reviews-complaints.js",
             "*/5 * * * * vps-watchdog.py",
-            "0 * * * * data-health-cron.sh",
+            "42 * * * * data-health-cron.sh",
             "0 19 * * * auth-check.js",
             "0 2 * * * paid-storage-sync.js",
             "0 3,6,9,12,15,18 * * * logistics-volume-sync.js --source remains",
@@ -2204,6 +2206,7 @@
             "  3. SOURCE_MODE=local bash scripts/release-deploy.sh",
             "",
             "scripts/release-deploy.sh:",
+            "  перед build валидирует обязательные файлы (/api/data/products, stock, orders-aggregated, meta, sync, /shipment, DataProvider, public/data/docs.json)",
             "  создаёт /home/makson/releases/<stamp>",
             "  подключает shared data/env/node_modules и общий .next/cache",
             "  при старте PM2/preflight применяет .env.local, затем .env.production.local; production DATABASE_URL должен перекрывать локальный 127.0.0.1:55432",
@@ -2212,7 +2215,7 @@
             "  после успешного preflight переключает /home/makson/current",
             "  пересоздаёт PM2 mphub из /home/makson/current",
             "  health-check http://127.0.0.1:3000/login",
-            "  при сбое сборки/preflight/health — current остаётся на предыдущем release или откатывается назад",
+            "  при сбое валидации/build/preflight/health — current остаётся на предыдущем release или откатывается назад",
             "",
             "SOURCE_MODE=remote-current bash scripts/release-deploy.sh:",
             "  bootstrap/rebuild из текущего production-кода без подтягивания локальных dirty-файлов",
@@ -2247,7 +2250,7 @@
           "title": "Важные нюансы",
           "items": [
             "Production/shared data не синхронизировать и не удалять при деплое: там WB-токены, JSON-логи и архивные legacy PostgreSQL-only runtime",
-            "Production cron должен использовать /home/makson/current, чтобы фоновые задачи шли из активного release",
+            "Production cron должен использовать /home/makson/current, чтобы фоновые задачи шли из активного release; текущие ресурсоёмкие задачи разведены по минутам, чтобы не биться в лимиты WB",
             "Следить за диском: старые .deploy-backups и release retention не должны поднимать usage выше watchdog threshold",
             "Внутренний health-check делать через http://127.0.0.1, не через https://hub.imaxprom.site с самого VPS",
             "PM2 error-log может содержать старые записи; проверять timestamp/size до и после диагностики",
