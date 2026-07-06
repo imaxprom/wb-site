@@ -24,20 +24,27 @@ function shiftDays(dateStr: string, days: number): string {
 }
 
 async function ensureCogsHistoryPg(client: PoolClient) {
-  await client.query(`
-    CREATE TABLE IF NOT EXISTS cogs_history (
-      id SERIAL PRIMARY KEY,
-      barcode TEXT NOT NULL,
-      cost DOUBLE PRECISION NOT NULL,
-      valid_from TEXT NOT NULL,
-      valid_to TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-  await client.query(`
-    CREATE INDEX IF NOT EXISTS idx_cogs_history_lookup
-      ON cogs_history(barcode, valid_from, valid_to)
-  `);
+  const existing = await client.query<{ exists: string | null }>(
+    "SELECT to_regclass('public.cogs_history')::text AS exists"
+  );
+  const hasHistoryTable = Boolean(existing.rows[0]?.exists);
+
+  if (!hasHistoryTable) {
+    await client.query(`
+      CREATE TABLE cogs_history (
+        id SERIAL PRIMARY KEY,
+        barcode TEXT NOT NULL,
+        cost DOUBLE PRECISION NOT NULL,
+        valid_from TEXT NOT NULL,
+        valid_to TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_cogs_history_lookup
+        ON cogs_history(barcode, valid_from, valid_to)
+    `);
+  }
 
   const { rows } = await client.query<{ barcode: string; cost: number }>(`
     SELECT barcode, cost
