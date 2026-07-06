@@ -336,8 +336,12 @@ export async function GET(req: NextRequest) {
     try {
       if (fs.existsSync(CRON_HEALTH_PATH)) {
         const cronData = JSON.parse(fs.readFileSync(CRON_HEALTH_PATH, "utf-8")) as { checks: Check[]; timestamp: string };
+        const existingIds = new Set(checks.map((check) => check.id));
         for (const c of cronData.checks) {
-          checks.push(c);
+          if (!existingIds.has(c.id)) {
+            checks.push(c);
+            existingIds.add(c.id);
+          }
         }
       }
     } catch { /* */ }

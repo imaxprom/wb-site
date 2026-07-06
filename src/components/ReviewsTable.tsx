@@ -35,7 +35,7 @@ interface ReviewsTableProps {
   onSort: (col: string) => void;
   onPageChange: (p: number) => void;
   onStatusChange: (id: number, status: string) => void;
-  onComplaint?: (id: number) => void;
+  onComplaint?: (id: number, options?: { force?: boolean }) => void;
   complainingId?: number | null;
 }
 
@@ -65,7 +65,7 @@ function ComplaintCell({ reviewId, complaintStatus, complainingId, onComplaint }
   reviewId: number;
   complaintStatus: string | null;
   complainingId?: number | null;
-  onComplaint?: (id: number) => void;
+  onComplaint?: (id: number, options?: { force?: boolean }) => void;
 }) {
   const [showConfirm, setShowConfirm] = useState(false);
 

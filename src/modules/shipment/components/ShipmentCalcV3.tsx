@@ -13,7 +13,7 @@ import { calculateTrend, type TrendResult } from "@/modules/shipment/lib/trend-e
 import type { ShipmentRowExtended } from "@/types";
 import { ArticleMultiSelect } from "./ArticleMultiSelect";
 import { buildWarehouseStockByBarcode } from "@/modules/shipment/lib/warehouse-ready-stock";
-import { applyManualSupplyDeductions } from "@/modules/shipment/lib/manual-supply-deductions";
+import { applyManualSupplyDeductions, type ManualSupplyDeductByBarcode } from "@/modules/shipment/lib/manual-supply-deductions";
 
 // ─── Packing Visualization ──────────────────────────────────
 
@@ -456,9 +456,9 @@ function TrendBadge({ trend, v2Need, v3Total }: { trend: TrendResult; v2Need?: n
 export default function ShipmentCalcV3({
   manualSupplyDeductByBarcode,
 }: {
-  manualSupplyDeductByBarcode?: Map<string, number>;
+  manualSupplyDeductByBarcode?: ManualSupplyDeductByBarcode;
 }) {
-  const { stock, orderAggregates, products, warehouseReadyStock, settings, overrides, updateSettings, isLoaded } = useData();
+  const { stock, orderAggregates, products, warehouseReadyStock, settings, overrides, updateSettings, isLoaded, isWarehouseReadyStockRefreshing } = useData();
   const effectiveRegions = useEffectiveRegions();
   const getBuyout = useEffectiveBuyout();
   const [selectedArticles, setSelectedArticles] = useState<Set<string>>(new Set());
@@ -650,9 +650,9 @@ export default function ShipmentCalcV3({
 
   // Export handler
   const handleExport = useCallback(() => {
-    if (allCalcs.length === 0) return;
+    if (allCalcs.length === 0 || isWarehouseReadyStockRefreshing) return;
     exportShipmentExcelV2(allCalcs, overrides, "ИП Беликова А.Л", stockByBarcode);
-  }, [allCalcs, overrides, stockByBarcode]);
+  }, [allCalcs, isWarehouseReadyStockRefreshing, overrides, stockByBarcode]);
 
   // Per-position surplus/deficit (must be before early return — React hooks rule)
   const { totalSurplus, totalDeficit: totalDeficitQty } = useMemo(() => {
@@ -738,10 +738,10 @@ export default function ShipmentCalcV3({
 
         <button
           onClick={handleExport}
-          disabled={allCalcs.length === 0}
+          disabled={allCalcs.length === 0 || isWarehouseReadyStockRefreshing}
           className="ml-auto px-5 py-2 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white text-sm rounded-lg font-medium transition-colors disabled:opacity-40"
         >
-          Сформировать отгрузку
+          {isWarehouseReadyStockRefreshing ? "Обновление склада..." : "Сформировать отгрузку"}
         </button>
       </div>
 

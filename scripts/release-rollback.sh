@@ -18,6 +18,7 @@ TARGET='$TARGET'
 RELEASES_DIR="\$REMOTE_BASE/releases"
 CURRENT_LINK="\$REMOTE_BASE/current"
 SHARED_DIR="\$REMOTE_BASE/shared"
+MONITOR_SHARED_DIR="\$SHARED_DIR/public-data-monitor"
 
 health_check() {
   local url="\$1"
@@ -36,6 +37,12 @@ health_check() {
 
 start_pm2_from_current() {
   cd "\$CURRENT_LINK"
+  mkdir -p "\$MONITOR_SHARED_DIR" public/data
+  if [ -f public/data/monitor/monitor-registry.json ] && [ ! -L public/data/monitor ]; then
+    cp -a public/data/monitor/monitor-registry.json "\$MONITOR_SHARED_DIR/monitor-registry.json"
+  fi
+  rm -rf public/data/monitor
+  ln -sfn "\$MONITOR_SHARED_DIR" public/data/monitor
   set -a
   [ -f .env.local ] && . ./.env.local
   [ -f .env.production.local ] && . ./.env.production.local

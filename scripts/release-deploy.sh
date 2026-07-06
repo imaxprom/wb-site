@@ -24,6 +24,7 @@ STAMP="${RELEASE_STAMP:-$(date -u +%Y%m%d-%H%M%S)}"
 LEGACY_DIR="$REMOTE_BASE/website"
 RELEASES_DIR="$REMOTE_BASE/releases"
 SHARED_DIR="$REMOTE_BASE/shared"
+MONITOR_SHARED_DIR="$SHARED_DIR/public-data-monitor"
 CURRENT_LINK="$REMOTE_BASE/current"
 RELEASE_DIR="$RELEASES_DIR/$STAMP"
 PREV_TARGET_FILE="/tmp/mphub-prev-target-$STAMP"
@@ -39,6 +40,7 @@ REMOTE_BASE='$REMOTE_BASE'
 LEGACY_DIR='$LEGACY_DIR'
 RELEASES_DIR='$RELEASES_DIR'
 SHARED_DIR='$SHARED_DIR'
+MONITOR_SHARED_DIR='$MONITOR_SHARED_DIR'
 CURRENT_LINK='$CURRENT_LINK'
 RELEASE_DIR='$RELEASE_DIR'
 PREV_TARGET_FILE='$PREV_TARGET_FILE'
@@ -65,7 +67,15 @@ fi
 if [ ! -d "\$SHARED_DIR/node_modules" ]; then
   cp -a "\$LEGACY_DIR/node_modules" "\$SHARED_DIR/node_modules"
 fi
-mkdir -p "\$SHARED_DIR/next-cache" "\$SHARED_DIR/data" "\$RELEASE_DIR"
+mkdir -p "\$SHARED_DIR/next-cache" "\$SHARED_DIR/data" "\$MONITOR_SHARED_DIR" "\$RELEASE_DIR"
+if [ ! -f "\$MONITOR_SHARED_DIR/.shared-ready" ]; then
+  for src in "\$LEGACY_DIR/public/data/monitor" "\$CURRENT_LINK/public/data/monitor"; do
+    if [ -d "\$src" ] && [ ! -L "\$src" ]; then
+      rsync -a "\$src/" "\$MONITOR_SHARED_DIR/"
+    fi
+  done
+  touch "\$MONITOR_SHARED_DIR/.shared-ready"
+fi
 touch "\$SHARED_DIR/data/deploy.lock"
 [ -d "\$LEGACY_DIR/data" ] && touch "\$LEGACY_DIR/data/deploy.lock"
 EOF
@@ -149,6 +159,7 @@ INSTALL_DEPS='$INSTALL_DEPS'
 RETAIN_RELEASES='$RETAIN_RELEASES'
 RELEASES_DIR='$RELEASES_DIR'
 SHARED_DIR='$SHARED_DIR'
+MONITOR_SHARED_DIR='$MONITOR_SHARED_DIR'
 CURRENT_LINK='$CURRENT_LINK'
 RELEASE_DIR='$RELEASE_DIR'
 PREV_TARGET_FILE='$PREV_TARGET_FILE'
@@ -166,6 +177,31 @@ health_check() {
   done
   echo "[release] health failed: \$url"
   return 1
+}
+
+validate_release_tree() {
+  local missing=0
+  local required=(
+    "src/app/api/data/meta/route.ts"
+    "src/app/api/data/orders-aggregated/route.ts"
+    "src/app/api/data/products/route.ts"
+    "src/app/api/data/stock/route.ts"
+    "src/app/api/data/sync/route.ts"
+    "src/app/shipment/page.tsx"
+    "src/components/DataProvider.tsx"
+    "public/data/docs.json"
+  )
+
+  for file in "\${required[@]}"; do
+    if [ ! -f "\$file" ]; then
+      echo "[release] missing required file: \$file"
+      missing=1
+    fi
+  done
+
+  if [ "\$missing" -ne 0 ]; then
+    return 1
+  fi
 }
 
 start_pm2_from_current() {
@@ -199,6 +235,20 @@ ln -sfn "\$SHARED_DIR/data" data
 [ -f "\$SHARED_DIR/.env.production.local" ] && ln -sfn "\$SHARED_DIR/.env.production.local" .env.production.local
 [ -f "\$SHARED_DIR/.env.local" ] && ln -sfn "\$SHARED_DIR/.env.local" .env.local
 ln -sfn "\$SHARED_DIR/node_modules" node_modules
+mkdir -p "\$MONITOR_SHARED_DIR" public/data
+if [ -f public/data/monitor/monitor-registry.json ]; then
+  src_registry="\$(readlink -f public/data/monitor/monitor-registry.json)"
+  dst_registry="\$(readlink -m "\$MONITOR_SHARED_DIR/monitor-registry.json")"
+  if [ "\$src_registry" != "\$dst_registry" ]; then
+    cp -a public/data/monitor/monitor-registry.json "\$MONITOR_SHARED_DIR/monitor-registry.json"
+  fi
+fi
+rm -rf public/data/monitor
+ln -sfn "\$MONITOR_SHARED_DIR" public/data/monitor
+
+if ! validate_release_tree; then
+  rollback "release tree validation failed"
+fi
 
 if [ "\$INSTALL_DEPS" = "1" ]; then
   echo "[release] npm ci into shared node_modules"

@@ -9,6 +9,7 @@ import { RegionalMatrix } from "@/modules/analytics/components/RegionalMatrix";
 import DateRangePicker from "@/components/DateRangePicker";
 import { formatNumber, formatPercent } from "@/lib/utils";
 import Link from "next/link";
+import { Calendar } from "lucide-react";
 import type { OrderRecord } from "@/types";
 
 function fmt(d: Date): string {
@@ -65,7 +66,7 @@ export default function AnalyticsPage() {
     setLoadingOrders(true);
     try {
       const [ordersRes, statsRes] = await Promise.all([
-        fetch(`/api/data/orders?from=${from}&to=${to}&limit=3000`),
+        fetch(`/api/data/orders?from=${from}&to=${to}`),
         fetch(`/api/data/order-stats?from=${from}&to=${to}`),
       ]);
       const data = await readJsonResponse<OrderRecord[]>(ordersRes, []);
@@ -148,14 +149,13 @@ export default function AnalyticsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold">Аналитика</h2>
           <div className="relative">
             <button
               onClick={() => setShowPicker(!showPicker)}
-              className="flex items-center gap-2 text-sm text-[var(--text-muted)] mt-1.5 px-3 py-1.5 border border-[var(--border)] rounded-lg hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
+              className="flex items-center gap-2 text-sm text-[var(--text-muted)] px-3 py-1.5 border border-[var(--border)] rounded-lg hover:border-[var(--accent)] hover:text-[var(--text)] transition-colors"
             >
               {formatDisplayDate(dateFrom)} — {formatDisplayDate(dateTo)}
-              <svg className="w-4 h-4 opacity-40" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>
+              <Calendar className="h-4 w-4 shrink-0" aria-hidden="true" />
             </button>
             {showPicker && (
               <div className="absolute left-0 top-full mt-2 z-50">

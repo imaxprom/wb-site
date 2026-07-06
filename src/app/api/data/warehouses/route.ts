@@ -2,14 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { getWbApiKey } from "@/lib/wb-api-key";
 import { FALLBACK_WAREHOUSES } from "@/lib/warehouses-fallback";
-import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 
 /** GET — list of WB warehouses. If `?raw=1`, returns full raw response from WB for inspection. */
 export async function GET(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
-  const readonlyError = localReadonlyGuard("WB warehouses lookup");
-  if (readonlyError) return readonlyError;
 
   const url = new URL(req.url);
   const raw = url.searchParams.get("raw") === "1";

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ShipmentCalcV2 from "@/modules/shipment/components/ShipmentCalcV2";
 import ShipmentCalcV3 from "@/modules/shipment/components/ShipmentCalcV3";
 import ProductsTab from "@/modules/shipment/components/ProductsTab";
@@ -8,6 +8,7 @@ import UploadTab from "@/modules/shipment/components/UploadTab";
 import ShipmentSettings from "@/modules/shipment/components/ShipmentSettings";
 import { useData } from "@/components/DataProvider";
 import { SupplyDeductionSelector, useManualSupplyDeductionData } from "@/modules/shipment/components/SupplyDeductionSelector";
+import { useEffectiveRegions } from "@/modules/shipment/lib/use-effective-regions";
 
 function TabBtn({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
@@ -29,16 +30,22 @@ type Tab = "calc" | "products" | "upload" | "settings";
 type CalcMode = "v1" | "v2" | "v3";
 
 export default function ShipmentPage() {
-  const { settings, updateSettings, isLoaded } = useData();
+  const { settings, updateSettings, isLoaded, refreshWarehouseReadyStock } = useData();
   const [tab, setTab] = useState<Tab>("calc");
   const [manualSupplyDeductionEnabled, setManualSupplyDeductionEnabled] = useState(false);
   const [selectedSupplyIds, setSelectedSupplyIds] = useState<Set<number>>(new Set());
-  const manualSupplyDeduction = useManualSupplyDeductionData(manualSupplyDeductionEnabled, selectedSupplyIds);
+  const effectiveRegions = useEffectiveRegions();
+  const manualSupplyDeduction = useManualSupplyDeductionData(manualSupplyDeductionEnabled, selectedSupplyIds, effectiveRegions);
   const calcMode = settings.shipmentCalcMode as CalcMode | undefined;
 
   const switchCalcMode = (mode: CalcMode) => {
     updateSettings({ shipmentCalcMode: mode });
   };
+
+  useEffect(() => {
+    if (tab !== "calc" || !isLoaded) return;
+    void refreshWarehouseReadyStock();
+  }, [tab, isLoaded, refreshWarehouseReadyStock]);
 
   return (
     <div className="space-y-6">

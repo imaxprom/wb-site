@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertCircle, ChevronDown, PackageOpen, RefreshCw, Search } from "lucide-react";
 import { formatNumber } from "@/lib/utils";
+import type { RegionConfig } from "@/types";
+import type { ManualSupplyDeductByBarcode, ManualSupplyDeductionEntry } from "@/modules/shipment/lib/manual-supply-deductions";
 
 interface SupplyDetail {
   statusID?: number;
@@ -62,6 +64,12 @@ interface SupplyPackageResponse {
   };
 }
 
+interface SupplyDeductionRegion {
+  regionId: string;
+  label: string;
+  warehouseName: string;
+}
+
 export interface ManualSupplyDeductionData {
   supplies: SupplyRow[];
   loadingSupplies: boolean;
@@ -69,10 +77,13 @@ export interface ManualSupplyDeductionData {
   packageBySupply: Record<string, SupplyPackageResponse>;
   packageLoading: Record<string, boolean>;
   packageErrors: Record<string, string>;
-  deductByBarcode: Map<string, number>;
+  deductByBarcode: ManualSupplyDeductByBarcode;
   selectedCount: number;
   totalQuantity: number;
+  matchedQuantity: number;
+  unmatchedQuantity: number;
   loadedSelectedCount: number;
+  regionBySupply: Record<string, SupplyDeductionRegion | null>;
   refreshSupplies: () => void;
 }
 
@@ -149,30 +160,114 @@ function quantityPair(detail: SupplyDetail | null) {
   return `${formatNumber(packed)} / ${formatNumber(detail.acceptedQuantity || 0)}`;
 }
 
-function buildDeductByBarcode(packages: Record<string, SupplyPackageResponse>, selectedSupplyIds: Set<number>) {
-  const map = new Map<string, number>();
+function normalizeWarehouseName(value: string | null | undefined) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^a-zа-я0-9]+/gi, "");
+}
+
+function findRegionIdForWarehouse(warehouseName: string | null | undefined, regionConfigs: RegionConfig[]) {
+  return findRegionForWarehouse(warehouseName, regionConfigs)?.id || "";
+}
+
+function regionLabel(region: RegionConfig) {
+  const known: Record<string, string> = {
+    central: "ЦФО",
+    south: "ЮФО",
+    volga: "ПФО",
+    ural: "УФО",
+    "central-nw": "ЦФО+СЗФО",
+    "south-caucasus": "ЮФО+СКФО",
+    east: "УФО+СФО+ДФО",
+  };
+  return known[region.id] || region.shortName || region.name;
+}
+
+function findRegionForWarehouse(warehouseName: string | null | undefined, regionConfigs: RegionConfig[]) {
+  const target = normalizeWarehouseName(warehouseName);
+  if (!target) return null;
+
+  for (const region of regionConfigs) {
+    for (const warehouse of region.warehouses) {
+      if (normalizeWarehouseName(warehouse) === target) {
+        return region;
+      }
+    }
+  }
+
+  return null;
+}
+
+function buildRegionBySupply(supplies: SupplyRow[], regionConfigs: RegionConfig[]) {
+  const result: Record<string, SupplyDeductionRegion | null> = {};
+  for (const supply of supplies) {
+    const supplyID = Number(supply.supplyID);
+    if (!Number.isSafeInteger(supplyID)) continue;
+    const warehouseName = supply.detail?.actualWarehouseName || supply.detail?.warehouseName || "";
+    const region = findRegionForWarehouse(warehouseName, regionConfigs);
+    result[String(supplyID)] = region
+      ? { regionId: region.id, label: regionLabel(region), warehouseName }
+      : null;
+  }
+  return result;
+}
+
+function buildDeductByBarcode(
+  packages: Record<string, SupplyPackageResponse>,
+  selectedSupplyIds: Set<number>,
+  supplies: SupplyRow[],
+  regionConfigs: RegionConfig[],
+) {
+  const map: ManualSupplyDeductByBarcode = new Map();
+  const supplyById = new Map(supplies.map((supply) => [Number(supply.supplyID), supply]));
   let totalQuantity = 0;
+  let matchedQuantity = 0;
+  let unmatchedQuantity = 0;
   let loadedSelectedCount = 0;
 
   for (const supplyID of selectedSupplyIds) {
     const payload = packages[String(supplyID)];
     if (!payload) continue;
     loadedSelectedCount++;
+    const supply = supplyById.get(supplyID);
+    const warehouseName = supply?.detail?.actualWarehouseName || supply?.detail?.warehouseName || "";
+    const regionId = findRegionIdForWarehouse(warehouseName, regionConfigs);
+
     for (const article of payload.articles || []) {
       for (const row of article.barcodes || []) {
         const barcode = String(row.barcode || "").trim();
         const qty = Number(row.quantity || 0);
         if (!barcode || qty <= 0) continue;
-        map.set(barcode, (map.get(barcode) || 0) + qty);
+
+        const currentRaw = map.get(barcode);
+        const current: ManualSupplyDeductionEntry = typeof currentRaw === "number"
+          ? { total: currentRaw, byRegion: {} }
+          : currentRaw || { total: 0, byRegion: {} };
+
+        if (regionId) {
+          current.total += qty;
+          current.byRegion[regionId] = (current.byRegion[regionId] || 0) + qty;
+          matchedQuantity += qty;
+        } else {
+          current.unmatched = (current.unmatched || 0) + qty;
+          unmatchedQuantity += qty;
+        }
+
+        map.set(barcode, current);
         totalQuantity += qty;
       }
     }
   }
 
-  return { map, totalQuantity, loadedSelectedCount };
+  return { map, totalQuantity, matchedQuantity, unmatchedQuantity, loadedSelectedCount };
 }
 
-export function useManualSupplyDeductionData(enabled: boolean, selectedSupplyIds: Set<number>): ManualSupplyDeductionData {
+export function useManualSupplyDeductionData(
+  enabled: boolean,
+  selectedSupplyIds: Set<number>,
+  regionConfigs: RegionConfig[],
+): ManualSupplyDeductionData {
   const [supplies, setSupplies] = useState<SupplyRow[]>([]);
   const [loadingSupplies, setLoadingSupplies] = useState(false);
   const [suppliesError, setSuppliesError] = useState("");
@@ -234,7 +329,14 @@ export function useManualSupplyDeductionData(enabled: boolean, selectedSupplyIds
     }
   }, [enabled, selectedKey, selectedSupplyIds, packageBySupply, packageLoading, packageErrors]);
 
-  const totals = useMemo(() => buildDeductByBarcode(packageBySupply, selectedSupplyIds), [packageBySupply, selectedSupplyIds]);
+  const totals = useMemo(
+    () => buildDeductByBarcode(packageBySupply, selectedSupplyIds, supplies, regionConfigs),
+    [packageBySupply, selectedSupplyIds, supplies, regionConfigs],
+  );
+  const regionBySupply = useMemo(
+    () => buildRegionBySupply(supplies, regionConfigs),
+    [supplies, regionConfigs],
+  );
 
   return {
     supplies,
@@ -246,7 +348,10 @@ export function useManualSupplyDeductionData(enabled: boolean, selectedSupplyIds
     deductByBarcode: enabled ? totals.map : new Map(),
     selectedCount: enabled ? selectedSupplyIds.size : 0,
     totalQuantity: enabled ? totals.totalQuantity : 0,
+    matchedQuantity: enabled ? totals.matchedQuantity : 0,
+    unmatchedQuantity: enabled ? totals.unmatchedQuantity : 0,
     loadedSelectedCount: enabled ? totals.loadedSelectedCount : 0,
+    regionBySupply,
     refreshSupplies: () => setRefreshKey((key) => key + 1),
   };
 }
@@ -309,7 +414,7 @@ export function SupplyDeductionSelector({
           <span>
             <span className="block text-sm font-semibold text-white">Учитывать отгрузки</span>
             <span className="mt-0.5 block text-xs text-[var(--text-muted)]">
-              Выбранные поставки вручную вычитаются из текущего плана по barcode.
+              Выбранные поставки вычитаются по barcode только из ФО склада назначения.
             </span>
           </span>
         </label>
@@ -318,8 +423,13 @@ export function SupplyDeductionSelector({
             выбрано: <span className="font-semibold text-white">{formatNumber(data.selectedCount)}</span>
           </span>
           <span className="rounded-full border border-[var(--accent)]/35 bg-[var(--accent)]/10 px-3 py-1 text-[var(--accent-hover)]">
-            вычитается: <span className="font-semibold text-white">{formatNumber(data.totalQuantity)}</span> шт
+            вычитается: <span className="font-semibold text-white">{formatNumber(data.matchedQuantity)}</span> шт
           </span>
+          {enabled && data.unmatchedQuantity > 0 && (
+            <span className="rounded-full border border-[var(--warning)]/35 bg-[var(--warning)]/10 px-3 py-1 text-[var(--warning)]">
+              не сопоставлено: <span className="font-semibold text-white">{formatNumber(data.unmatchedQuantity)}</span> шт
+            </span>
+          )}
           {enabled && selectedLoadingCount > 0 && (
             <span className="rounded-full border border-[var(--warning)]/35 bg-[var(--warning)]/10 px-3 py-1 text-[var(--warning)]">
               загружаю состав
@@ -392,6 +502,7 @@ export function SupplyDeductionSelector({
                     const packageData = data.packageBySupply[String(supplyID)];
                     const packageLoading = data.packageLoading[String(supplyID)];
                     const packageError = data.packageErrors[String(supplyID)];
+                    const supplyRegion = data.regionBySupply[String(supplyID)];
 
                     return (
                       <label
@@ -420,6 +531,16 @@ export function SupplyDeductionSelector({
                               <span className="inline-flex items-center gap-1 text-[var(--accent-hover)]">
                                 <PackageOpen size={13} />
                                 {formatNumber(packageData.meta.totalQuantity)} шт, {formatNumber(packageData.meta.barcodeCount)} баркодов
+                              </span>
+                            )}
+                            {selected && packageData && supplyRegion && (
+                              <span className="rounded-full border border-[var(--success)]/35 bg-[var(--success)]/10 px-2 py-0.5 text-[var(--success)]">
+                                Вычитается из: <span className="font-semibold text-white">{supplyRegion.label}</span>
+                              </span>
+                            )}
+                            {selected && packageData && !supplyRegion && (
+                              <span className="rounded-full border border-[var(--warning)]/35 bg-[var(--warning)]/10 px-2 py-0.5 text-[var(--warning)]">
+                                ФО не найден, не вычитается
                               </span>
                             )}
                             {selected && packageLoading && <span className="text-[var(--warning)]">загружаю состав</span>}

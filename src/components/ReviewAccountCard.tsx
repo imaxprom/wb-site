@@ -48,7 +48,7 @@ export function ReviewAccountCard({ account, onDelete }: ReviewAccountCardProps)
         <h3 className="font-bold text-base">{account.name}</h3>
         <div className="flex items-center gap-2">
           <Link
-            href={`/reviews/settings/${account.id}`}
+            href={`/reviews/connection?account_id=${account.id}`}
             className="p-1.5 rounded hover:bg-[var(--bg-card-hover)] text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
           >
             <Settings size={16} />

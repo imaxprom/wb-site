@@ -148,20 +148,24 @@ export function PackingSummaryTable({
   viewMode,
   rowMeta,
   articleMetrics = {},
+  articleMultipliers = {},
   boxRounding = 0.5,
   editableValues,
   onEditableValuesChange,
   stockStatusByBarcode = {},
+  onArticleSelectedChange,
 }: {
   articles: SummaryArticle[];
   regions: Array<{ id: string; shortName: string }>;
   viewMode: ViewMode;
   rowMeta?: Record<string, { plan: number; fact: number; need: number; factByRegion?: Record<string, number>; needByRegion?: Record<string, number> }>;
   articleMetrics?: Record<string, ArticleLogisticsMetrics>;
+  articleMultipliers?: Record<string, number>;
   boxRounding?: number;
   editableValues?: PackingSummaryEditableValues;
   onEditableValuesChange?: React.Dispatch<React.SetStateAction<PackingSummaryEditableValues>>;
   stockStatusByBarcode?: Record<string, WarehouseStockCellStatus>;
+  onArticleSelectedChange?: (articleWB: string, selected: boolean) => void;
 }) {
   const [internalEditableValues, setInternalEditableValues] = useState<PackingSummaryEditableValues>({
     stockByBarcode: {},
@@ -203,6 +207,14 @@ export function PackingSummaryTable({
   const regionColsPerRegion = isBoxes ? 4 : 3;
   const shippedCols = isBoxes ? 3 : 2;
   const totalCols = 8 + regions.length * regionColsPerRegion + 1 /* sverka */ + shippedCols;
+  const baseColumnWidths = [180, 100, 70, 140, 60, 60, 70, 80];
+  const regionColumnWidths = isBoxes ? [56, 56, 56, 56] : [64, 56, 56];
+  const shippedColumnWidths = isBoxes ? [60, 60, 76] : [60, 76];
+  const tableMinWidth =
+    baseColumnWidths.reduce((sum, width) => sum + width, 0) +
+    regions.length * regionColumnWidths.reduce((sum, width) => sum + width, 0) +
+    60 +
+    shippedColumnWidths.reduce((sum, width) => sum + width, 0);
 
   if (articles.length === 0) {
     return (
@@ -214,6 +226,15 @@ export function PackingSummaryTable({
 
   const headerBase: React.CSSProperties = { padding: "6px 10px", border: "1px solid var(--border)", textAlign: "center", whiteSpace: "nowrap", background: "var(--bg)", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.3, fontWeight: 600 };
   const compactHeaderBase: React.CSSProperties = { ...headerBase, padding: "6px 4px" };
+  const compactSubHeaderStyle: React.CSSProperties = {
+    ...compactHeaderBase,
+    background: "var(--bg)",
+    color: "var(--text-muted)",
+    textTransform: "none",
+    fontWeight: 500,
+    fontSize: 10,
+    borderBottom: "2px solid var(--accent)",
+  };
   const cellBase: React.CSSProperties = { padding: "6px 10px", border: "1px solid var(--border)", textAlign: "center", whiteSpace: "nowrap", fontSize: 12 };
 
   // Totals
@@ -265,7 +286,8 @@ export function PackingSummaryTable({
       const stock = parseStock(stockStr);
       if (stock !== null && !isNaN(stock)) {
         totalStock += stock;
-        totalSverka += stock - (isBoxes ? rowShippedBoxes : rowShippedUnits);
+        const rowSverka = stock - (isBoxes ? rowShippedBoxes : rowShippedUnits);
+        if (rowSverka < 0) totalSverka += rowSverka;
       }
       const meta = rowMeta?.[sr.item.barcode];
       if (meta) {
@@ -300,36 +322,30 @@ export function PackingSummaryTable({
 
   return (
     <div className="overflow-auto">
-      <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%", minWidth: 1100, tableLayout: "fixed" }}>
+      <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%", minWidth: tableMinWidth, tableLayout: "fixed" }}>
         <colgroup>
-          <col style={{ width: 180 }} />
-          <col style={{ width: 100 }} />
-          <col style={{ width: 70 }} />
-          <col style={{ width: 140 }} />
-          <col style={{ width: 60 }} />
-          <col style={{ width: 60 }} />
-          <col style={{ width: 70 }} />
-          <col style={{ width: 80 }} />
+          {baseColumnWidths.map((width, index) => (
+            <col key={`base-${index}`} style={{ width }} />
+          ))}
           {regions.map(r => (
             isBoxes ? (
               <React.Fragment key={r.id}>
-                <col />
-                <col />
-                <col />
-                <col />
+                {regionColumnWidths.map((width, index) => (
+                  <col key={`${r.id}-${index}`} style={{ width }} />
+                ))}
               </React.Fragment>
             ) : (
               <React.Fragment key={r.id}>
-                <col />
-                <col />
-                <col />
+                {regionColumnWidths.map((width, index) => (
+                  <col key={`${r.id}-${index}`} style={{ width }} />
+                ))}
               </React.Fragment>
             )
           ))}
           <col style={{ width: 60 }} />
-          {isBoxes && <col style={{ width: 60 }} />}
-          <col style={{ width: 60 }} />
-          <col style={{ width: 76 }} />
+          {shippedColumnWidths.map((width, index) => (
+            <col key={`shipped-${index}`} style={{ width }} />
+          ))}
         </colgroup>
         <thead>
           <tr>
@@ -365,7 +381,8 @@ export function PackingSummaryTable({
                   <div style={{ color: "var(--text-muted)", marginBottom: 10 }}>Показывает остаток {isBoxes ? "коробов" : "штук"} на складе после отгрузки.</div>
                   <div style={{ marginBottom: 4 }}><span style={{ color: "var(--success)", fontWeight: 700 }}>+ зелёным</span> — на складе остался запас</div>
                   <div style={{ marginBottom: 4 }}><span style={{ color: "#f87171", fontWeight: 700 }}>− красным</span> — склада не хватает</div>
-                  <div><span style={{ color: "var(--text-muted)", fontWeight: 700 }}>0</span> — отгружено ровно то, что есть</div>
+                  <div style={{ marginBottom: 10 }}><span style={{ color: "var(--text-muted)", fontWeight: 700 }}>0</span> — отгружено ровно то, что есть</div>
+                  <div style={{ paddingTop: 8, borderTop: "1px solid var(--border)", color: "var(--text-muted)" }}>В строке итога плюсы и нули не учитываются: суммируется только нехватка по отрицательным значениям. Итог показывает, сколько {isBoxes ? "коробов" : "штук"} нужно дополнительно упаковать, чтобы выполнить отгрузку.</div>
                 </div>
               )}
             </th>
@@ -376,43 +393,45 @@ export function PackingSummaryTable({
           <tr>
             {isBoxes && regions.map(r => (
               <React.Fragment key={r.id}>
-                <th className="shipment-compact-header-cell" style={{ ...compactHeaderBase, background: "var(--bg-card)", borderBottom: "2px solid var(--accent)", minWidth: 46 }}>
-                  <CompactHeaderLabel full="Коробов" short="Кор" />
+                <th className="shipment-compact-header-cell" style={{ ...compactSubHeaderStyle, minWidth: 46 }}>
+                  <CompactHeaderLabel full="Короб" short="Кор" />
                 </th>
-                <th className="shipment-compact-header-cell" style={{ ...compactHeaderBase, background: "var(--bg-card)", borderBottom: "2px solid var(--accent)", minWidth: 46 }}>
-                  <CompactHeaderLabel full="План" short="План" />
+                <th className="shipment-compact-header-cell" style={{ ...compactSubHeaderStyle, minWidth: 46 }}>
+                  <CompactHeaderLabel full="Штук" short="Шт" />
                 </th>
-                <th className="shipment-compact-header-cell" style={{ ...compactHeaderBase, background: "var(--bg-card)", borderBottom: "2px solid var(--accent)", minWidth: 54 }}>
+                <th className="shipment-compact-header-cell" style={{ ...compactSubHeaderStyle, minWidth: 54 }}>
                   <CompactHeaderLabel full="Факт" short="Факт" />
                 </th>
-                <th className="shipment-compact-header-cell" style={{ ...compactHeaderBase, background: "var(--bg-card)", borderBottom: "2px solid var(--accent)", minWidth: 54 }}>
-                  <CompactHeaderLabel full="Нужно" short="Нужно" />
+                <th className="shipment-compact-header-cell" style={{ ...compactSubHeaderStyle, minWidth: 54 }}>
+                  <CompactHeaderLabel full="План" short="План" />
                 </th>
               </React.Fragment>
             ))}
             {!isBoxes && regions.map(r => (
               <React.Fragment key={r.id}>
-                <th className="shipment-compact-header-cell" style={{ ...compactHeaderBase, background: "var(--bg)", color: "var(--text-muted)", textTransform: "none", fontWeight: 500, fontSize: 10, borderBottom: "2px solid var(--accent)" }}>
-                  <CompactHeaderLabel full="План" short="План" />
+                <th className="shipment-compact-header-cell" style={compactSubHeaderStyle}>
+                  <CompactHeaderLabel full="Штук" short="Шт" />
                 </th>
-                <th className="shipment-compact-header-cell" style={{ ...compactHeaderBase, background: "var(--bg)", color: "var(--text-muted)", textTransform: "none", fontWeight: 500, fontSize: 10, borderBottom: "2px solid var(--accent)" }}>
+                <th className="shipment-compact-header-cell" style={compactSubHeaderStyle}>
                   <CompactHeaderLabel full="Факт" short="Факт" />
                 </th>
-                <th className="shipment-compact-header-cell" style={{ ...compactHeaderBase, background: "var(--bg)", color: "var(--text-muted)", textTransform: "none", fontWeight: 500, fontSize: 10, borderBottom: "2px solid var(--accent)" }}>
-                  <CompactHeaderLabel full="Нужно" short="Нужно" />
+                <th className="shipment-compact-header-cell" style={compactSubHeaderStyle}>
+                  <CompactHeaderLabel full="План" short="План" />
                 </th>
               </React.Fragment>
             ))}
             {isBoxes && (
               <>
-                <th style={{ ...compactHeaderBase, background: "var(--bg-card)", borderBottom: "2px solid var(--accent)", minWidth: 46 }}>Кор.</th>
-                <th className="shipment-compact-header-cell" style={{ ...compactHeaderBase, background: "var(--bg-card)", borderBottom: "2px solid var(--accent)", minWidth: 46 }}>
+                <th className="shipment-compact-header-cell" style={{ ...compactSubHeaderStyle, minWidth: 46 }}>
+                  <CompactHeaderLabel full="Короб" short="Кор" />
+                </th>
+                <th className="shipment-compact-header-cell" style={{ ...compactSubHeaderStyle, minWidth: 46 }}>
                   <CompactHeaderLabel full="Штук" short="Шт" />
                 </th>
               </>
             )}
             {!isBoxes && (
-              <th className="shipment-compact-header-cell" style={{ ...compactHeaderBase, background: "var(--bg)", color: "var(--text-muted)", textTransform: "none", fontWeight: 500, fontSize: 10, borderBottom: "2px solid var(--accent)", minWidth: 46 }}>
+              <th className="shipment-compact-header-cell" style={{ ...compactSubHeaderStyle, minWidth: 46 }}>
                 <CompactHeaderLabel full="Штук" short="Шт" />
               </th>
             )}
@@ -439,6 +458,7 @@ export function PackingSummaryTable({
             const color = ARTICLE_PALETTE[artIdx % ARTICLE_PALETTE.length];
             const rowSpan = art.sizes.length + 1;
             const metrics = articleMetrics[art.articleWB];
+            const multiplier = articleMultipliers[art.articleWB];
             return (
               <React.Fragment key={art.articleWB}>
                 {artIdx > 0 && (
@@ -513,11 +533,27 @@ export function PackingSummaryTable({
                     <tr key={sr.item.barcode}>
                       {sizeIdx === 0 && (
                         <td rowSpan={rowSpan} style={{ ...cellBase, textAlign: "center", padding: "10px 12px", verticalAlign: "middle", width: 180, minWidth: 160, maxWidth: 200, whiteSpace: "normal", wordBreak: "break-word", overflowWrap: "anywhere", background: color.bg, borderLeft: `3px solid ${color.accent}` }}>
+                          {onArticleSelectedChange && (
+                            <label
+                              title="Убрать артикул из текущей отгрузки"
+                              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 8, cursor: "pointer", color: "var(--text-muted)", fontSize: 11 }}
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              <input
+                                type="checkbox"
+                                checked
+                                onChange={(event) => onArticleSelectedChange(art.articleWB, event.target.checked)}
+                                style={{ width: 16, height: 16, accentColor: "var(--accent)", cursor: "pointer" }}
+                              />
+                              <span>в отгрузке</span>
+                            </label>
+                          )}
                           <div style={{ fontSize: 15, fontWeight: 700, color: color.text, marginBottom: 6, lineHeight: 1.3 }}>{art.productName}</div>
                           <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.5 }}>Артикул WB:<br/><b style={{ color: "var(--text)", fontFamily: "SF Mono, Menlo, monospace", fontSize: 14 }}>{art.articleWB}</b></div>
                           <div style={{ marginTop: 8, paddingTop: 7, borderTop: "1px solid color-mix(in srgb, var(--border) 65%, transparent)", fontSize: 12, color: "var(--text-muted)", lineHeight: 1.45 }}>
                             <div>ИЛ: <b style={{ color: "var(--text)", fontVariantNumeric: "tabular-nums" }}>{metricNumber(metrics?.localizationIndex, 2)}</b></div>
                             <div>ИРП: <b style={{ color: "var(--text)", fontVariantNumeric: "tabular-nums" }}>{metricPercent(metrics?.salesDistributionIndexPercent, 2)}</b></div>
+                            <div>Коэф.: <b style={{ color: "var(--text)", fontVariantNumeric: "tabular-nums" }}>{multiplier === undefined ? "—" : `×${metricNumber(multiplier, 2)}`}</b></div>
                           </div>
                         </td>
                       )}

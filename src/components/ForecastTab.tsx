@@ -104,7 +104,14 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
   const totalAds = data.reduce((s, d) => s + d.ad_spend, 0);
   const totalProfit = data.reduce((s, d) => s + d.estimated_profit, 0);
   const totalProfitBeforeAds = data.reduce((s, d) => s + d.estimated_profit_before_ads, 0);
-  const fmtM = (v: number) => { if (Math.abs(v) >= 1e6) return (v / 1e6).toFixed(1) + "M"; if (Math.abs(v) >= 1e3) return Math.round(v / 1e3) + "k"; return String(v); };
+  const fmtM = (v: number) => {
+    if (Math.abs(v) >= 1e6) {
+      const millions = v / 1e6;
+      return `${Number.isInteger(millions) ? millions.toFixed(0) : millions.toFixed(1)}M`;
+    }
+    if (Math.abs(v) >= 1e3) return Math.round(v / 1e3) + "k";
+    return String(v);
+  };
 
   const chartData = data.map(d => ({
     date: fmtDate(d.date),
@@ -161,10 +168,10 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
         <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
           <h3 className="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wide mb-4">Динамика показателей</h3>
           <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+            <BarChart data={chartData} margin={{ top: 5, right: 4, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#2a2a3a" />
               <XAxis dataKey="date" tick={{ fill: "#8888a0", fontSize: 10 }} />
-              <YAxis tickFormatter={fmtM} tick={{ fill: "#8888a0", fontSize: 11 }} />
+              <YAxis width={32} tickFormatter={fmtM} tick={{ fill: "#8888a0", fontSize: 10 }} />
               <Tooltip contentStyle={{ background: "#12121a", border: "1px solid #2a2a3a", borderRadius: 8, color: "#e4e4ef" }} itemStyle={{ color: "#e4e4ef" }} formatter={(v: unknown) => RUB(Number(v))} itemSorter={(item) => { const order: Record<string, number> = { "Заказы": 0, "Реклама": 1, "Прибыль": 2 }; return order[item.name as string] ?? 9; }} />
               <Legend wrapperStyle={{ color: "#8888a0", fontSize: 12 }} />
               <Bar dataKey="profit" name="Прибыль" stackId="stack" fill="#66BB6A" />
@@ -174,12 +181,14 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
           </ResponsiveContainer>
         </div>
         <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
-          <h3 className="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wide mb-4">Нарастающая: выручка vs прибыль</h3>
+          <h3 className="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wide mb-4">
+            Нарастающая: выручка <span className="normal-case">vs</span> прибыль
+          </h3>
           <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
+            <LineChart data={chartData} margin={{ top: 5, right: 4, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#2a2a3a" />
               <XAxis dataKey="date" tick={{ fill: "#8888a0", fontSize: 10 }} />
-              <YAxis tickFormatter={fmtM} tick={{ fill: "#8888a0", fontSize: 11 }} />
+              <YAxis width={44} tickMargin={2} tickFormatter={fmtM} tick={{ fill: "#8888a0", fontSize: 10 }} />
               <Tooltip contentStyle={{ background: "#12121a", border: "1px solid #2a2a3a", borderRadius: 8, color: "#e4e4ef" }} formatter={(v: unknown) => RUB(Number(v))} />
               <Legend />
               <Line type="monotone" dataKey="running_revenue" name="Выручка" stroke="var(--success)" strokeWidth={2} dot={false} />

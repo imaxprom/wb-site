@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import Link from "next/link";
-import { cn } from "@/lib/utils";
 import { ReviewsFilters, type ReviewFilterValues } from "@/components/ReviewsFilters";
 import { ReviewsTable } from "@/components/ReviewsTable";
+import { ReviewsSectionNav } from "@/components/ReviewsSectionNav";
+import { ReviewsDynamicsChart, ComplaintsDynamicsChart } from "@/components/ReviewsChart";
 
 // ─── Sync Progress ──────────────────────────────────────────
 
@@ -103,11 +103,6 @@ function SyncProgress({ syncing, onRefresh, onFullSync }: { syncing: boolean; on
   );
 }
 
-const TABS = [
-  { href: "/reviews", label: "Отзывы" },
-  { href: "/reviews/accounts", label: "Аккаунты WB" },
-];
-
 const emptyFilters: ReviewFilterValues = {
   date_from: "",
   date_to: "",
@@ -149,6 +144,19 @@ interface ReviewRow {
   bables: string | null;
 }
 
+interface StatPoint {
+  date: string;
+  total_reviews: number;
+  negative_reviews: number;
+  complaints: number;
+}
+
+interface ComplaintStatPoint {
+  date: string;
+  submitted: number;
+  approved: number;
+}
+
 export default function ReviewsPage() {
   const [filters, setFilters] = useState<ReviewFilterValues>(emptyFilters);
   const [rows, setRows] = useState<ReviewRow[]>([]);
@@ -160,6 +168,9 @@ export default function ReviewsPage() {
   const [synced, setSynced] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [complainingId, setComplainingId] = useState<number | null>(null);
+  const [stats, setStats] = useState<StatPoint[]>([]);
+  const [complaintStats, setComplaintStats] = useState<ComplaintStatPoint[]>([]);
+  const [period, setPeriod] = useState("month");
 
   const fetchData = useCallback(async (sync: false | "true" | "full" = false) => {
     setLoading(true);
@@ -188,6 +199,13 @@ export default function ReviewsPage() {
     }
   }, [page, sortBy, sortDir, filters]);
 
+  const fetchStats = useCallback(async () => {
+    const res = await fetch(`/api/reviews/stats?period=${period}`);
+    const data = await res.json();
+    setStats(data.stats || []);
+    setComplaintStats(data.complaint_stats || []);
+  }, [period]);
+
   // Load data from DB on first render + sync complaint statuses
   useEffect(() => {
     if (!synced) {
@@ -197,6 +215,8 @@ export default function ReviewsPage() {
       fetchData(false);
     }
   }, [synced, fetchData]);
+
+  useEffect(() => { fetchStats(); }, [fetchStats]);
 
   // Refetch on filter/sort/page change (no sync)
   useEffect(() => {
@@ -223,23 +243,26 @@ export default function ReviewsPage() {
     });
   }
 
-  function handleComplaint(id: number) {
+  function handleComplaint(id: number, options?: { force?: boolean }) {
     setComplainingId(id);
-    // Отмечаем review как pending в UI сразу
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, complaint_status: "pending" } : r)));
 
     fetch("/api/reviews/complaints", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ review_id: id }),
+      body: JSON.stringify({ review_id: id, force: options?.force === true }),
     }).then(async (res) => {
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.status === 202 || data.status === "pending") {
+        setRows((prev) => prev.map((r) => (r.id === id ? { ...r, complaint_status: "pending" } : r)));
         // Async flow — запускаем polling статуса
         pollComplaintStatus(id);
       } else if (res.ok) {
         setRows((prev) => prev.map((r) => (r.id === id ? { ...r, complaint_status: "submitted" } : r)));
         setComplainingId(null);
+      } else if (data.paused && !options?.force) {
+        setComplainingId(null);
+        const force = window.confirm(`${data.error || "Автожалобы сейчас на паузе."}\n\nПодать эту жалобу принудительно?`);
+        if (force) handleComplaint(id, { force: true });
       } else {
         setRows((prev) => prev.map((r) => (r.id === id ? { ...r, complaint_status: "error" } : r)));
         alert(data.error || "Ошибка при подаче жалобы");
@@ -289,27 +312,11 @@ export default function ReviewsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">Отзывы</h2>
-        <p className="text-sm text-[var(--text-muted)] mt-1">Управление отзывами Wildberries</p>
-      </div>
+      <ReviewsSectionNav />
 
-      {/* Tabs */}
-      <div className="flex gap-1 bg-[var(--bg-card)] rounded-lg p-1 border border-[var(--border)] w-fit">
-        {TABS.map((tab) => (
-          <Link
-            key={tab.href}
-            href={tab.href}
-            className={cn(
-              "px-4 py-2 rounded-md text-sm font-medium transition-colors",
-              tab.href === "/reviews"
-                ? "bg-[var(--accent)] text-white"
-                : "text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--bg-card-hover)]"
-            )}
-          >
-            {tab.label}
-          </Link>
-        ))}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <ReviewsDynamicsChart data={stats} currentPeriod={period} onPeriodChange={setPeriod} />
+        <ComplaintsDynamicsChart data={complaintStats} currentPeriod={period} onPeriodChange={setPeriod} />
       </div>
 
       {/* Filters */}

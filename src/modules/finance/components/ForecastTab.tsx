@@ -9,18 +9,24 @@ import {
 
 const RUB = (v: number) => formatNumber(v) + " ₽";
 const fmtDate = (d: string) => d.slice(8) + "." + d.slice(5, 7);
+const PCT = (v: number) => `${Math.round(v * 10) / 10}%`;
 
 interface ForecastArticle {
-  nm_id: number; article: string; custom_name: string; orders: number; buyout: number;
+  nm_id: number; article: string; custom_name: string; orders: number; orders_rub: number; buyout: number;
   avg_price: number; cogs_unit: number; logistics_unit: number;
   commission_unit: number; tax_unit: number; profit_per_unit: number;
+  estimated_sales: number; cogs_total: number; logistics_total: number;
+  commission_total: number; tax_total: number; gross_profit: number;
   ad_spend: number; storage: number; penalties: number;
   estimated_revenue: number; estimated_profit: number; estimated?: boolean;
 }
 
 interface ForecastDay {
   date: string; orders: number; orders_rub: number;
+  estimated_sales: number;
   estimated_revenue: number; estimated_profit_before_ads: number;
+  cogs_total: number; logistics_total: number; commission_total: number;
+  tax_total: number; gross_profit: number;
   ad_spend: number; storage: number; penalties: number; overhead: number;
   estimated_profit: number; running_profit: number; running_revenue: number;
   articles: ForecastArticle[];
@@ -47,22 +53,34 @@ function wavg(d: ForecastDay, field: keyof ForecastArticle): string {
   return sumW > 0 ? RUB(Math.round(sumV / sumW)) : "—";
 }
 
+function buyoutAvg(d: ForecastDay): string {
+  return d.orders > 0 ? PCT((d.estimated_sales / d.orders) * 100) : "—";
+}
+
 const COLUMNS: ColDef[] = [
-  { key: "orders",     label: "Заказы",          dayFn: d => formatNumber(d.orders),                    artFn: a => String(a.orders),        defaultOn: true },
-  { key: "orders_rub", label: "Заказы ₽",        dayFn: d => RUB(d.orders_rub),                         artFn: a => `${a.buyout}%`,          defaultOn: true },
-  { key: "est_rev",    label: "Прогн. выручка",  dayFn: d => RUB(d.estimated_revenue),                  artFn: a => RUB(a.estimated_revenue), defaultOn: true },
-  { key: "avg_price",  label: "Ср. цена/шт",     dayFn: d => wavg(d, "avg_price"),                      artFn: a => RUB(a.avg_price),        defaultOn: false },
-  { key: "cogs",       label: "Себест./шт",      dayFn: d => wavg(d, "cogs_unit"),                      artFn: a => RUB(a.cogs_unit),        defaultOn: false },
-  { key: "logistics",  label: "Логист./шт",      dayFn: d => wavg(d, "logistics_unit"),                  artFn: a => RUB(a.logistics_unit),   defaultOn: false },
-  { key: "commission", label: "Комисс./шт",      dayFn: d => wavg(d, "commission_unit"),                 artFn: a => RUB(a.commission_unit),  defaultOn: false },
-  { key: "tax",        label: "Налоги/шт",       dayFn: d => wavg(d, "tax_unit"),                        artFn: a => RUB(a.tax_unit),         defaultOn: false },
-  { key: "ppu",        label: "Прибыль/шт",      dayFn: d => wavg(d, "profit_per_unit"),                 artFn: a => RUB(a.profit_per_unit),  defaultOn: true },
-  { key: "storage",    label: "Хранение",        dayFn: d => RUB(d.storage),                            artFn: a => a.storage ? RUB(a.storage) : "—", defaultOn: true },
-  { key: "penalties",  label: "Штрафы",          dayFn: d => d.penalties ? RUB(d.penalties) : "—",       artFn: a => a.penalties ? RUB(a.penalties) : "—", defaultOn: false },
-  { key: "ad_spend",   label: "Реклама",         dayFn: d => RUB(d.ad_spend),                           artFn: a => a.ad_spend ? RUB(a.ad_spend) : "—", defaultOn: true },
-  { key: "profit_ba",  label: "До рекламы",      dayFn: d => RUB(d.estimated_profit_before_ads),        artFn: () => "",                     defaultOn: false },
-  { key: "est_profit", label: "Прогн. прибыль",  dayFn: d => RUB(d.estimated_profit),                   artFn: a => RUB(a.estimated_profit), defaultOn: true },
-  { key: "running",    label: "Нарастающая",     dayFn: d => RUB(d.running_profit),                     artFn: () => "",                     defaultOn: true },
+  { key: "orders",          label: "Заказы, шт",       dayFn: d => formatNumber(d.orders),             artFn: a => formatNumber(a.orders), defaultOn: true },
+  { key: "orders_rub",      label: "Заказы, ₽",        dayFn: d => RUB(d.orders_rub),                  artFn: a => RUB(a.orders_rub),      defaultOn: true },
+  { key: "buyout",          label: "% выкупа",         dayFn: buyoutAvg,                              artFn: a => PCT(a.buyout),          defaultOn: true },
+  { key: "est_sales",       label: "Продажи, шт",      dayFn: d => formatNumber(d.estimated_sales),   artFn: a => formatNumber(a.estimated_sales), defaultOn: true },
+  { key: "est_rev",         label: "Прогн. выручка",   dayFn: d => RUB(d.estimated_revenue),          artFn: a => RUB(a.estimated_revenue), defaultOn: true },
+  { key: "cogs_total",      label: "Себестоимость",    dayFn: d => RUB(d.cogs_total),                 artFn: a => RUB(a.cogs_total),      defaultOn: true },
+  { key: "commission_total", label: "Комиссия WB",     dayFn: d => RUB(d.commission_total),           artFn: a => RUB(a.commission_total), defaultOn: true },
+  { key: "logistics_total", label: "Логистика",        dayFn: d => RUB(d.logistics_total),            artFn: a => RUB(a.logistics_total), defaultOn: true },
+  { key: "tax_total",       label: "Налоги",           dayFn: d => RUB(d.tax_total),                  artFn: a => RUB(a.tax_total),       defaultOn: true },
+  { key: "gross_profit",    label: "Валовая прибыль",  dayFn: d => RUB(d.gross_profit),               artFn: a => RUB(a.gross_profit),    defaultOn: true },
+  { key: "storage",         label: "Хранение",         dayFn: d => RUB(d.storage),                    artFn: a => a.storage ? RUB(a.storage) : "—", defaultOn: true },
+  { key: "penalties",       label: "Штрафы",           dayFn: d => d.penalties ? RUB(d.penalties) : "—", artFn: a => a.penalties ? RUB(a.penalties) : "—", defaultOn: true },
+  { key: "ad_spend",        label: "Реклама",          dayFn: d => RUB(d.ad_spend),                   artFn: a => a.ad_spend ? RUB(a.ad_spend) : "—", defaultOn: true },
+  { key: "overhead",        label: "Общие расходы",    dayFn: d => d.overhead ? RUB(d.overhead) : "—", artFn: () => "—",                  defaultOn: true },
+  { key: "est_profit",      label: "Прогн. прибыль",   dayFn: d => RUB(d.estimated_profit),           artFn: a => RUB(a.estimated_profit), defaultOn: true },
+  { key: "avg_price",       label: "Ср. цена/шт",      dayFn: d => wavg(d, "avg_price"),              artFn: a => RUB(a.avg_price),       defaultOn: false },
+  { key: "cogs_unit",       label: "Себест./шт",       dayFn: d => wavg(d, "cogs_unit"),              artFn: a => RUB(a.cogs_unit),       defaultOn: false },
+  { key: "logistics_unit",  label: "Логист./шт",       dayFn: d => wavg(d, "logistics_unit"),         artFn: a => RUB(a.logistics_unit),  defaultOn: false },
+  { key: "commission_unit", label: "Комисс./шт",       dayFn: d => wavg(d, "commission_unit"),        artFn: a => RUB(a.commission_unit), defaultOn: false },
+  { key: "tax_unit",        label: "Налоги/шт",        dayFn: d => wavg(d, "tax_unit"),               artFn: a => RUB(a.tax_unit),        defaultOn: false },
+  { key: "ppu",             label: "Прибыль/шт",       dayFn: d => wavg(d, "profit_per_unit"),        artFn: a => RUB(a.profit_per_unit), defaultOn: false },
+  { key: "profit_ba",       label: "До рекламы",       dayFn: d => RUB(d.estimated_profit_before_ads), artFn: a => RUB(a.gross_profit - a.storage - a.penalties), defaultOn: false },
+  { key: "running",         label: "Нарастающая",      dayFn: d => RUB(d.running_profit),             artFn: () => "",                   defaultOn: false },
 ];
 
 export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
@@ -104,7 +122,14 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
   const totalAds = data.reduce((s, d) => s + d.ad_spend, 0);
   const totalProfit = data.reduce((s, d) => s + d.estimated_profit, 0);
   const totalProfitBeforeAds = data.reduce((s, d) => s + d.estimated_profit_before_ads, 0);
-  const fmtM = (v: number) => { if (Math.abs(v) >= 1e6) return (v / 1e6).toFixed(1) + "M"; if (Math.abs(v) >= 1e3) return Math.round(v / 1e3) + "k"; return String(v); };
+  const fmtM = (v: number) => {
+    if (Math.abs(v) >= 1e6) {
+      const millions = v / 1e6;
+      return `${Number.isInteger(millions) ? millions.toFixed(0) : millions.toFixed(1)}M`;
+    }
+    if (Math.abs(v) >= 1e3) return Math.round(v / 1e3) + "k";
+    return String(v);
+  };
 
   const chartData = data.map(d => ({
     date: fmtDate(d.date),
@@ -161,10 +186,10 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
         <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
           <h3 className="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wide mb-4">Динамика показателей</h3>
           <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+            <BarChart data={chartData} margin={{ top: 5, right: 4, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#2a2a3a" />
               <XAxis dataKey="date" tick={{ fill: "#8888a0", fontSize: 12 }} />
-              <YAxis tickFormatter={fmtM} tick={{ fill: "#8888a0", fontSize: 12 }} />
+              <YAxis width={32} tickFormatter={fmtM} tick={{ fill: "#8888a0", fontSize: 10 }} />
               <Tooltip contentStyle={{ background: "#12121a", border: "1px solid #2a2a3a", borderRadius: 8, color: "#e4e4ef" }} itemStyle={{ color: "#e4e4ef" }} formatter={(v: unknown) => RUB(Number(v))} itemSorter={(item) => { const order: Record<string, number> = { "Реклама": 0, "Прибыль": 1 }; return order[item.name as string] ?? 9; }} />
               <Legend iconSize={10} wrapperStyle={{ color: "#8888a0", fontSize: 14 }} formatter={(value: string) => <span style={{ verticalAlign: "middle" }}>{value}</span>} />
               <Bar dataKey="profit" name="Прибыль" stackId="stack" fill="#66BB6A" />
@@ -173,12 +198,14 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
           </ResponsiveContainer>
         </div>
         <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
-          <h3 className="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wide mb-4">Нарастающая: выручка vs прибыль</h3>
+          <h3 className="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wide mb-4">
+            Нарастающая: выручка <span className="normal-case">vs</span> прибыль
+          </h3>
           <ResponsiveContainer width="100%" height={260}>
-            <LineChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+            <LineChart data={chartData} margin={{ top: 5, right: 4, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#2a2a3a" />
               <XAxis dataKey="date" tick={{ fill: "#8888a0", fontSize: 12 }} />
-              <YAxis tickFormatter={fmtM} tick={{ fill: "#8888a0", fontSize: 12 }} />
+              <YAxis width={44} tickMargin={2} tickFormatter={fmtM} tick={{ fill: "#8888a0", fontSize: 10 }} />
               <Tooltip contentStyle={{ background: "#12121a", border: "1px solid #2a2a3a", borderRadius: 8, color: "#e4e4ef" }} formatter={(v: unknown) => RUB(Number(v))} />
               <Legend iconSize={10} wrapperStyle={{ color: "#8888a0", fontSize: 14 }} formatter={(value: string) => <span style={{ verticalAlign: "middle" }}>{value}</span>} />
               <Line type="monotone" dataKey="running_revenue" name="Выручка" stroke="var(--success)" strokeWidth={2} dot={false} />

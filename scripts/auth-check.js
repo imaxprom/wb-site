@@ -4,7 +4,7 @@
  * Запуск по крону в 22:00 МСК (19:00 UTC).
  *
  * Проверяет:
- * 1. API-ключ (wb-api-key.txt) — запрос /api/v1/supplier/stocks
+ * 1. API-ключ (wb-api-key.txt) — запрос /ping к Statistics API
  * 2. ЛК-авторизация (wb-tokens.json) — запрос /auth/token
  *
  * При провале одного из каналов:
@@ -59,9 +59,8 @@ async function checkApiKey() {
     const apiKey = fs.readFileSync(API_KEY_PATH, "utf-8").trim();
     if (!apiKey) return { ok: false, reason: "Пустой ключ" };
 
-    const dateNow = new Date().toISOString().slice(0, 19);
     const res = await fetch(
-      `https://statistics-api.wildberries.ru/api/v1/supplier/stocks?dateFrom=${dateNow}`,
+      "https://statistics-api.wildberries.ru/ping",
       { headers: { Authorization: apiKey }, signal: AbortSignal.timeout(15000) }
     );
     if (res.ok) return { ok: true };

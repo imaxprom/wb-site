@@ -39,6 +39,7 @@ export function WbAuth() {
   const [captchaText, setCaptchaText] = useState("");
   const [captchaImage, setCaptchaImage] = useState("");
   const [suppliers, setSuppliers] = useState<string[]>([]);
+  const [manualSupplier, setManualSupplier] = useState("ИП Беликова");
   const [currentSupplier, setCurrentSupplier] = useState("");
   const [sessionInfo, setSessionInfo] = useState<{ supplier?: string; phone?: string }>({});
   const [loading, setLoading] = useState(false);
@@ -121,6 +122,7 @@ export function WbAuth() {
       case "supplier_select":
         setSuppliers(data.suppliers || []);
         setCurrentSupplier(data.currentSupplier || "");
+        setManualSupplier("ИП Беликова");
         setStep("supplier_select");
         break;
       case "authenticated":
@@ -405,6 +407,25 @@ export function WbAuth() {
                 {name === currentSupplier && <span className="text-xs text-[var(--text-muted)]">текущий</span>}
               </button>
             ))}
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input
+              type="text"
+              value={manualSupplier}
+              onChange={(e) => setManualSupplier(e.target.value)}
+              placeholder="Название юрлица"
+              className="min-w-0 flex-1 bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-[var(--accent)] transition-colors"
+              onKeyDown={(e) => e.key === "Enter" && manualSupplier.trim() && handleSelectSupplier(manualSupplier.trim())}
+              disabled={loading}
+            />
+            <button
+              onClick={() => manualSupplier.trim() && handleSelectSupplier(manualSupplier.trim())}
+              disabled={loading || !manualSupplier.trim()}
+              className="px-4 py-2.5 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white text-sm rounded-lg font-medium transition-colors disabled:opacity-50"
+            >
+              Выбрать вручную
+            </button>
           </div>
 
           <button onClick={handleBack} disabled={loading} className="btn-secondary text-sm">

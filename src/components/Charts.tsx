@@ -50,7 +50,7 @@ export function SizeBarChart({ data }: { data: Record<string, number> }) {
         <BarChart data={chartData}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
           <XAxis dataKey="name" tick={{ fill: "var(--text-muted)", fontSize: 13 }} />
-          <YAxis tick={{ fill: "var(--text-muted)", fontSize: 13 }} />
+          <YAxis width={32} tick={{ fill: "var(--text-muted)", fontSize: 11 }} />
           <Tooltip
             contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8 }}
             labelStyle={{ color: "var(--text)" }}
@@ -124,7 +124,7 @@ export function OrdersLineChart({ data }: { data: Record<string, number> }) {
         <LineChart data={displayData}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
           <XAxis dataKey="date" tick={{ fill: "var(--text-muted)", fontSize: 12 }} />
-          <YAxis tick={{ fill: "var(--text-muted)", fontSize: 13 }} />
+          <YAxis width={32} tick={{ fill: "var(--text-muted)", fontSize: 11 }} />
           <Tooltip
             contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8 }}
             labelStyle={{ color: "var(--text)" }}
@@ -154,7 +154,7 @@ export function DeficitBarChart({
         <BarChart data={data}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
           <XAxis dataKey="size" tick={{ fill: "var(--text-muted)", fontSize: 13 }} />
-          <YAxis tick={{ fill: "var(--text-muted)", fontSize: 13 }} />
+          <YAxis width={32} tick={{ fill: "var(--text-muted)", fontSize: 11 }} />
           <Tooltip
             contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8 }}
           />

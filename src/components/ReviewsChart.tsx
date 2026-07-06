@@ -83,7 +83,7 @@ export function ReviewsDynamicsChart({ data, onPeriodChange, currentPeriod }: Re
               tick={{ fill: "var(--text-muted)", fontSize: 11 }}
               interval={tickInterval}
             />
-            <YAxis tick={{ fill: "var(--text-muted)", fontSize: 11 }} />
+            <YAxis width={32} tick={{ fill: "var(--text-muted)", fontSize: 10 }} />
             <Tooltip
               contentStyle={{
                 background: "var(--bg-card)",
@@ -161,7 +161,7 @@ export function ComplaintsDynamicsChart({ data, onPeriodChange, currentPeriod }:
               tick={{ fill: "var(--text-muted)", fontSize: 11 }}
               interval={tickInterval}
             />
-            <YAxis tick={{ fill: "var(--text-muted)", fontSize: 11 }} />
+            <YAxis width={32} tick={{ fill: "var(--text-muted)", fontSize: 10 }} />
             <Tooltip
               contentStyle={{
                 background: "var(--bg-card)",

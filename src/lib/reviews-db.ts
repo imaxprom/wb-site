@@ -3,7 +3,7 @@
  * Local file-based DB access has been removed.
  */
 
-import { pgGet, pgRows, withPgTransaction } from "@/lib/postgres";
+import { pgGet, pgQuery, pgRows, withPgTransaction } from "@/lib/postgres";
 
 function getDb(): any {
   throw new Error("Removed reviews file DB helper. Use PostgreSQL helpers instead.");
@@ -90,6 +90,15 @@ export interface ReviewComplaint {
   created_at: string;
   submitted_at: string | null;
   resolved_at: string | null;
+}
+
+export interface ReviewComplaintPause {
+  account_id: number;
+  paused_until: string;
+  reason: string | null;
+  stats_json: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ReviewStat {
@@ -872,16 +881,71 @@ export function shouldPauseByRecentRejections(accountId: number, lastN: number =
   return { pause: rows.length >= lastN && approved === 0, rejected, approved };
 }
 
-export async function shouldPauseByRecentRejectionsPg(accountId: number, lastN: number = 5): Promise<{ pause: boolean; rejected: number; approved: number }> {
+export async function ensureReviewComplaintPauseTablePg(): Promise<void> {
+  await pgQuery(`
+    CREATE TABLE IF NOT EXISTS review_complaint_pauses (
+      account_id INTEGER PRIMARY KEY,
+      paused_until TIMESTAMPTZ NOT NULL,
+      reason TEXT,
+      stats_json JSONB,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+}
+
+export async function getActiveComplaintPausePg(accountId: number): Promise<ReviewComplaintPause | null> {
+  await ensureReviewComplaintPauseTablePg();
+  return await pgGet<ReviewComplaintPause>(
+    `SELECT account_id, paused_until::text, reason, stats_json, created_at::text, updated_at::text
+     FROM review_complaint_pauses
+     WHERE account_id = ? AND paused_until > CURRENT_TIMESTAMP`,
+    [accountId]
+  ) || null;
+}
+
+export async function setComplaintPausePg(
+  accountId: number,
+  reason: string,
+  stats: Record<string, unknown>,
+  hours: number = 24
+): Promise<ReviewComplaintPause> {
+  await ensureReviewComplaintPauseTablePg();
+  const row = await pgGet<ReviewComplaintPause>(
+    `INSERT INTO review_complaint_pauses (account_id, paused_until, reason, stats_json, created_at, updated_at)
+     VALUES (?, CURRENT_TIMESTAMP + make_interval(hours => ?::int), ?, ?::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+     ON CONFLICT (account_id) DO UPDATE SET
+       paused_until = EXCLUDED.paused_until,
+       reason = EXCLUDED.reason,
+       stats_json = EXCLUDED.stats_json,
+       updated_at = CURRENT_TIMESTAMP
+     RETURNING account_id, paused_until::text, reason, stats_json, created_at::text, updated_at::text`,
+    [accountId, hours, reason, JSON.stringify(stats)]
+  );
+  if (!row) throw new Error("Failed to set review complaint pause");
+  return row;
+}
+
+export async function clearComplaintPausePg(accountId: number): Promise<void> {
+  await ensureReviewComplaintPauseTablePg();
+  await pgQuery(`DELETE FROM review_complaint_pauses WHERE account_id = $1`, [accountId]);
+}
+
+export async function shouldPauseByRecentRejectionsPg(
+  accountId: number,
+  lastN: number = 5,
+  windowHours: number = 24
+): Promise<{ pause: boolean; rejected: number; approved: number; total: number; windowHours: number }> {
   const rows = await pgRows<{ status: string }>(`
     SELECT status FROM review_complaints
     WHERE account_id = ? AND status IN ('approved','rejected')
-    ORDER BY COALESCE(resolved_at, submitted_at) DESC
+      AND COALESCE(resolved_at, submitted_at, created_at)::timestamptz >= CURRENT_TIMESTAMP - make_interval(hours => ?::int)
+    ORDER BY COALESCE(resolved_at, submitted_at, created_at)::timestamptz DESC
     LIMIT ?
-  `, [accountId, lastN]);
+  `, [accountId, windowHours, lastN]);
   const approved = rows.filter(r => r.status === "approved").length;
   const rejected = rows.filter(r => r.status === "rejected").length;
-  return { pause: rows.length >= lastN && approved === 0, rejected, approved };
+  return { pause: rows.length >= lastN && approved === 0, rejected, approved, total: rows.length, windowHours };
 }
 
 /** Перезапись AI-содержимого (когда pending-запись создана без AI-данных,

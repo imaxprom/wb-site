@@ -157,9 +157,8 @@ async function checkWbApi(checks) {
     return;
   }
 
-  const dateNow = new Date().toISOString().slice(0, 19);
   try {
-    const res = await fetch(`https://statistics-api.wildberries.ru/api/v1/supplier/stocks?dateFrom=${dateNow}`, {
+    const res = await fetch("https://statistics-api.wildberries.ru/ping", {
       headers: { Authorization: apiKey },
       signal: AbortSignal.timeout(10_000),
     });
@@ -364,7 +363,7 @@ function checkCronLogs(checks) {
     id: "cron_reviews_sync",
     name: "Cron reviews-sync",
     logPath: path.join(DATA_DIR, "reviews-sync.log"),
-    okPattern: /Archive tick OK|Delta sync done|Reviews sync completed/i,
+    okPattern: /Archive top tick (OK|skipped|rate-limited)|Archive tick OK|Delta sync done|Reviews sync completed/i,
     errorPattern: /ERROR|CRITICAL|Traceback/i,
     maxOkAgeMin: 75,
   });

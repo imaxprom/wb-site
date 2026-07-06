@@ -8,8 +8,6 @@ import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 export async function GET(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
-  const readonlyError = localReadonlyGuard("WB API key updates");
-  if (readonlyError) return readonlyError;
 
   try {
     const key = getWbApiKey();

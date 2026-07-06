@@ -19,6 +19,9 @@ const CODEX_GATEWAY_ENV_PATH = path.join(PROJECT_DIR, "data", "codex-gateway.env
 
 const WB_COMPLAINTS_URL =
   "https://seller-reviews.wildberries.ru/ns/fa-seller-api/reviews-ext-seller-portal/api/v1/feedbacks/complaints";
+const COMPLAINT_PAUSE_LAST_N = 5;
+const COMPLAINT_PAUSE_WINDOW_HOURS = 24;
+const COMPLAINT_PAUSE_HOURS = 24;
 
 // ─── Logging ────────────────────────────────────────────────
 
@@ -206,10 +209,64 @@ async function getRecentComplaintStatusesPg(accountId) {
   const result = await getPgPool().query(`
     SELECT status FROM review_complaints
     WHERE account_id = $1 AND status IN ('approved','rejected')
-    ORDER BY COALESCE(resolved_at, submitted_at) DESC
-    LIMIT 5
-  `, [accountId]);
+      AND COALESCE(resolved_at, submitted_at, created_at)::timestamptz >= CURRENT_TIMESTAMP - make_interval(hours => $2::int)
+    ORDER BY COALESCE(resolved_at, submitted_at, created_at)::timestamptz DESC
+    LIMIT $3
+  `, [accountId, COMPLAINT_PAUSE_WINDOW_HOURS, COMPLAINT_PAUSE_LAST_N]);
   return result.rows;
+}
+
+async function ensureComplaintPauseTablePg() {
+  await getPgPool().query(`
+    CREATE TABLE IF NOT EXISTS review_complaint_pauses (
+      account_id INTEGER PRIMARY KEY,
+      paused_until TIMESTAMPTZ NOT NULL,
+      reason TEXT,
+      stats_json JSONB,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+}
+
+async function getActiveComplaintPausePg(accountId) {
+  await ensureComplaintPauseTablePg();
+  const result = await getPgPool().query(`
+    SELECT account_id, paused_until, reason, stats_json, created_at, updated_at
+    FROM review_complaint_pauses
+    WHERE account_id = $1 AND paused_until > CURRENT_TIMESTAMP
+  `, [accountId]);
+  return result.rows[0] || null;
+}
+
+async function setComplaintPausePg(accountId, stats) {
+  await ensureComplaintPauseTablePg();
+  const result = await getPgPool().query(`
+    INSERT INTO review_complaint_pauses (account_id, paused_until, reason, stats_json)
+    VALUES (
+      $1,
+      CURRENT_TIMESTAMP + make_interval(hours => $2::int),
+      $3,
+      $4::jsonb
+    )
+    ON CONFLICT (account_id) DO UPDATE SET
+      paused_until = EXCLUDED.paused_until,
+      reason = EXCLUDED.reason,
+      stats_json = EXCLUDED.stats_json,
+      updated_at = CURRENT_TIMESTAMP
+    RETURNING account_id, paused_until, reason, stats_json, created_at, updated_at
+  `, [
+    accountId,
+    COMPLAINT_PAUSE_HOURS,
+    `Последние ${COMPLAINT_PAUSE_LAST_N} обработанных жалоб за ${COMPLAINT_PAUSE_WINDOW_HOURS} ч отклонены WB`,
+    JSON.stringify(stats),
+  ]);
+  return result.rows[0] || null;
+}
+
+async function clearComplaintPausePg(accountId) {
+  await ensureComplaintPauseTablePg();
+  await getPgPool().query("DELETE FROM review_complaint_pauses WHERE account_id = $1", [accountId]);
 }
 
 async function getLastComplaintTextPg(accountId, managerName) {
@@ -527,6 +584,9 @@ async function syncComplaintStatuses(db, account) {
           const complaint = pendingMap.get(fb.id);
           await getPgPool().query("UPDATE review_complaints SET status = $1, resolved_at = CURRENT_TIMESTAMP WHERE id = $2", [status, complaint.id]);
           await getPgPool().query("UPDATE reviews SET complaint_status = $1 WHERE wb_review_id = $2", [status, fb.id]);
+          if (status === "approved") {
+            await clearComplaintPausePg(account.id);
+          }
           pendingMap.delete(fb.id);
           updated++;
           log(`  ${fb.id}: ${status}`);
@@ -634,6 +694,14 @@ async function main() {
     // Если вне окна — только синк статусов, новых жалоб не подаём
     if (!ALLOWED_HOURS.includes(mskHour)) continue;
 
+    if (USE_PG) {
+      const activePause = await getActiveComplaintPausePg(account.id);
+      if (activePause) {
+        log(`  Автожалобы на паузе до ${activePause.paused_until}: ${activePause.reason || "без причины"}`);
+        continue;
+      }
+    }
+
     const config = getComplaintsConfig(account);
     const todayCount = await getTodayCount(db, account.id);
     const remaining = Math.max(0, config.daily_limit - todayCount);
@@ -643,23 +711,34 @@ async function main() {
       continue;
     }
 
-    // Эффективность-чек: если последние 5 обработанных WB — все rejected → пауза до завтра
+    // Эффективность-чек: если свежие последние 5 обработанных WB за 24 часа все rejected → явная пауза на 24 часа.
+    // Исторические rejected не должны держать вечный стоп.
     const recent = USE_PG
       ? await getRecentComplaintStatusesPg(account.id)
       : db.prepare(`
         SELECT status FROM review_complaints
         WHERE account_id = ? AND status IN ('approved','rejected')
+          AND COALESCE(resolved_at, submitted_at, created_at) >= datetime('now', '-24 hours')
         ORDER BY COALESCE(resolved_at, submitted_at) DESC
         LIMIT 5
       `).all(account.id);
     const approved = recent.filter(r => r.status === 'approved').length;
     const rejected = recent.filter(r => r.status === 'rejected').length;
-    if (recent.length >= 5 && approved === 0) {
-      log(`  Эффективность нулевая: последние 5 отклонены. Пауза до завтра.`);
+    if (recent.length >= COMPLAINT_PAUSE_LAST_N && approved === 0) {
+      if (USE_PG) {
+        await setComplaintPausePg(account.id, {
+          pause: true,
+          rejected,
+          approved,
+          total: recent.length,
+          windowHours: COMPLAINT_PAUSE_WINDOW_HOURS,
+        });
+      }
+      log(`  Эффективность нулевая: свежие последние ${COMPLAINT_PAUSE_LAST_N} отклонены за ${COMPLAINT_PAUSE_WINDOW_HOURS} ч. Пауза на ${COMPLAINT_PAUSE_HOURS} ч.`);
       continue;
     }
     if (recent.length > 0) {
-      log(`  Recent 5: approved=${approved}, rejected=${rejected}`);
+      log(`  Recent ${recent.length}/${COMPLAINT_PAUSE_WINDOW_HOURS}h: approved=${approved}, rejected=${rejected}`);
     }
 
     const excludedArticles = config.excluded_articles

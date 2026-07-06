@@ -93,7 +93,8 @@ export async function GET(request: NextRequest) {
 
     // ── 1. Юнит-экономика: продажи/возвраты (по sale_dt) + логистика (по rr_dt) ──
     const salesRaw = await all<{ nm_id: number; sa_name: string; sales_rpwd: number; sales_ppvz: number; sales_retail: number; sales_qty: number; ret_qty: number }>(`
-      SELECT r.nm_id, r.sa_name,
+      SELECT r.nm_id,
+        COALESCE((ARRAY_REMOVE(ARRAY_AGG(NULLIF(r.sa_name, '') ORDER BY r.sale_dt DESC), NULL))[1], '') as sa_name,
         SUM(CASE WHEN r.supplier_oper_name='Продажа' THEN r.retail_price_withdisc_rub ELSE 0 END) as sales_rpwd,
         SUM(CASE WHEN r.supplier_oper_name='Продажа' THEN r.ppvz_for_pay ELSE 0 END) as sales_ppvz,
         SUM(CASE WHEN r.supplier_oper_name='Продажа' THEN r.retail_amount ELSE 0 END) as sales_retail,
@@ -103,7 +104,7 @@ export async function GET(request: NextRequest) {
       WHERE r.supplier_oper_name IN ('Продажа','Возврат')
         AND r.sale_dt >= ? AND r.sale_dt <= ? AND r.nm_id > 0
         ${dedupSale.sql}
-      GROUP BY r.nm_id, r.sa_name
+      GROUP BY r.nm_id
     `, [econFrom, econTo, ...dedupSale.params]);
 
     const logisticsRaw = await all<{ nm_id: number; logistics: number; deliveries: number }>(`
@@ -565,7 +566,13 @@ export async function GET(request: NextRequest) {
       date: string;
       orders: number;
       orders_rub: number;
+      estimated_sales: number;
       estimated_revenue: number;
+      cogs_total: number;
+      logistics_total: number;
+      commission_total: number;
+      tax_total: number;
+      gross_profit: number;
       estimated_profit_before_ads: number;
       ad_spend: number;
       storage: number;
@@ -575,9 +582,11 @@ export async function GET(request: NextRequest) {
       articles: ForecastArticle[];
     }
     interface ForecastArticle {
-      nm_id: number; article: string; custom_name: string; orders: number; buyout: number;
+      nm_id: number; article: string; custom_name: string; orders: number; orders_rub: number; buyout: number;
       avg_price: number; cogs_unit: number; logistics_unit: number;
       commission_unit: number; tax_unit: number; profit_per_unit: number;
+      estimated_sales: number; cogs_total: number; logistics_total: number;
+      commission_total: number; tax_total: number; gross_profit: number;
       ad_spend: number; storage: number; penalties: number;
       estimated_revenue: number; estimated_profit: number; estimated?: boolean;
     }
@@ -591,9 +600,11 @@ export async function GET(request: NextRequest) {
     // Нужно потому, что WB Statistics API /orders отстаёт от Analytics API /sales-funnel
     // на свежих днях (до 25-30% в первые сутки).
     const shipTotalByDay = new Map<string, number>();
+    const shipRubTotalByDay = new Map<string, number>();
     for (const o of ordersDaily) {
       if (!unitEcon.has(o.nm_id)) continue;
       shipTotalByDay.set(o.day, (shipTotalByDay.get(o.day) || 0) + o.orders);
+      shipRubTotalByDay.set(o.day, (shipRubTotalByDay.get(o.day) || 0) + o.orders_rub);
     }
     const scaleForDay = (day: string): number => {
       const ship = shipTotalByDay.get(day) || 0;
@@ -601,13 +612,21 @@ export async function GET(request: NextRequest) {
       if (ship === 0 || funnel === 0) return 1;
       return funnel / ship;
     };
+    const rubScaleForDay = (day: string): number => {
+      const shipRub = shipRubTotalByDay.get(day) || 0;
+      const funnelRub = funnelMap.get(day)?.order_sum || 0;
+      if (shipRub === 0 || funnelRub === 0) return 1;
+      return funnelRub / shipRub;
+    };
 
     for (const o of ordersDaily) {
       const econ = unitEcon.get(o.nm_id);
       if (!econ) continue;
 
       const scale = scaleForDay(o.day);
+      const rubScale = rubScaleForDay(o.day);
       const scaledOrders = o.orders * scale;
+      const scaledOrdersRub = o.orders_rub * rubScale;
 
       const buyout = buyoutMap.get(o.nm_id) ?? storeFallbackBuyout;
       const adSpend = adsMap.get(`${o.day}:${o.nm_id}`) || 0;
@@ -615,7 +634,12 @@ export async function GET(request: NextRequest) {
       const penaltyDaily = penaltyByDayNm.get(`${o.day}:${o.nm_id}`) || 0;
       const estSales = scaledOrders * buyout;
       const estRevenue = estSales * econ.avgPrice;
-      const estProfitBeforeAds = estSales * econ.profitPerUnit - storageDaily - penaltyDaily;
+      const estCogs = estSales * econ.cogsUnit;
+      const estLogistics = estSales * econ.logUnit;
+      const estCommission = estSales * econ.commissionUnit;
+      const estTax = estSales * econ.taxUnit;
+      const grossProfit = estRevenue - estCogs - estLogistics - estCommission - estTax;
+      const estProfitBeforeAds = grossProfit - storageDaily - penaltyDaily;
       const estProfit = estProfitBeforeAds - adSpend;
 
       if (!dayMap.has(o.day)) {
@@ -623,14 +647,22 @@ export async function GET(request: NextRequest) {
         const funnel = funnelMap.get(o.day);
         dayMap.set(o.day, {
           date: o.day, orders: 0, orders_rub: funnel?.order_sum || 0,
-          estimated_revenue: 0, estimated_profit_before_ads: 0,
+          estimated_sales: 0, estimated_revenue: 0,
+          cogs_total: 0, logistics_total: 0, commission_total: 0, tax_total: 0,
+          gross_profit: 0, estimated_profit_before_ads: 0,
           ad_spend: 0, storage: 0, penalties: 0, overhead: Math.round(overheadDaily),
           estimated_profit: 0, articles: [],
         });
       }
       const day = dayMap.get(o.day)!;
       day.orders += scaledOrders;
+      day.estimated_sales += estSales;
       day.estimated_revenue += estRevenue;
+      day.cogs_total += estCogs;
+      day.logistics_total += estLogistics;
+      day.commission_total += estCommission;
+      day.tax_total += estTax;
+      day.gross_profit += grossProfit;
       day.estimated_profit_before_ads += estProfitBeforeAds;
       day.ad_spend += adSpend;
       day.storage += storageDaily;
@@ -638,13 +670,21 @@ export async function GET(request: NextRequest) {
       day.estimated_profit += estProfit;
       day.articles.push({
         nm_id: o.nm_id, article: econ.article, custom_name: econ.customName,
-        orders: scaledOrders, buyout: Math.round(buyout * 1000) / 10,
+        orders: scaledOrders,
+        orders_rub: Math.round(scaledOrdersRub),
+        buyout: Math.round(buyout * 1000) / 10,
         avg_price: Math.round(econ.avgPrice),
         cogs_unit: Math.round(econ.cogsUnit),
         logistics_unit: Math.round(econ.logUnit),
         commission_unit: Math.round(econ.commissionUnit),
         tax_unit: Math.round(econ.taxUnit),
         profit_per_unit: Math.round(econ.profitPerUnit),
+        estimated_sales: Math.round(estSales),
+        cogs_total: Math.round(estCogs),
+        logistics_total: Math.round(estLogistics),
+        commission_total: Math.round(estCommission),
+        tax_total: Math.round(estTax),
+        gross_profit: Math.round(grossProfit),
         ad_spend: Math.round(adSpend),
         storage: Math.round(storageDaily),
         penalties: Math.round(penaltyDaily),
@@ -662,7 +702,13 @@ export async function GET(request: NextRequest) {
         return {
           ...day,
           orders: Math.round(day.orders),
+          estimated_sales: Math.round(day.estimated_sales),
           estimated_revenue: Math.round(day.estimated_revenue),
+          cogs_total: Math.round(day.cogs_total),
+          logistics_total: Math.round(day.logistics_total),
+          commission_total: Math.round(day.commission_total),
+          tax_total: Math.round(day.tax_total),
+          gross_profit: Math.round(day.gross_profit),
           estimated_profit_before_ads: Math.round(day.estimated_profit_before_ads),
           ad_spend: Math.round(day.ad_spend + unmapped),
           storage: Math.round(day.storage),

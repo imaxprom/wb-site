@@ -28,6 +28,9 @@ interface AccountSettingsProps {
   account: Account;
   onSave: (data: Partial<Account> & { settings_json?: string }) => void;
   saved?: boolean;
+  initialTab?: AccountSettingsTab;
+  showHeader?: boolean;
+  showInternalTabs?: boolean;
 }
 
 interface ComplaintsConfig {
@@ -53,8 +56,12 @@ interface AccountCustomSettings {
 
 const TABS = [
   { id: "connection", label: "Подключение" },
+  { id: "auto-replies", label: "Автоответы" },
+  { id: "auto-dialogs", label: "Автодиалоги" },
   { id: "auto-complaints", label: "Автожалобы" },
-];
+] as const;
+
+export type AccountSettingsTab = typeof TABS[number]["id"];
 
 function StatusRow({ label, active }: { label: string; active: boolean }) {
   return (
@@ -783,8 +790,15 @@ function OtherTab() {
 
 // ─── Main Component ──────────────────────────────────────────
 
-export function AccountSettings({ account, onSave, saved }: AccountSettingsProps) {
-  const [activeTab, setActiveTab] = useState("connection");
+export function AccountSettings({
+  account,
+  onSave,
+  saved,
+  initialTab = "connection",
+  showHeader = true,
+  showInternalTabs = true,
+}: AccountSettingsProps) {
+  const [activeTab, setActiveTab] = useState<AccountSettingsTab>(initialTab);
   const [apiKey, setApiKey] = useState("");
   const [useAutoProxy, setUseAutoProxy] = useState(account.use_auto_proxy === 1);
   const [wbAuthorizeV3, setWbAuthorizeV3] = useState("");
@@ -869,6 +883,8 @@ export function AccountSettings({ account, onSave, saved }: AccountSettingsProps
       wb_validation_key?: string;
     } = {
       use_auto_proxy: useAutoProxy ? 1 : 0,
+      auto_replies: Object.values(replyConfig).some((item) => item.enabled) ? 1 : 0,
+      auto_dialogs: Object.values(dialogConfig).some((item) => item.enabled) ? 1 : 0,
       auto_complaints: complaintsEnabled ? 1 : 0,
       settings_json: settingsJson,
     };
@@ -883,6 +899,7 @@ export function AccountSettings({ account, onSave, saved }: AccountSettingsProps
   return (
     <div className="space-y-6">
       {/* Header */}
+      {showHeader && (
       <div>
         <Link
           href="/reviews/accounts"
@@ -894,8 +911,10 @@ export function AccountSettings({ account, onSave, saved }: AccountSettingsProps
         <h2 className="text-2xl font-bold">Настройки аккаунта</h2>
         <p className="text-sm text-[var(--text-muted)] mt-1">{account.name} — {account.store_name || "Не указан"}</p>
       </div>
+      )}
 
       {/* Tabs */}
+      {showInternalTabs && (
       <div className="flex gap-1 bg-[var(--bg-card)] rounded-lg p-1 border border-[var(--border)]">
         {TABS.map((tab) => (
           <button
@@ -912,6 +931,7 @@ export function AccountSettings({ account, onSave, saved }: AccountSettingsProps
           </button>
         ))}
       </div>
+      )}
 
       {/* Tab content */}
       {activeTab === "connection" && (
@@ -925,6 +945,24 @@ export function AccountSettings({ account, onSave, saved }: AccountSettingsProps
           setWbAuthorizeV3={setWbAuthorizeV3}
           wbValidationKey={wbValidationKey}
           setWbValidationKey={setWbValidationKey}
+        />
+      )}
+      {activeTab === "auto-replies" && (
+        <AutoRepliesTab
+          config={replyConfig}
+          setConfig={setReplyConfig}
+          signature={signature}
+          setSignature={setSignature}
+        />
+      )}
+      {activeTab === "auto-dialogs" && (
+        <AutoDialogsTab
+          period={dialogPeriod}
+          setPeriod={setDialogPeriod}
+          exclusions={dialogExclusions}
+          setExclusions={setDialogExclusions}
+          config={dialogConfig}
+          setConfig={setDialogConfig}
         />
       )}
       {activeTab === "auto-complaints" && (

@@ -4,6 +4,7 @@
  */
 import XLSX from "xlsx-js-style";
 import type { ArticleLogisticsMetrics, PackingSummaryEditableValues, SummaryArticle } from "@/modules/shipment/components/PackingSummaryTable";
+import { downloadXlsx } from "@/lib/download-xlsx";
 
 interface ExportInput {
   articles: SummaryArticle[];
@@ -112,6 +113,7 @@ export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMet
   const wb = XLSX.utils.book_new();
   const ws: XLSX.WorkSheet = {};
   const merges: XLSX.Range[] = [];
+  let totalSverka = 0;
 
   // ── Headers (rows 0-1) ──
   const hdrMainStyle = { font: FONT_BOLD, fill: FILL_GRAY_STRONG, alignment: ALIGN_CENTER, border: { top: BORDER_THICK, bottom: BORDER_THICK, left: BORDER_THIN, right: BORDER_THIN } };
@@ -282,7 +284,9 @@ export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMet
       const deltaBorder = { ...baseBorder, right: BORDER_THICK };
       const stockRef = ref(r, 7);
       const shipRefForSverka = isBoxes ? ref(r, SHIP_BOXES_C) : ref(r, SHIP_UNITS_C);
-      setF(ws, r, SVERKA_C, `=${stockRef}-${shipRefForSverka}`, 0, { ...bold, border: sverkaBorder });
+      const computedSverka = (stock ?? 0) - (isBoxes ? computedShipBoxes : computedShipUnits);
+      if (computedSverka < 0) totalSverka += computedSverka;
+      setF(ws, r, SVERKA_C, `=${stockRef}-${shipRefForSverka}`, computedSverka, { ...bold, border: sverkaBorder });
 
       setF(ws, r, DELTA_C, `=${ref(r, SHIP_UNITS_C)}-${ref(r, 6)}`, meta ? Math.round(computedShipUnits - meta.need) : 0, { ...bold, border: deltaBorder });
 
@@ -365,7 +369,8 @@ export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMet
   const totalSverkaStyle = { ...totalStyle, border: { top: BORDER_THICK, bottom: BORDER_THICK, left: BORDER_THICK, right: BORDER_THICK } };
   const totalShipLeftStyle = { ...totalStyle, border: { top: BORDER_THICK, bottom: BORDER_THICK, left: BORDER_THICK, right: BORDER_THIN } };
   const totalDeltaStyle = { ...totalStyle, border: { top: BORDER_THICK, bottom: BORDER_THICK, left: BORDER_THIN, right: BORDER_THICK } };
-  setF(ws, r, SVERKA_C, `=SUM(${ref(dataFirstRow, SVERKA_C)}:${ref(dataLastRow, SVERKA_C)})`, 0, totalSverkaStyle);
+  const sverkaRange = `${ref(dataFirstRow, SVERKA_C)}:${ref(dataLastRow, SVERKA_C)}`;
+  setF(ws, r, SVERKA_C, `=SUMIF(${sverkaRange},"<0",${sverkaRange})`, totalSverka, totalSverkaStyle);
   if (isBoxes) {
     setF(ws, r, SHIP_BOXES_C, `=SUM(${ref(dataFirstRow, SHIP_BOXES_C)}:${ref(dataLastRow, SHIP_BOXES_C)})`, 0, totalShipLeftStyle);
     setF(ws, r, SHIP_UNITS_C, `=SUM(${ref(dataFirstRow, SHIP_UNITS_C)}:${ref(dataLastRow, SHIP_UNITS_C)})`, 0, totalStyle);
@@ -396,5 +401,6 @@ export function exportShipmentExcelSummary({ articles, regions, viewMode, rowMet
 
   XLSX.utils.book_append_sheet(wb, ws, "Сводная по артикулам");
   const date = new Date().toISOString().slice(0, 10);
-  XLSX.writeFile(wb, `shipment-summary-${date}.xlsx`);
+  const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
+  void downloadXlsx(wbout, `shipment-summary-${date}.xlsx`, { frozenRows: 2 });
 }

@@ -1,15 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import Link from "next/link";
-import { cn } from "@/lib/utils";
 import { ReviewAccountCard, AddAccountCard } from "@/components/ReviewAccountCard";
-import { ReviewsDynamicsChart, ComplaintsDynamicsChart } from "@/components/ReviewsChart";
-
-const TABS = [
-  { href: "/reviews", label: "Отзывы" },
-  { href: "/reviews/accounts", label: "Аккаунты WB" },
-];
+import { ReviewsSectionNav } from "@/components/ReviewsSectionNav";
 
 interface Account {
   id: number;
@@ -24,24 +17,8 @@ interface Account {
   auto_complaints: number;
 }
 
-interface StatPoint {
-  date: string;
-  total_reviews: number;
-  negative_reviews: number;
-  complaints: number;
-}
-
-interface ComplaintStatPoint {
-  date: string;
-  submitted: number;
-  approved: number;
-}
-
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [stats, setStats] = useState<StatPoint[]>([]);
-  const [complaintStats, setComplaintStats] = useState<ComplaintStatPoint[]>([]);
-  const [period, setPeriod] = useState("month");
   const [showAddModal, setShowAddModal] = useState(false);
   const [newName, setNewName] = useState("");
   const [newApiKey, setNewApiKey] = useState("");
@@ -52,15 +29,7 @@ export default function AccountsPage() {
     setAccounts(data);
   }, []);
 
-  const fetchStats = useCallback(async () => {
-    const res = await fetch(`/api/reviews/stats?period=${period}`);
-    const data = await res.json();
-    setStats(data.stats || []);
-    setComplaintStats(data.complaint_stats || []);
-  }, [period]);
-
   useEffect(() => { fetchAccounts(); }, [fetchAccounts]);
-  useEffect(() => { fetchStats(); }, [fetchStats]);
 
   async function handleDelete(id: number) {
     if (!confirm("Удалить аккаунт? Все отзывы будут удалены.")) return;
@@ -88,23 +57,7 @@ export default function AccountsPage() {
         <p className="text-sm text-[var(--text-muted)] mt-1">Управление аккаунтами Wildberries</p>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 bg-[var(--bg-card)] rounded-lg p-1 border border-[var(--border)] w-fit">
-        {TABS.map((tab) => (
-          <Link
-            key={tab.href}
-            href={tab.href}
-            className={cn(
-              "px-4 py-2 rounded-md text-sm font-medium transition-colors",
-              tab.href === "/reviews/accounts"
-                ? "bg-[var(--accent)] text-white"
-                : "text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--bg-card-hover)]"
-            )}
-          >
-            {tab.label}
-          </Link>
-        ))}
-      </div>
+      <ReviewsSectionNav />
 
       {/* Account cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -113,10 +66,6 @@ export default function AccountsPage() {
         ))}
         <AddAccountCard onClick={() => setShowAddModal(true)} />
       </div>
-
-      {/* Charts */}
-      <ReviewsDynamicsChart data={stats} currentPeriod={period} onPeriodChange={setPeriod} />
-      <ComplaintsDynamicsChart data={complaintStats} currentPeriod={period} onPeriodChange={setPeriod} />
 
       {/* Add modal */}
       {showAddModal && (

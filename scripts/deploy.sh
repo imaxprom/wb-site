@@ -1,35 +1,10 @@
 #!/bin/bash
-# Deploy to VPS: sync files -> safe build -> restart
-# Usage: bash scripts/deploy.sh
+# Compatibility wrapper. Production deploys must use the release-based flow so
+# PM2 runs from /home/makson/current and runtime shared files stay attached.
 
-set -e
-echo "🚀 Deploying to VPS..."
+set -euo pipefail
 
-# 1. Sync source files (no data, no node_modules, no .next)
-echo "📦 Syncing files..."
-rsync -az --delete \
-  --exclude='node_modules' \
-  --exclude='.next' \
-  --exclude='.venv' \
-  --exclude='.npm-cache' \
-  --exclude='.deploy-backups' \
-  --exclude='.git' \
-  --exclude='.env.production.local' \
-  --exclude='.env.production.local.*' \
-  --exclude='__pycache__/' \
-  --exclude='*.pyc' \
-  --exclude='/data/' \
-  --exclude='public/data/monitor/status.json' \
-  --exclude='public/data/monitor/repair-state.json' \
-  --exclude='public/data/monitor/repair-log.json' \
-  --exclude='public/data/monitor/data-health-cron.json' \
-  --exclude='public/data/monitor/changes.json' \
-  --exclude='public/data/monitor/auth-status.json' \
-  -e "ssh" \
-  /Users/octopus/Projects/website/ wb-site:~/website/
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# 2. Safe build on VPS: backup .next -> stop PM2 -> build -> start -> health-check
-echo "🔨 Safe building..."
-ssh wb-site "cd ~/website && bash scripts/prod-safe-build.sh"
-
-echo "✅ Deployed! https://hub.imaxprom.site"
+echo "🚀 Deploying to VPS via release deploy..."
+SOURCE_MODE="${SOURCE_MODE:-local}" bash "$SCRIPT_DIR/release-deploy.sh"

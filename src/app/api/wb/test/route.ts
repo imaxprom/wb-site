@@ -21,7 +21,7 @@ const SCOPES = [
   },
   {
     name: "Статистика",
-    url: `https://statistics-api.wildberries.ru/api/v1/supplier/stocks?dateFrom=${new Date().toISOString()}`,
+    url: "https://statistics-api.wildberries.ru/ping",
     method: "GET" as const,
     body: undefined,
   },

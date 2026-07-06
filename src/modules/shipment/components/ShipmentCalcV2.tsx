@@ -16,7 +16,7 @@ import { packItems, unitVolumeLiters, type PackingItem, type BoxConfig } from "@
 import { PackingSummaryTable, aggregatePackingByRegion, type ArticleLogisticsMetrics, type PackingSummaryEditableValues, type SummaryArticle } from "./PackingSummaryTable";
 import { ArticleMultiSelect } from "./ArticleMultiSelect";
 import { buildWarehouseStockByBarcode } from "@/modules/shipment/lib/warehouse-ready-stock";
-import { applyManualSupplyDeductions } from "@/modules/shipment/lib/manual-supply-deductions";
+import { applyManualSupplyDeductions, type ManualSupplyDeductByBarcode } from "@/modules/shipment/lib/manual-supply-deductions";
 
 const V2_BOX_ROUNDING_OPTIONS = Array.from({ length: 10 }, (_, i) => Math.round((i + 1) * 10) / 100);
 
@@ -144,9 +144,9 @@ export default function ShipmentCalcV2({
   manualSupplyDeductByBarcode,
 }: {
   initialMode?: "v1" | "v2";
-  manualSupplyDeductByBarcode?: Map<string, number>;
+  manualSupplyDeductByBarcode?: ManualSupplyDeductByBarcode;
 }) {
-  const { stock, orderAggregates, products, warehouseReadyStock, settings, overrides, updateSettings, isLoaded } = useData();
+  const { stock, orderAggregates, products, warehouseReadyStock, settings, overrides, updateSettings, isLoaded, isWarehouseReadyStockRefreshing } = useData();
   const effectiveRegions = useEffectiveRegions();
   const getBuyout = useEffectiveBuyout();
   const [selectedArticles, setSelectedArticles] = useState<Set<string>>(new Set());
@@ -240,6 +240,18 @@ export default function ShipmentCalcV2({
     return sortedProducts.filter(p => selectedArticles.has(p.articleWB));
   }, [sortedProducts, selectedArticles]);
 
+  const setArticleSelected = useCallback((articleWB: string, selected: boolean) => {
+    setSelectedArticles((prev) => {
+      const next = new Set(prev);
+      if (selected) {
+        next.add(articleWB);
+      } else {
+        next.delete(articleWB);
+      }
+      return next;
+    });
+  }, []);
+
   const isAllMode = selectedArticles.size !== 1;
 
   const product = useMemo(() => {
@@ -255,6 +267,14 @@ export default function ShipmentCalcV2({
       calculateShipmentV2(p, stock, orderAggregates, getBuyout(p.articleWB), effectiveRegions, overrides[p.articleWB], uploadDays)
     );
   }, [activeProducts, stock, orderAggregates, effectiveRegions, overrides, getBuyout, uploadDays]);
+
+  const articleMultipliers = useMemo(() => {
+    const next: Record<string, number> = {};
+    for (const calculation of allCalculations) {
+      next[calculation.product.articleWB] = calculation.trend.multiplier;
+    }
+    return next;
+  }, [allCalculations]);
 
   const singleCalc: ShipmentCalculationV2 | null = useMemo(() => {
     if (isAllMode || !product || stock.length === 0) return null;
@@ -488,7 +508,7 @@ export default function ShipmentCalcV2({
   }, [baseEffectiveRows, effectiveRows]);
 
   const handleExport = useCallback(() => {
-    if (allCalculations.length === 0 || !articleMetricsReady) return;
+    if (allCalculations.length === 0 || !articleMetricsReady || isWarehouseReadyStockRefreshing) return;
     exportShipmentExcelSummary({
       articles: v2Articles,
       regions: v2SummaryRegions,
@@ -498,7 +518,17 @@ export default function ShipmentCalcV2({
       boxRounding: v2BoxRounding,
       editableValues: v2EditableValues,
     });
-  }, [allCalculations, articleMetricsReady, v2Articles, v2SummaryRegions, v2ViewMode, v2RowMeta, articleMetrics, v2BoxRounding, v2EditableValues]);
+  }, [allCalculations, articleMetricsReady, isWarehouseReadyStockRefreshing, v2Articles, v2SummaryRegions, v2ViewMode, v2RowMeta, articleMetrics, v2BoxRounding, v2EditableValues]);
+
+  const exportDisabled = allCalculations.length === 0 || !articleMetricsReady || isWarehouseReadyStockRefreshing;
+  const exportButtonLabel =
+    !articleMetricsReady && isWarehouseReadyStockRefreshing
+      ? "Загрузка ИЛ/ИРП и склада..."
+      : !articleMetricsReady
+        ? "Загрузка ИЛ/ИРП..."
+        : isWarehouseReadyStockRefreshing
+          ? "Обновление склада..."
+          : "Сформировать отгрузку";
 
   if (!isLoaded) {
     return (
@@ -556,10 +586,10 @@ export default function ShipmentCalcV2({
         <div className="ml-auto">
           <button
             onClick={handleExport}
-            disabled={allCalculations.length === 0 || !articleMetricsReady}
+            disabled={exportDisabled}
             className="px-5 py-2 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white text-sm rounded-lg font-medium transition-colors disabled:opacity-40"
           >
-            {articleMetricsReady ? "Сформировать отгрузку" : "Загрузка ИЛ/ИРП..."}
+            {exportButtonLabel}
           </button>
         </div>
       </div>
@@ -657,10 +687,12 @@ export default function ShipmentCalcV2({
             viewMode={v2ViewMode}
             rowMeta={v2RowMeta}
             articleMetrics={articleMetrics}
+            articleMultipliers={articleMultipliers}
             boxRounding={v2BoxRounding}
             editableValues={v2EditableValues}
             onEditableValuesChange={setV2EditableValues}
             stockStatusByBarcode={v2WarehouseStock.statuses}
+            onArticleSelectedChange={setArticleSelected}
           />
         </div>
       )}

@@ -28,12 +28,33 @@ function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-function toLocalISO(d: Date): string {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+function toDateOnlyUTC(year: number, month: number, day: number): Date {
+  return new Date(Date.UTC(year, month - 1, day));
 }
 
-function fmtDDMM(d: Date): string {
-  return `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}`;
+function addDays(date: Date, days: number): Date {
+  const result = new Date(date);
+  result.setUTCDate(result.getUTCDate() + days);
+  return result;
+}
+
+function toISODate(date: Date): string {
+  return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`;
+}
+
+function fmtDDMM(date: Date): string {
+  return `${pad2(date.getUTCDate())}.${pad2(date.getUTCMonth() + 1)}`;
+}
+
+function getMoscowToday(): Date {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Moscow",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const get = (type: string) => Number(parts.find((part) => part.type === type)?.value);
+  return toDateOnlyUTC(get("year"), get("month"), get("day"));
 }
 
 export async function GET(req: NextRequest) {
@@ -43,22 +64,21 @@ export async function GET(req: NextRequest) {
   try {
     const days = Number(req.nextUrl.searchParams.get("days") || "28");
 
-    const now = new Date();
-    const firstDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days);
-    const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const dateFrom = toLocalISO(firstDate);
-    const dateTo = toLocalISO(todayDate);
+    const todayDate = getMoscowToday();
+    const firstDate = addDays(todayDate, -days);
+    const dateFrom = toISODate(firstDate);
+    const dateTo = toISODate(todayDate);
 
     const numWeeks = Math.max(1, Math.floor(days / 7));
     const weekBounds = Array.from({ length: numWeeks }, (_, w) => {
-      const start = new Date(firstDate.getFullYear(), firstDate.getMonth(), firstDate.getDate() + w * 7);
-      const end = new Date(firstDate.getFullYear(), firstDate.getMonth(), firstDate.getDate() + (w + 1) * 7);
+      const start = addDays(firstDate, w * 7);
+      const end = addDays(firstDate, (w + 1) * 7);
       return {
         week: w + 1,
-        startISO: toLocalISO(start),
-        endISO: toLocalISO(end),
+        startISO: toISODate(start),
+        endISO: toISODate(end),
         label: `Нед. ${w + 1}`,
-        dateRange: `${fmtDDMM(start)} – ${fmtDDMM(new Date(end.getFullYear(), end.getMonth(), end.getDate() - 1))}`,
+        dateRange: `${fmtDDMM(start)} – ${fmtDDMM(addDays(end, -1))}`,
       };
     });
 
@@ -83,8 +103,7 @@ export async function GET(req: NextRequest) {
     // Correction multiplier: клонируем заказы последних 7 дней
     const corrections = await getLastWeekCorrectionPg();
     const globalCoeff = corrections.get("__global__") || 1;
-    const sevenDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
-    const sevenDaysAgoISO = toLocalISO(sevenDaysAgo);
+    const sevenDaysAgoISO = toISODate(addDays(todayDate, -7));
     const applyCorrection = globalCoeff > 1;
 
     const perBarcode: OrderAggregates["perBarcode"] = {};

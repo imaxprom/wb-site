@@ -16,9 +16,13 @@ import {
   getTodayComplaintsCountPg,
   getLastComplaintByManagerPg,
   shouldPauseByRecentRejectionsPg,
+  getActiveComplaintPausePg,
+  setComplaintPausePg,
+  clearComplaintPausePg,
   type ReviewAccount,
   type Review,
   type ReviewComplaint,
+  type ReviewComplaintPause,
 } from "@/lib/reviews-db";
 import { isPostgresReadonlyConnection } from "@/lib/postgres";
 
@@ -27,6 +31,9 @@ export const maxDuration = 300;
 const WB_COMPLAINTS_URL =
   "https://seller-reviews.wildberries.ru/ns/fa-seller-api/reviews-ext-seller-portal/api/v1/feedbacks/complaints";
 const CODEX_GATEWAY_ENV_PATH = path.join(process.cwd(), "data", "codex-gateway.env");
+const COMPLAINT_PAUSE_LAST_N = 5;
+const COMPLAINT_PAUSE_WINDOW_HOURS = 24;
+const COMPLAINT_PAUSE_HOURS = 24;
 
 interface Manager {
   name: string;
@@ -106,8 +113,21 @@ async function readLastComplaintByManager(accountId: number, managerName: string
   return await getLastComplaintByManagerPg(accountId, managerName);
 }
 
-async function readPauseByRecentRejections(accountId: number, lastN: number): Promise<{ pause: boolean; rejected: number; approved: number }> {
-  return await shouldPauseByRecentRejectionsPg(accountId, lastN);
+async function readPauseByRecentRejections(accountId: number, lastN: number) {
+  return await shouldPauseByRecentRejectionsPg(accountId, lastN, COMPLAINT_PAUSE_WINDOW_HOURS);
+}
+
+async function readActiveComplaintPause(accountId: number): Promise<ReviewComplaintPause | null> {
+  return await getActiveComplaintPausePg(accountId);
+}
+
+async function writeComplaintPause(accountId: number, stats: Record<string, unknown>): Promise<ReviewComplaintPause> {
+  return await setComplaintPausePg(
+    accountId,
+    `Последние ${COMPLAINT_PAUSE_LAST_N} обработанных жалоб за ${COMPLAINT_PAUSE_WINDOW_HOURS} ч отклонены WB`,
+    stats,
+    COMPLAINT_PAUSE_HOURS
+  );
 }
 
 async function writeComplaint(data: {
@@ -473,6 +493,30 @@ export async function POST(req: NextRequest) {
       const remaining = Math.max(0, config.daily_limit - todayCount);
       if (remaining === 0) return NextResponse.json({ submitted: 0, message: "Daily limit reached" });
 
+      const activePause = await readActiveComplaintPause(account.id);
+      if (activePause) {
+        return NextResponse.json({
+          submitted: 0,
+          paused: true,
+          paused_until: activePause.paused_until,
+          pause_reason: activePause.reason,
+          message: "Auto complaints paused by recent WB rejections",
+        });
+      }
+
+      const eff = await readPauseByRecentRejections(account.id, COMPLAINT_PAUSE_LAST_N);
+      if (eff.pause) {
+        const pause = await writeComplaintPause(account.id, eff);
+        return NextResponse.json({
+          submitted: 0,
+          paused: true,
+          paused_until: pause.paused_until,
+          pause_reason: pause.reason,
+          stats: eff,
+          message: "Auto complaints paused by recent WB rejections",
+        });
+      }
+
       const excludedArticles = config.excluded_articles
         ? config.excluded_articles.split(/[,\n]/).map((s: string) => s.trim()).filter(Boolean)
         : [];
@@ -565,14 +609,28 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Cabinet tokens not configured for this account" }, { status: 400 });
       }
 
-      // Эффективность-чек: если последние 5 обработанных — все rejected,
-      // даём пользователю знать и не даём подать. Обходится ручной отменой или после нового approved.
+      // Эффективность-чек: если свежие последние N обработанных все rejected,
+      // создаём явную паузу. Старые исторические rejected не должны держать вечный стоп.
       if (!json.dry_run && !json.force) {
-        const eff = await readPauseByRecentRejections(account.id, 5);
-        if (eff.pause) {
+        const activePause = await readActiveComplaintPause(account.id);
+        if (activePause) {
           return NextResponse.json({
-            error: `Пауза: последние 5 жалоб все отклонены WB. Проверь настройки промпта/менеджеров. Передай force=true чтобы подать принудительно.`,
+            error: `Пауза автожалоб активна до ${new Date(activePause.paused_until).toLocaleString("ru-RU")}. Можно подать принудительно.`,
             paused: true,
+            paused_until: activePause.paused_until,
+            pause_reason: activePause.reason,
+            stats: activePause.stats_json,
+          }, { status: 429 });
+        }
+
+        const eff = await readPauseByRecentRejections(account.id, COMPLAINT_PAUSE_LAST_N);
+        if (eff.pause) {
+          const pause = await writeComplaintPause(account.id, eff);
+          return NextResponse.json({
+            error: `Пауза: свежие последние ${COMPLAINT_PAUSE_LAST_N} жалоб за ${COMPLAINT_PAUSE_WINDOW_HOURS} ч все отклонены WB. Можно подать принудительно.`,
+            paused: true,
+            paused_until: pause.paused_until,
+            pause_reason: pause.reason,
             stats: eff,
           }, { status: 429 });
         }
@@ -754,6 +812,9 @@ async function syncComplaintStatuses(): Promise<number> {
           const complaint = pendingMap.get(fb.id)!;
           await writeComplaintStatus(complaint.id, status);
           await writeReviewComplaintStatus(complaint.review_id, status);
+          if (status === "approved") {
+            await clearComplaintPausePg(account.id);
+          }
           pendingMap.delete(fb.id);
           totalUpdated++;
         }
@@ -776,6 +837,7 @@ export async function GET(req: NextRequest) {
   try {
     const sp = req.nextUrl.searchParams;
     const shouldSync = sp.get("sync") === "true";
+    const pauseOnly = sp.get("pause") === "true";
     const accountId = sp.get("account_id") ? Number(sp.get("account_id")) : undefined;
     const status = sp.get("status") || undefined;
 
@@ -790,8 +852,52 @@ export async function GET(req: NextRequest) {
       await syncComplaintStatuses();
     }
 
+    if (pauseOnly) {
+      if (!accountId) return NextResponse.json({ error: "account_id is required" }, { status: 400 });
+      const [activePause, stats] = await Promise.all([
+        readActiveComplaintPause(accountId),
+        readPauseByRecentRejections(accountId, COMPLAINT_PAUSE_LAST_N),
+      ]);
+      return NextResponse.json({
+        paused: Boolean(activePause),
+        pause: activePause,
+        stats,
+        threshold: {
+          last_n: COMPLAINT_PAUSE_LAST_N,
+          window_hours: COMPLAINT_PAUSE_WINDOW_HOURS,
+          pause_hours: COMPLAINT_PAUSE_HOURS,
+        },
+      });
+    }
+
     const complaints = await getComplaintsByAccountPg(accountId, status);
     return NextResponse.json({ complaints });
+  } catch (e: unknown) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  const authError = await requireAdmin(req);
+  if (authError) return authError;
+
+  try {
+    if (isPostgresReadonlyConnection()) {
+      return NextResponse.json(
+        { error: "Review complaint pause changes are disabled in local PostgreSQL readonly mode" },
+        { status: 403 }
+      );
+    }
+
+    const sp = req.nextUrl.searchParams;
+    const pauseOnly = sp.get("pause") === "true";
+    const accountId = sp.get("account_id") ? Number(sp.get("account_id")) : undefined;
+    if (!pauseOnly || !accountId) {
+      return NextResponse.json({ error: "pause=true and account_id are required" }, { status: 400 });
+    }
+
+    await clearComplaintPausePg(accountId);
+    return NextResponse.json({ ok: true });
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }

@@ -101,8 +101,8 @@ async function getAccountIdPg() {
 const WB_FEEDBACKS_URL = "https://feedbacks-api.wildberries.ru/api/v1/feedbacks";
 const WB_FEEDBACKS_ARCHIVE_URL = "https://feedbacks-api.wildberries.ru/api/v1/feedbacks/archive";
 const ARCHIVE_TAKE = 5000;
-const ARCHIVE_MIN_INTERVAL_SECONDS = 15 * 60;
-const ARCHIVE_SUCCESS_COOLDOWN_SECONDS = 14 * 60;
+const ARCHIVE_MIN_INTERVAL_SECONDS = 30 * 60;
+const ARCHIVE_SUCCESS_COOLDOWN_SECONDS = 29 * 60;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -403,6 +403,52 @@ async function enrichFromOrdersPg(apiKey, accountId) {
   return enriched;
 }
 
+async function enrichFromShipmentOrdersPg(accountId) {
+  const result = await getPgPool().query(`
+    WITH order_source AS (
+      SELECT DISTINCT ON (sticker)
+        sticker,
+        finished_price,
+        region
+      FROM shipment_orders
+      WHERE sticker IS NOT NULL
+        AND sticker <> ''
+        AND finished_price IS NOT NULL
+        AND finished_price > 0
+      ORDER BY sticker, date DESC
+    )
+    UPDATE reviews r
+    SET
+      price = CASE
+        WHEN r.price IS NULL OR r.price <= 0 THEN order_source.finished_price
+        ELSE r.price
+      END,
+      pickup_point = CASE
+        WHEN r.pickup_point IS NULL OR r.pickup_point = '' THEN order_source.region
+        ELSE r.pickup_point
+      END
+    FROM order_source
+    WHERE r.account_id = $1
+      AND r.shk_id IS NOT NULL
+      AND r.shk_id::text = order_source.sticker
+      AND (
+        r.price IS NULL
+        OR r.price <= 0
+        OR r.pickup_point IS NULL
+        OR r.pickup_point = ''
+      )
+  `, [accountId]);
+
+  return result.rowCount || 0;
+}
+
+async function enrichReviewsRuntime(db, apiKey, accountId) {
+  if (!USE_PG) return enrichFromOrders(db, apiKey, accountId);
+  const local = await enrichFromShipmentOrdersPg(accountId);
+  const external = await enrichFromOrdersPg(apiKey, accountId);
+  return local + external;
+}
+
 async function countReviews(db, accountId = null) {
   if (USE_PG) {
     const result = accountId
@@ -598,33 +644,39 @@ async function runArchiveTick(db, apiKey, accountId) {
   const nowIso = new Date().toISOString();
 
   if (state.retry_after_until && new Date(state.retry_after_until).getTime() > Date.now()) {
+    const enriched = await enrichReviewsRuntime(db, apiKey, accountId);
     const total = await countReviews(db);
-    const message = `Отзывы: ожидание лимита WB до ${state.retry_after_until}`;
+    const withPrice = await countReviewsWithPrice(db);
+    const message = `Отзывы: ожидание лимита WB до ${state.retry_after_until} | Цена и ПВЗ: ${withPrice.toLocaleString("ru-RU")} (+${enriched.toLocaleString("ru-RU")})`;
     await updateSyncStatus(db, total, total, message);
-    log(`Archive tick skipped: rate-limit wait until ${state.retry_after_until}`);
+    log(`Archive top tick skipped: rate-limit wait until ${state.retry_after_until}, enriched=${enriched}`);
     return;
   }
 
-  const skip = Number(state.archive_skip || 0);
+  // Runtime sync must keep recent reviews fresh. Deep archive crawling is too slow
+  // and makes new reviews wait until the cursor returns to the top.
+  const skip = 0;
   const url = `${WB_FEEDBACKS_ARCHIVE_URL}?take=${ARCHIVE_TAKE}&skip=${skip}&order=dateDesc`;
-  log(`Archive tick request: take=${ARCHIVE_TAKE}, skip=${skip}`);
+  log(`Archive top tick request: take=${ARCHIVE_TAKE}, skip=${skip}`);
   const { res, data, text } = await fetchWbJsonOnce(url, apiKey);
 
   if (res.status === 429) {
     const waitSeconds = Math.max(secondsFromRateLimit(res), ARCHIVE_MIN_INTERVAL_SECONDS);
     const retryAfterUntil = addSecondsIso(waitSeconds);
+    const enriched = await enrichReviewsRuntime(db, apiKey, accountId);
     const total = await countReviews(db);
-    const message = `Отзывы: WB 429, следующий запрос после ${retryAfterUntil}`;
+    const withPrice = await countReviewsWithPrice(db);
+    const message = `Отзывы: WB 429, следующий запрос после ${retryAfterUntil} | Цена и ПВЗ: ${withPrice.toLocaleString("ru-RU")} (+${enriched.toLocaleString("ru-RU")})`;
     await updateArchiveSyncState(db, {
       ...state,
-      archive_skip: skip,
+      archive_skip: 0,
       retry_after_until: retryAfterUntil,
       last_request_at: nowIso,
       last_status: "rate_limited",
       last_message: message,
     });
     await updateSyncStatus(db, total, total, message);
-    log(`Archive tick rate-limited: retry_after=${waitSeconds}s, body=${text.slice(0, 500)}`);
+    log(`Archive top tick rate-limited: retry_after=${waitSeconds}s, enriched=${enriched}, body=${text.slice(0, 500)}`);
     return;
   }
 
@@ -650,13 +702,13 @@ async function runArchiveTick(db, apiKey, accountId) {
     : 0;
   const after = await countReviews(db, accountId);
   const inserted = after - before;
-  const nextSkip = feedbacks.length < ARCHIVE_TAKE ? 0 : skip + ARCHIVE_TAKE;
+  const enriched = await enrichReviewsRuntime(db, apiKey, accountId);
   const total = await countReviews(db);
   const withPrice = await countReviewsWithPrice(db);
-  const message = `В базе: ${total.toLocaleString("ru-RU")} ✅ | Архив WB: skip ${skip}, получено ${feedbacks.length.toLocaleString("ru-RU")}, новых ${inserted.toLocaleString("ru-RU")} | Цена и ПВЗ: ${withPrice.toLocaleString("ru-RU")}`;
+  const message = `В базе: ${total.toLocaleString("ru-RU")} ✅ | Верх архива WB: получено ${feedbacks.length.toLocaleString("ru-RU")}, новых ${inserted.toLocaleString("ru-RU")} | Цена и ПВЗ: ${withPrice.toLocaleString("ru-RU")} (+${enriched.toLocaleString("ru-RU")})`;
 
   await updateArchiveSyncState(db, {
-    archive_skip: nextSkip,
+    archive_skip: 0,
     retry_after_until: addSecondsIso(ARCHIVE_SUCCESS_COOLDOWN_SECONDS),
     last_request_at: nowIso,
     last_success_at: new Date().toISOString(),
@@ -667,7 +719,7 @@ async function runArchiveTick(db, apiKey, accountId) {
     inserted_count: Number(state.inserted_count || 0) + inserted,
   });
   await updateSyncStatus(db, total, total, message);
-  log(`Archive tick OK: skip=${skip}, fetched=${feedbacks.length}, upserted=${upserted}, new=${inserted}, next_skip=${nextSkip}, total=${total}`);
+  log(`Archive top tick OK: fetched=${feedbacks.length}, upserted=${upserted}, new=${inserted}, enriched=${enriched}, total=${total}`);
 }
 
 // ─── Main ───────────────────────────────────────────────────
@@ -751,7 +803,7 @@ async function main() {
   }
 
   // 2. Enrich from Orders API
-  const enriched = USE_PG ? await enrichFromOrdersPg(apiKey, accountId) : await enrichFromOrders(db, apiKey, accountId);
+  const enriched = await enrichReviewsRuntime(db, apiKey, accountId);
   log(`Enriched ${enriched} reviews with price & region`);
 
   // 3. Update sync status

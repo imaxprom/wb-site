@@ -33,7 +33,8 @@ export async function GET(request: NextRequest) {
 
     // Get all articles with sales in period
     const articlesSql = `
-      SELECT nm_id, sa_name,
+      SELECT nm_id,
+        COALESCE((ARRAY_REMOVE(ARRAY_AGG(NULLIF(sa_name, '') ORDER BY sale_dt DESC), NULL))[1], '') as sa_name,
         SUM(CASE WHEN supplier_oper_name = 'Продажа' THEN quantity ELSE 0 END) as sales_qty,
         SUM(CASE WHEN supplier_oper_name = 'Возврат' THEN quantity ELSE 0 END) as returns_qty,
         SUM(CASE WHEN supplier_oper_name = 'Продажа' THEN retail_price_withdisc_rub ELSE 0 END) as sales_rpwd,
@@ -47,7 +48,7 @@ export async function GET(request: NextRequest) {
         AND sale_dt >= ? AND sale_dt <= ?
         AND nm_id > 0
         ${dedupSale.sql}
-      GROUP BY nm_id, sa_name
+      GROUP BY nm_id
       ORDER BY sales_rpwd DESC
     `;
     const articlesParams = [dateFrom, dateTo, ...dedupSale.params];

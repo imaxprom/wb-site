@@ -7,7 +7,7 @@
       "blocks": [
         {
           "type": "text",
-          "content": "MpHub — production-дашборд Wildberries на VPS. Локальный MacBook используется для разработки и подготовки правок, но рабочая основа — прод: /home/makson/website на wb-site, PM2 + cron + PostgreSQL."
+          "content": "MpHub — production-дашборд Wildberries на VPS. Локальный MacBook используется для разработки и подготовки правок, но рабочая основа — прод: /home/makson/current на wb-site, PM2 + cron + PostgreSQL."
         },
         {
           "type": "schema",
@@ -16,7 +16,7 @@
             "MpHub production:",
             "  URL: https://hub.imaxprom.site",
             "  SSH: ssh wb-site",
-            "  Путь: /home/makson/website",
+            "  Путь: /home/makson/current -> /home/makson/releases/<stamp>",
             "  Runtime: nginx :80 -> Next.js 16 на 127.0.0.1:3000 под PM2 пользователя makson",
             "  Фоновые задачи: cron на VPS, не launchd",
             "",
@@ -48,8 +48,9 @@
           "title": "Расположение файлов",
           "items": [
             "/Users/octopus/Projects/website — локальная рабочая копия",
-            "/home/makson/website — production-копия на wb-site",
-            "/home/makson/website/data — production БД, логи, WB-токены; при деплое не затирать",
+            "/home/makson/current — active production symlink на wb-site",
+            "/home/makson/releases/<stamp> — release-based production-копии",
+            "/home/makson/shared/data — production runtime-данные и логи; при деплое не затирать",
             "public/data/docs.json — база знаний, которую показывает приложение",
             "public/data/monitor/*.json — данные мониторинга",
             "docs/production-network.md — фактическая сетевая схема production"
@@ -346,10 +347,10 @@
           "type": "list",
           "title": "4 таба",
           "items": [
-            "✓ Отчёты — сводный P&L: 4 summary-карточки (Реализация, Услуги, Налоги и затраты, Оп. прибыль), 5 метрик со sparkline, график «Динамика показателей». Tooltip метрики «Заказы» показывает и сумму order_sum, и количество order_count из orders_funnel",
+            "✓ Отчёты — сводный P&L: 4 summary-карточки (Реализация, Услуги, Налоги и затраты, Оп. прибыль), 5 метрик со sparkline, график «Динамика показателей». Tooltip метрики «Заказы» показывает сумму order_sum и количество order_count из orders_funnel; tooltip метрики «Продажи» показывает сумму продаж и sales_qty из realization",
             "Артикулы — юнит-экономика по каждому артикулу (выручка, расходы, маржа, реклама точная по nm_id)",
             "✓ Сверка — сравнение наших расчётов с данными ЛК WB (Excel vs API), итог по неделям",
-            "✓ Прогноз — прогноз прибыли: заказы × выкуп × unit economics − реклама − хранение − штрафы. Нераспределённая реклама (nm_id=0) учитывается."
+            "✓ Прогноз — прогноз прибыли: заказы × выкуп × unit economics − реклама − хранение − штрафы. Таблица по дням показывает цепочку расчёта: заказы, выкуп, прогноз продаж, выручка, себестоимость, комиссия WB, логистика, налоги, валовая прибыль, хранение, штрафы, реклама, общие расходы, прогноз прибыли. Нераспределённая реклама (nm_id=0) учитывается."
           ]
         },
         {
@@ -386,7 +387,7 @@
             "/api/finance/reconciliation — сверка Excel vs API",
             "/api/finance/tax-settings — ставки налогов (чтение/запись)",
             "/api/finance/cogs — себестоимость по баркодам",
-            "/api/finance/forecast — прогноз прибыли (nm_id=0 реклама учитывается)"
+            "/api/finance/forecast — прогноз прибыли; отдаёт цепочку расчёта по дням и артикулам: orders_rub, estimated_sales, estimated_revenue, cogs_total, commission_total, logistics_total, tax_total, gross_profit, storage, penalties, ad_spend, overhead, estimated_profit; дневной orders_rub берётся из orders_funnel, артикульный orders_rub распределяется пропорционально shipment_orders.price_with_disc; nm_id=0 реклама учитывается в итогах дня"
           ]
         },
         {
@@ -434,7 +435,7 @@
             "   ↓",
             "DateRangePicker → from/to даты",
             "   ↓",
-            "GET /api/data/orders + GET /api/data/order-stats?from=&to=",
+            "GET /api/data/orders?from=&to= без лимита + GET /api/data/order-stats?from=&to=",
             "   ↓",
             "modules/analytics/lib/engine.ts → getOrderStats(orders)",
             "   ↓ агрегация по размеру, региону, складу, дате",
@@ -504,7 +505,7 @@
           "type": "list",
           "title": "API эндпоинты",
           "items": [
-            "GET /api/data/orders?from=YYYY-MM-DD&to=YYYY-MM-DD — заказы за период",
+            "GET /api/data/orders?from=YYYY-MM-DD&to=YYYY-MM-DD — все детальные заказы за период для региональной аналитики; /analytics вызывает без limit=3000",
             "GET /api/data/stock — остатки на складах (для карточки 'Остатки')",
             "GET /api/data/products — каталог товаров (для AnalyticsProvider)",
             "GET /api/data/warehouses — справочник складов",
@@ -576,10 +577,15 @@
             "   → Настройки: позиций/кор, отгрузок/мес, мін.штук, вид А/Б/В",
             "",
             "7. Ручной учёт отгрузок",
-            "   → Переключатель «Учитывать отгрузки» показывает последние поставки и позволяет выбрать, что вычитать из текущего плана",
-            "   → Выбранные поставки вычитаются по barcode из потребности; старая автоматическая дедукция из /supplies больше не основной путь",
-            "   → В сводке и Excel региональные колонки: Коробов / План / Факт / Нужно",
-            "   → Факт = базовый WB-остаток до ручного вычитания, Нужно = остаточная потребность после выбранных поставок"
+            "   → Переключатель «Учитывать отгрузки» показывает последние поставки; выбранная поставка вычитается по barcode только из ФО/региональной группы склада назначения, а несопоставленные склады не вычитаются",
+            "   → Выбранные поставки вычитаются по barcode только из ФО/региональной группы склада назначения поставки; несопоставленные склады не вычитаются",
+            "   → В строке выбранной поставки после загрузки состава показывается бейдж: «Вычитается из: <ФО>» или предупреждение «ФО не найден, не вычитается»",
+            "   → В нижней сводной таблице федеральные округа: Короб / Штук / Факт / План в режиме коробов, Штук / Факт / План в режиме штук",
+            "   → Это только подписи: Штук = планируемое количество, Факт = базовый WB-остаток до ручного вычитания, финальный План = остаточная потребность после выбранных поставок",
+            "   → Выбор артикулов синхронизирован между верхней модалкой ArticleMultiSelect и чекбоксом «в отгрузке» в первом столбце нижней сводной таблицы; снятый в таблице артикул сразу исчезает из расчёта и экспорта, вернуть его можно через модалку",
+            "   → В строке артикула показываются ИЛ, ИРП и применённый коэффициент тренда",
+            "   → Сверка по строке показывает stock - shipped; в итоговой строке плюсы и нули игнорируются, суммируются только отрицательные дефициты",
+            "   → Федеральные округа имеют рассчитанную минимальную ширину, поэтому на мобильной версии таблица должна скроллиться горизонтально, а не схлопываться"
           ]
         },
         {
@@ -790,7 +796,7 @@
             "MpHub API:",
             "  /api/data/products -> артикулы, размеры, баркоды",
             "  /api/data/stock -> текущий WB-остаток",
-            "  /api/data/orders-aggregated?days=30 -> продажи/заказы за базовые 30 дней"
+            "  /api/data/orders-aggregated?days=30 -> заказы без отмен за базовые 30 дней"
           ]
         },
         {
@@ -798,11 +804,12 @@
           "title": "Механика расчёта",
           "items": [
             "Категории — rib, smooth, stringRib; артикул можно включить/выключить и переназначить в настройках, none не участвует в расчёте.",
-            "Целевая потребность — продажи за 30 дней умножаются на коэффициент 1 / 1.5 / 2 / 2.5 / 3.",
-            "Дефицит до склада — целевая потребность минус текущие остатки WB.",
-            "Итог к закупке — дефицит до склада минус остаток склада из Google Sheets.",
+            "Цель по готовому товару — заказы без отмен за 30 дней умножаются на коэффициент 1 / 1.5 / 2 / 2.5 / 3 по каждому артикулу и размеру.",
+            "Нужно упаковать — цель артикула/размера минус WB-остаток этого же артикула/размера; WB-остаток другого артикула не компенсирует эту потребность.",
+            "Сырьевая потребность — только остаток к упаковке раскладывается в цвета по составу комплекта.",
+            "Итог к закупке — сырьевая потребность минус сырьевой остаток склада из Google Sheets.",
             "Пачки — итоговые штуки делятся на 12 и округляются вверх, потому что закупка возможна только кратно пачке.",
-            "Размер 40-42 — не показывается отдельной колонкой закупки, но объединяется в 42-44 для расчёта; в складском учёте это остаются отдельные позиции.",
+            "Размер 40-42 — не показывается отдельной колонкой сырья, но остаток к упаковке этого готового размера переносится в сырьевой 42-44; в складском учёте это остаются отдельные позиции.",
             "Закупка по группе размеров — для маленькой и большой группы берётся максимум дефицита по размерам, потому что у поставщика пачка закрывает сразу 3 размера."
           ]
         },
@@ -862,7 +869,8 @@
             "   ↓",
             "API Routes: /api/reviews/* (requireAdmin)",
             "   ↓",
-            "UI: /reviews, /reviews/accounts, /reviews/settings/[id]",
+            "UI: /reviews, /reviews/replies, /reviews/complaints, /reviews/connection, /reviews/accounts; /reviews/settings/[id] сохранён как legacy direct route",
+            "/reviews — основной список отзывов; над фильтрами отображает две равные диаграммы: динамика отзывов и динамика жалоб на отзывы",
             "",
             "Автожалобы:",
             "scripts/reviews-complaints.js (production cron, каждые 30 мин)",
@@ -881,17 +889,17 @@
             "review_complaints — история жалоб (текст обращения, причина, статус, персонаж-менеджер)",
             "review_stats — статистика по дням (количество отзывов, негативных, жалоб)",
             "sync_status — состояние синхронизации (статус, прогресс, сообщение)",
-            "reviews_archive_sync_state — курсор архива WB, retry_after и статус последнего archive tick"
+            "reviews_archive_sync_state — retry_after и статус последнего чтения верхней страницы архива WB"
           ]
         },
         {
           "type": "list",
           "title": "Синхронизация отзывов",
           "items": [
-            "scripts/reviews-sync.js — production cron каждые 15 минут; обычный режим делает один WB archive request за запуск",
-            "DB-state — archive_skip, retry_after_until, last_status и счётчики хранятся в reviews_archive_sync_state",
+            "scripts/reviews-sync.js — production cron каждые 15 минут; archive-запрос читает верх архива WB (`skip=0&order=dateDesc`) не чаще 1 раза в 30 минут",
+            "DB-state — retry_after_until, last_status и счётчики хранятся в reviews_archive_sync_state; archive_skip в runtime не используется для глубокого обхода",
             "WB 429 — записывается в состояние и следующий тик пропускает запрос до retry_after_until",
-            "Обогащение — Orders API (30 дней, реалтайм) + Statistics API (90 дней, задержка 7-10 дн)",
+            "Обогащение — сначала локальный fallback из shipment_orders по reviews.shk_id = shipment_orders.sticker, затем WB Orders API за последние 30 дней; запускается в каждом cron-цикле, включая ожидание WB 429",
             "Связка отзыв↔заказ — через lastOrderShkId (shk_id) = sticker в Orders API",
             "Порционная запись — batch по 5000, не копит в памяти"
           ]
@@ -908,8 +916,24 @@
             "Причина жалобы — ИИ выбирает из допустимых причин на основе содержания отзыва",
             "Рандомная задержка — от 1 до 10 минут между жалобами (настраиваемо)",
             "Дневной лимит — по умолчанию 50 жалоб в день",
+            "Защитная пауза — если свежие последние 5 обработанных жалоб за 24 часа все rejected, создаётся запись review_complaint_pauses на 24 часа; исторические отклонения вне окна не блокируют подачу",
             "Fallback — если Codex gateway не ответил, жалоба пропускается или остаётся в error/pending retry, без текста в WB не отправляется",
-            "Ручная жалоба без dry_run создаёт pending-запись и возвращает 202; фоновый submit делает AI/WB retry до 3 попыток"
+            "Ручная жалоба без dry_run создаёт pending-запись и возвращает 202; фоновый submit делает AI/WB retry до 3 попыток; при активной паузе UI предлагает принудительную подачу через force=true"
+          ]
+        },
+        {
+          "type": "list",
+          "title": "Codex gateway — авторизация и проверки",
+          "items": [
+            "Назначение — генерация текста жалоб для reviews-complaints.js через Codex CLI, не через Claude CLI и не через официальный OpenAI API billing",
+            "Хост — VM codex-cli, внутренний адрес 192.168.55.106:8080, systemd-service codex-gateway.service, код /opt/codex-gateway/server.js, env /etc/codex-gateway.env",
+            "Модель — gpt-5.5, reasoning effort xhigh; OpenAI-compatible endpoints: /health, /v1/models, /v1/chat/completions",
+            "Сеть — gateway и ручные проверки Codex CLI должны использовать HTTP_PROXY/HTTPS_PROXY=http://127.0.0.1:8888; прямой доступ с внешнего IP 46.19.118.18 может возвращать Cloudflare/OpenAI 403",
+            "Если произошёл разлогин — сначала сделать backup ~/.codex/auth.json, затем на Mac поднять временный callback-туннель ssh -N -L 1455:127.0.0.1:1455 codex-cli",
+            "На VM запускать обычный codex login с proxy env, открыть OAuth URL локально, дождаться Successfully logged in и закрыть временный tunnel",
+            "После re-login проверять три слоя: codex login status, короткий codex exec с proxy env, затем gateway /v1/chat/completions через Bearer token",
+            "codex login --device-auth на 2026-06-13 давал 403 и не считается основным рабочим способом восстановления",
+            "Секреты нельзя выводить или сохранять: CODEX_GATEWAY_TOKEN, ~/.codex/auth.json, access/refresh токены, OAuth URL и cookies"
           ]
         },
         {
@@ -920,7 +944,8 @@
             "Пагинация через pages.next cursor — проходит все страницы отзывов",
             "Поле supplierComplaints.feedbackComplaint.status — approved/rejected/unknown",
             "Wb-Seller-Lk НЕ требуется — работает только с Authorizev3 + wbx-validation-key",
-            "Проверка тела ответа WB — error: true при HTTP 200 = жалоба не принята"
+            "Проверка тела ответа WB — error: true при HTTP 200 = жалоба не принята",
+            "Любой approved при синхронизации статусов снимает активную паузу автожалоб по аккаунту"
           ]
         },
         {
@@ -968,7 +993,7 @@
           "type": "list",
           "title": "Фоновые скрипты (production cron)",
           "items": [
-            "reviews-sync.js — каждые 15 минут, slow archive tick отзывов + DB retry state",
+            "reviews-sync.js — cron каждые 15 минут; верх архива отзывов не чаще 30 минут + цена/ПВЗ + DB retry state",
             "reviews-complaints.js — каждые 30 мин, автожалобы + синхронизация статусов"
           ]
         },
@@ -1085,6 +1110,7 @@
             "Упали — PM2/скрипт/health-check в ошибке",
             "Ошибок за 24ч — счётчик ERROR/CRITICAL по логам",
             "Здоровье данных — отдельный снимок data-health-cron.json; проверяет не только факт запуска, но и наличие свежих данных в реализации, рекламе, воронке, хранении, отгрузке, логистике и отзывах",
+            "Для reviews-sync data-health считает штатными end-state строками `Archive top tick OK`, `Archive top tick skipped` и `Archive top tick rate-limited`; свежесть самих отзывов проверяется отдельно через PostgreSQL sync_status",
             "Auth-status — проверка WB API key и авторизации ЛК"
           ]
         },
@@ -1840,6 +1866,7 @@
             "review_accounts — 19 колонок. Аккаунты для модуля отзывов: API ключи, токены WB, настройки автожалоб (settings_json)",
             "reviews — 27 колонок. Отзывы: рейтинг, текст, плюсы/минусы, цена (обогащение), ПВЗ, статус жалобы. UNIQUE(wb_review_id)",
             "review_complaints — жалобы: причина, текст (от Codex gateway), статус (pending→submitted→approved/rejected/error), менеджер и timestamps",
+            "review_complaint_pauses — явные паузы автожалоб по аккаунту: paused_until, reason, stats_json",
             "review_stats — 6 колонок. Агрегированная статистика по дням. UNIQUE(account_id, date)",
             "sync_status — 6 колонок. Синглтон (id=1). Прогресс синхронизации для UI"
           ]
@@ -2003,7 +2030,7 @@
           "title": "2. reviews-sync.js — Синхронизация отзывов",
           "items": [
             "Расписание — каждые 15 минут по production crontab",
-            "Задача — slow archive tick: один WB archive request за запуск + DB retry state",
+            "Задача — верх архива WB (`skip=0&order=dateDesc`) не чаще 1 раза в 30 минут + обогащение цены/ПВЗ каждый cron-цикл + DB retry state",
             "WB API — feedbacks-api и statistics/orders API",
             "Секреты аккаунтов — хранятся в review_accounts, наружу API отдаёт только has_* флаги",
             "Таблицы — reviews, review_stats, sync_status, reviews_archive_sync_state",
@@ -2207,7 +2234,7 @@
             "daily-sync-api.sh — каждый час, вызывает production API для реализации, рекламы, заказов и хранения",
             "sync-weekly-report.js — Пн-Ср 10:00-23:00 МСК, Excel-отчёты из ЛК WB",
             "shipment-sync.sh — каждый час, POST /api/data/sync с days=28; lock защищает от параллельного запуска",
-            "reviews-sync.js — каждые 15 минут, slow archive tick отзывов + DB retry state",
+            "reviews-sync.js — cron каждые 15 минут; верх архива отзывов не чаще 30 минут + цена/ПВЗ + DB retry state",
             "reviews-complaints.js — каждые 30 минут, автожалобы + статусы",
             "vps-watchdog.py — каждые 5 минут, PM2/cron/HTTP проверки и Telegram-алерты; во время release deploy пропускает проверки при активном data/deploy.lock",
             "data-health-cron.sh — каждый час, снимок здоровья данных для мониторинга",
@@ -2257,7 +2284,10 @@
             "/products — список товаров и управление",
             "/reviews — мониторинг отзывов, фильтрация, статусы",
             "/reviews/accounts — управление аккаунтами отзывов",
-            "/reviews/settings/[id] — настройки конкретного аккаунта",
+            "/reviews/replies — автоответы по выбранному WB-аккаунту",
+            "/reviews/complaints — автожалобы по выбранному WB-аккаунту",
+            "/reviews/connection — API-ключи, токены кабинета и статус базы отзывов",
+            "/reviews/settings/[id] — legacy-настройки конкретного аккаунта",
             "/monitor — мониторинг всех сервисов (daily-sync, weekly-sync и т.д.)",
             "/reports — скачивание отчётов WB (требует авторизации ЛК)",
             "/settings — глобальные настройки приложения, API-ключ",
@@ -2493,7 +2523,7 @@
             "daily-sync-api.sh — каждый час: вызывает production API sync для реализации, рекламы, заказов и хранения → PostgreSQL",
             "sync-weekly-report.js — Пн-Ср 10:00-23:00 МСК: Excel-отчёты ЛК WB → PostgreSQL weekly_reports/weekly_rows + buyout_rates",
             "shipment-sync.sh — каждый час: POST /api/data/sync, days=28 по умолчанию, lock от дублей",
-            "reviews-sync.js — каждые 15 минут: slow archive tick отзывов + DB retry state",
+            "reviews-sync.js — cron каждые 15 минут: верх архива отзывов не чаще 30 минут + цена/ПВЗ + DB retry state",
             "reviews-complaints.js — каждые 30 мин: автожалобы + синхронизация статусов",
             "paid-storage-sync.js — ежедневный догон paid_storage за последние дни",
             "auth-check.js — ежедневная проверка WB API/auth и Telegram-алерт при проблемах"

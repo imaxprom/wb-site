@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useReducer, useEffect, useCallback } from "react";
+import React, { createContext, useContext, useReducer, useEffect, useCallback, useRef, useState } from "react";
 import type { StockItem, OrderRecord, OrderAggregates, Product, ProductOverrides, WarehouseReadyStockRow } from "@/types";
 import type { AppSettings } from "@/types";
 import { getDefaultRegions, getDefaultRegionGroups } from "@/modules/shipment/lib/engine";
@@ -36,6 +36,7 @@ const INITIAL_STATE: DataState = {
 type DataAction =
   | { type: "INIT"; data: Omit<DataState, "isLoaded"> }
   | { type: "SET_DATA"; stock: StockItem[]; orders: OrderRecord[]; orderAggregates: OrderAggregates | null; products: Product[]; warehouseReadyStock: WarehouseReadyStockRow[]; uploadDate: string }
+  | { type: "SET_WAREHOUSE_READY_STOCK"; warehouseReadyStock: WarehouseReadyStockRow[] }
   | { type: "UPDATE_OVERRIDE"; articleWB: string; customName?: string; barcode?: string; perBox?: number; disabled?: boolean }
   | { type: "UPDATE_SETTINGS"; settings: Partial<AppSettings> }
   | { type: "CLEAR" };
@@ -54,6 +55,12 @@ function dataReducer(state: DataState, action: DataAction): DataState {
         products: action.products,
         warehouseReadyStock: action.warehouseReadyStock,
         uploadDate: action.uploadDate,
+      };
+
+    case "SET_WAREHOUSE_READY_STOCK":
+      return {
+        ...state,
+        warehouseReadyStock: action.warehouseReadyStock,
       };
 
     case "UPDATE_OVERRIDE": {
@@ -109,7 +116,9 @@ interface DataContextType {
   settings: AppSettings;
   overrides: ProductOverrides;
   isLoaded: boolean;
+  isWarehouseReadyStockRefreshing: boolean;
   refreshData: () => Promise<void>;
+  refreshWarehouseReadyStock: () => Promise<void>;
   syncFromWB: (days: number) => Promise<void>;
   updateProductPerBox: (articleWB: string, barcode: string, perBox: number) => void;
   updateCustomName: (articleWB: string, customName: string) => void;
@@ -126,10 +135,19 @@ export function useData() {
   return ctx;
 }
 
+async function fetchWarehouseReadyStock(): Promise<WarehouseReadyStockRow[] | null> {
+  const res = await fetch("/api/warehouse/stock", { cache: "no-store" });
+  if (!res.ok) return null;
+  const payload = await res.json().catch(() => ({ rows: [] })) as { rows?: WarehouseReadyStockRow[] };
+  return Array.isArray(payload.rows) ? payload.rows : [];
+}
+
 // --- Provider ---
 
 export function DataProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(dataReducer, INITIAL_STATE);
+  const [isWarehouseReadyStockRefreshing, setIsWarehouseReadyStockRefreshing] = useState(false);
+  const warehouseRefreshPromiseRef = useRef<Promise<void> | null>(null);
 
   const refreshData = useCallback(async () => {
     // Get uploadDays from settings API
@@ -167,6 +185,43 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       warehouseReadyStock: warehouse.rows || [],
       uploadDate: meta.uploadDate || new Date().toISOString(),
     });
+  }, []);
+
+  const refreshWarehouseReadyStock = useCallback(async () => {
+    if (warehouseRefreshPromiseRef.current) {
+      return warehouseRefreshPromiseRef.current;
+    }
+
+    setIsWarehouseReadyStockRefreshing(true);
+    const task = (async () => {
+      try {
+        const syncRes = await fetch("/api/warehouse/sync", { method: "POST" });
+        if (!syncRes.ok) {
+          const payload = await syncRes.json().catch(() => ({})) as { error?: string };
+          const isLocalReadonly = syncRes.status === 403 && payload.error?.includes("local PostgreSQL readonly mode");
+          if (!isLocalReadonly) {
+            console.warn("Warehouse Google sync failed:", payload.error || `HTTP ${syncRes.status}`);
+          }
+        }
+      } catch (err) {
+        console.warn("Warehouse Google sync failed:", err);
+      }
+
+      const warehouseReadyStock = await fetchWarehouseReadyStock();
+      if (warehouseReadyStock) {
+        dispatch({ type: "SET_WAREHOUSE_READY_STOCK", warehouseReadyStock });
+      }
+    })();
+
+    warehouseRefreshPromiseRef.current = task;
+    try {
+      await task;
+    } finally {
+      if (warehouseRefreshPromiseRef.current === task) {
+        warehouseRefreshPromiseRef.current = null;
+        setIsWarehouseReadyStockRefreshing(false);
+      }
+    }
   }, []);
 
   const syncFromWB = useCallback(async (days: number) => {
@@ -269,7 +324,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           fetch(`/api/data/orders-aggregated?days=${days}`),
           fetch("/api/data/stock"),
           fetch("/api/data/products"),
-          fetch("/api/warehouse/stock"),
+          fetch("/api/warehouse/stock", { cache: "no-store" }),
           fetch("/api/data/meta"),
         ]);
 
@@ -390,7 +445,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         settings: state.settings,
         overrides: state.overrides,
         isLoaded: state.isLoaded,
+        isWarehouseReadyStockRefreshing,
         refreshData,
+        refreshWarehouseReadyStock,
         syncFromWB,
         updateProductPerBox,
         updateCustomName,

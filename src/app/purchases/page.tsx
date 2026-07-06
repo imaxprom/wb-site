@@ -4,7 +4,7 @@ export default function PurchasesPage() {
   return (
     <PurchasesCalculator
       title="Закупки"
-      description="Расчёт потребности по комплектам: остатки из Google Sheets, продажи и потребность в штуках и пачках."
+      description="Расчёт сырья для закупки: готовый WB-товар учитывается по своему артикулу, остаток упаковки раскладывается в цвета и размеры."
       showPlan={false}
     />
   );

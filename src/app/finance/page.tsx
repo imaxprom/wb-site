@@ -66,6 +66,7 @@ type ChartTooltipPayload = {
   payload?: {
     day?: string;
     orders_count?: number;
+    sales_qty?: number;
     [key: string]: unknown;
   };
 };
@@ -82,18 +83,18 @@ function MetricMiniTooltip({
   active,
   payload,
   title,
-  showOrdersCount = false,
+  countKey,
 }: {
   active?: boolean;
   payload?: ChartTooltipPayload[];
   title: string;
-  showOrdersCount?: boolean;
+  countKey?: "orders_count" | "sales_qty";
 }) {
   if (!active || !payload?.length) return null;
   const item = payload[0];
   const day = item.payload?.day || "";
   const value = Number(item.value || 0);
-  const ordersCount = Number(item.payload?.orders_count || 0);
+  const countValue = countKey ? Number(item.payload?.[countKey] || 0) : 0;
   const color = item.color || "#e4e4ef";
 
   return (
@@ -106,10 +107,10 @@ function MetricMiniTooltip({
         </span>
         <span className="font-semibold">{RUB(value)}</span>
       </div>
-      {showOrdersCount && (
+      {countKey && (
         <div className="mt-1 flex min-w-[150px] items-center justify-between gap-4">
           <span className="text-[var(--text-muted)]">Кол-во</span>
-          <span className="font-semibold">{QTY(ordersCount)}</span>
+          <span className="font-semibold">{QTY(countValue)}</span>
         </div>
       )}
     </div>
@@ -164,7 +165,7 @@ function TabBtn({ label, active, onClick }: { label: string; active: boolean; on
     <button
       onClick={onClick}
       className={
-        "px-4 py-2 text-sm font-medium rounded-lg transition-colors border " +
+        "inline-flex w-full min-w-0 items-center justify-center whitespace-nowrap rounded-lg border px-2 py-2 text-xs font-medium transition-colors md:w-auto md:px-4 md:text-sm " +
         (active
           ? "bg-[var(--bg-card-hover)] text-white border-[var(--accent)]"
           : "bg-transparent text-[var(--text-muted)] border-[var(--border)] hover:bg-[var(--bg-card-hover)] hover:text-[var(--text)]")
@@ -448,8 +449,8 @@ export default function FinancePage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-start justify-between">
-        <div className="relative">
+      <div className="space-y-3 md:flex md:items-start md:justify-between md:space-y-0">
+        <div className="relative w-full md:w-auto">
           <button
             onClick={() => {
               setShowPeriodPicker((open) => {
@@ -458,9 +459,9 @@ export default function FinancePage() {
                 return next;
               });
             }}
-            className="inline-flex items-center gap-2 text-sm text-[var(--text-muted)] px-3 py-1 border border-[var(--border)] rounded-lg hover:border-[var(--accent)] hover:text-[var(--text)] transition-colors cursor-pointer"
+            className="flex w-full min-w-0 items-center justify-between gap-2 whitespace-nowrap rounded-lg border border-[var(--border)] px-3 py-2 text-xs text-[var(--text-muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--text)] md:inline-flex md:w-auto md:py-1 md:text-sm"
           >
-            <span>{periodLabel}</span>
+            <span className="min-w-0 truncate md:overflow-visible md:text-clip">{periodLabel}</span>
             <Calendar className="h-4 w-4 shrink-0" aria-hidden="true" />
           </button>
           {showPeriodPicker && (
@@ -482,11 +483,11 @@ export default function FinancePage() {
             />
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="grid w-full grid-cols-3 gap-2 md:flex md:w-auto md:items-center">
           <Link
             href="/finance/settings"
             className={
-              "relative flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg border transition-colors " +
+              "relative flex min-w-0 items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-xs font-medium transition-colors md:justify-start md:px-3 md:text-sm " +
               (missingCogsCount && missingCogsCount > 0
                 ? "finance-cogs-alert border-[var(--danger)] bg-[var(--danger)]/10 text-white hover:bg-[var(--danger)]/20"
                 : "border-[var(--border)] bg-[var(--bg-card)] hover:bg-[var(--bg-card-hover)] text-[var(--text-muted)] hover:text-[var(--text)]")
@@ -498,7 +499,7 @@ export default function FinancePage() {
             }
           >
             <Package size={16} aria-hidden="true" />
-            <span>Себестоимость</span>
+            <span className="min-w-0 truncate md:overflow-visible md:text-clip">Себестоимость</span>
             {missingCogsCount !== null && missingCogsCount > 0 && (
               <span className="ml-1 rounded-full bg-[var(--danger)] px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
                 {formatNumber(missingCogsCount)}
@@ -507,23 +508,23 @@ export default function FinancePage() {
           </Link>
           <Link
             href="/finance/taxes"
-            className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg border border-[var(--border)] bg-[var(--bg-card)] hover:bg-[var(--bg-card-hover)] text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+            className="flex min-w-0 items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-2 py-2 text-xs font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-card-hover)] hover:text-[var(--text)] md:justify-start md:px-3 md:text-sm"
           >
             <ReceiptText size={16} aria-hidden="true" />
-            <span>Налоги</span>
+            <span className="min-w-0 truncate md:overflow-visible md:text-clip">Налоги</span>
           </Link>
           <Link
             href="/finance/formulas"
-            className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg border border-[var(--border)] bg-[var(--bg-card)] hover:bg-[var(--bg-card-hover)] text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+            className="flex min-w-0 items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-2 py-2 text-xs font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-card-hover)] hover:text-[var(--text)] md:justify-start md:px-3 md:text-sm"
           >
             <Calculator size={16} aria-hidden="true" />
-            <span>Формулы</span>
+            <span className="min-w-0 truncate md:overflow-visible md:text-clip">Формулы</span>
           </Link>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex flex-wrap gap-2">
+      <div className="grid grid-cols-4 gap-2 md:flex md:flex-wrap">
         {(["pnl", "articles", "reconciliation", "forecast"] as Tab[]).map((t) => (
           <TabBtn
             key={t}
@@ -656,9 +657,9 @@ export default function FinancePage() {
                     {filteredDaily.length > 0 && (
                       <div className="mt-2">
                         <ResponsiveContainer width="100%" height={40}>
-                          <AreaChart data={filteredDaily.map(d => ({ v: (d as unknown as Record<string, number>)[mc.dataKey] || 0, orders_count: d.orders_count || 0, day: d.date.slice(8) + "." + d.date.slice(5, 7) }))} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+                          <AreaChart data={filteredDaily.map(d => ({ v: (d as unknown as Record<string, number>)[mc.dataKey] || 0, orders_count: d.orders_count || 0, sales_qty: d.sales_qty || 0, day: d.date.slice(8) + "." + d.date.slice(5, 7) }))} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
                             <Tooltip
-                              content={<MetricMiniTooltip title={mc.title} showOrdersCount={mc.dataKey === "orders_rub"} />}
+                              content={<MetricMiniTooltip title={mc.title} countKey={mc.dataKey === "orders_rub" ? "orders_count" : mc.dataKey === "sales_rub" ? "sales_qty" : undefined} />}
                             />
                             <Area type="monotone" dataKey="v" stroke={mc.color} fill={mc.color} fillOpacity={0.15} strokeWidth={1.5} dot={false} />
                           </AreaChart>
@@ -674,10 +675,14 @@ export default function FinancePage() {
             <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
               <h3 className="text-sm font-medium text-[var(--text-muted)] uppercase tracking-wide mb-4">Динамика показателей</h3>
               <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={filteredDaily.map(d => ({ ...d, day: d.date.slice(8) + "." + d.date.slice(5, 7) + "." + d.date.slice(0, 4) }))} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                <BarChart
+                  data={filteredDaily.map(d => ({ ...d, day: d.date.slice(8) + "." + d.date.slice(5, 7) + "." + d.date.slice(0, 4) }))}
+                  margin={{ top: 5, right: 4, left: 0, bottom: 5 }}
+                  barCategoryGap="4%"
+                >
                   <CartesianGrid strokeDasharray="3 3" stroke="#2a2a3a" />
                   <XAxis dataKey="day" tick={{ fill: "#8888a0", fontSize: 11 }} />
-                  <YAxis tickFormatter={(v) => fmtM(v)} tick={{ fill: "#8888a0", fontSize: 11 }} />
+                  <YAxis width={32} tickFormatter={(v) => fmtM(v)} tick={{ fill: "#8888a0", fontSize: 10 }} />
                   <Tooltip content={<DailyMetricsTooltip />} />
                   <Legend wrapperStyle={{ color: "#8888a0", fontSize: 12 }} />
                   <Bar dataKey="profit" name="Прибыль" stackId="stack" fill="#66BB6A" />
@@ -685,14 +690,20 @@ export default function FinancePage() {
                     <LabelList content={(props) => {
                       const { x, y, width, height, index } = props as { x: number; y: number; width: number; height: number; index: number };
                       const val = filteredDaily[index]?.sales_rub ?? 0;
-                      return <text key={`sl-${index}`} x={x + width / 2} y={y + height / 2 + 3} textAnchor="middle" fill="#000" fontSize={9}>{formatNumber(Math.round(val))}</text>;
+                      const label = formatNumber(Math.round(val));
+                      const estimatedTextWidth = label.length * 4.4;
+                      if (!Number.isFinite(x) || !Number.isFinite(y) || width < estimatedTextWidth + 2 || height < 10) return null;
+                      return <text key={`sl-${index}`} x={x + width / 2} y={y + height / 2 + 3} textAnchor="middle" fill="#000" fontSize={8}>{label}</text>;
                     }} />
                   </Bar>
                   <Bar dataKey="orders_rub" name="Заказы" stackId="stack" fill="#F4A236" radius={[4, 4, 0, 0]}>
                     <LabelList content={(props) => {
                       const { x, y, width, height, index } = props as { x: number; y: number; width: number; height: number; index: number };
                       const val = filteredDaily[index]?.orders_rub ?? 0;
-                      return <text key={`ol-${index}`} x={x + width / 2} y={y + height / 2 + 3} textAnchor="middle" fill="#000" fontSize={9}>{formatNumber(Math.round(val))}</text>;
+                      const label = formatNumber(Math.round(val));
+                      const estimatedTextWidth = label.length * 4.4;
+                      if (!Number.isFinite(x) || !Number.isFinite(y) || width < estimatedTextWidth + 2 || height < 10) return null;
+                      return <text key={`ol-${index}`} x={x + width / 2} y={y + height / 2 + 3} textAnchor="middle" fill="#000" fontSize={8}>{label}</text>;
                     }} />
                   </Bar>
                 </BarChart>

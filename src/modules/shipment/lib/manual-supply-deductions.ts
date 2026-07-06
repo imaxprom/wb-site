@@ -1,5 +1,13 @@
 import type { RegionShipment, ShipmentRow } from "@/types";
 
+export interface ManualSupplyDeductionEntry {
+  total: number;
+  byRegion: Record<string, number>;
+  unmatched?: number;
+}
+
+export type ManualSupplyDeductByBarcode = Map<string, ManualSupplyDeductionEntry | number>;
+
 export interface ManualSupplyDeductionMeta {
   available: number;
   applied: number;
@@ -55,20 +63,55 @@ function applyDeductionToRegions(regions: RegionShipment[], perBox: number, quan
   return { regions: adjusted, applied };
 }
 
+function applyDeductionToTargetRegions(regions: RegionShipment[], perBox: number, entry: ManualSupplyDeductionEntry) {
+  let applied = 0;
+
+  const adjusted = regions.map((region) => {
+    const quantity = Number(entry.byRegion?.[region.regionId] || 0);
+    if (quantity <= 0) return region;
+
+    const deficit = Math.max(0, region.plan - region.fact);
+    const addition = Math.min(quantity, deficit);
+    if (addition <= 0) return region;
+
+    applied += addition;
+    const fact = region.fact + addition;
+    const { boxes, pieces } = calculateBoxes(region.plan, fact, perBox);
+
+    return {
+      ...region,
+      fact,
+      boxes,
+      pieces,
+    };
+  });
+
+  return { regions: adjusted, applied };
+}
+
 export function applyManualSupplyDeductions<T extends ShipmentRow>(
   rows: T[],
-  deductByBarcode: Map<string, number> | undefined,
+  deductByBarcode: ManualSupplyDeductByBarcode | undefined,
 ): ManualSupplyDeductionResult<T> {
   const metaByBarcode: Record<string, ManualSupplyDeductionMeta> = {};
   let totalAvailable = 0;
   let totalApplied = 0;
 
   const adjustedRows = rows.map((row) => {
-    const available = deductByBarcode?.get(row.barcode) || 0;
+    const rawEntry = deductByBarcode?.get(row.barcode);
+    if (!rawEntry) return row;
+
+    const entry: ManualSupplyDeductionEntry = typeof rawEntry === "number"
+      ? { total: rawEntry, byRegion: {} }
+      : rawEntry;
+    const available = Number(entry.total || 0) + Number(entry.unmatched || 0);
     if (available <= 0) return row;
 
     totalAvailable += available;
-    const { regions, applied } = applyDeductionToRegions(row.regions, row.perBox, available);
+    const hasTargetRegions = Object.keys(entry.byRegion || {}).length > 0;
+    const { regions, applied } = hasTargetRegions
+      ? applyDeductionToTargetRegions(row.regions, row.perBox, entry)
+      : applyDeductionToRegions(row.regions, row.perBox, available);
     totalApplied += applied;
     metaByBarcode[row.barcode] = {
       available,

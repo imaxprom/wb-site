@@ -18,6 +18,7 @@ const AUTH_PID_PATH = "/tmp/wb_auth_pid";
 const SUPPLIER_CHOICE_PATH = "/tmp/wb_supplier_choice";
 const DEFAULT_RATE_LIMIT_SECONDS = 30 * 60;
 const MAX_RATE_LIMIT_SECONDS = 24 * 60 * 60;
+const SUBMIT_CODE_TIMEOUT_MS = 4 * 60 * 1000;
 
 const g = globalThis as unknown as { __wbAuthProc?: ChildProcess | null };
 
@@ -225,11 +226,11 @@ export async function playwrightSubmitCode(code: string): Promise<AuthStepResult
     }
 
     fs.writeFileSync(SMS_CODE_PATH, digits);
-    console.log("[wb-auth-pw] Code written:", digits);
+    console.log("[wb-auth-pw] SMS code submitted");
 
     // Wait for status change
     const startTime = Date.now();
-    while (Date.now() - startTime < 60000) {
+    while (Date.now() - startTime < SUBMIT_CODE_TIMEOUT_MS) {
       await new Promise(r => setTimeout(r, 2000));
 
       const status = getLastStatus();
@@ -280,7 +281,7 @@ export async function playwrightSubmitCode(code: string): Promise<AuthStepResult
     }
 
     killAuthProcess();
-    return { ok: false, step: "error", error: "Таймаут обработки кода." };
+    return { ok: false, step: "error", error: "Таймаут обработки кода: WB принял код, но токены не успели сохраниться." };
   } catch (err) {
     return { ok: false, step: "error", error: `Ошибка: ${err instanceof Error ? err.message : err}` };
   }

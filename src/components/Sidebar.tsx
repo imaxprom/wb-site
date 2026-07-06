@@ -69,12 +69,16 @@ export function Sidebar({ pinned, onTogglePinned }: { pinned: boolean; onToggleP
   return (
     <>
       {/* Mobile burger */}
-      <button
-        onClick={() => setOpen(!open)}
-        className="fixed top-4 left-4 z-[70] md:hidden bg-[var(--bg-card)] border border-[var(--border)] rounded-lg p-2 text-xl"
-      >
-        {open ? "✕" : "☰"}
-      </button>
+      {!open && (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="fixed top-4 left-4 z-[70] flex h-[34px] w-[34px] items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--bg-card)] text-base leading-none md:hidden"
+          aria-label="Открыть меню"
+        >
+          ☰
+        </button>
+      )}
 
       {/* Backdrop on mobile */}
       {open && (
@@ -99,39 +103,51 @@ export function Sidebar({ pinned, onTogglePinned }: { pinned: boolean; onToggleP
           open ? "translate-x-0 w-60" : "-translate-x-full md:translate-x-0"
         )}
       >
-        <div className={cn("relative border-b border-[var(--border)] transition-all", expanded ? "p-4" : "h-14 p-2")}>
-          {expanded && (
-            <Link
-              href="/analytics"
-              onClick={() => setOpen(false)}
-              className="flex h-10 items-center justify-start rounded-lg px-1 text-2xl font-bold tracking-normal transition-all"
-              aria-label="MPHub"
-            >
-              <span className="text-[var(--text-muted)]">MP</span>
-              <span className="text-[var(--accent)]">Hub</span>
-            </Link>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              if (pinned) {
-                setHovered(false);
-                setSuppressHoverUntilLeave(true);
-              }
-              onTogglePinned();
-            }}
-            className={cn(
-              "absolute right-2 top-2 z-10 hidden h-8 w-8 items-center justify-center rounded-lg border transition-colors md:flex",
-              pinned
-                ? "border-[var(--accent)]/50 bg-[var(--accent)]/15 text-[var(--accent)]"
-                : "border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-muted)] hover:bg-[var(--bg-card-hover)] hover:text-[var(--text)]"
+        <div className={cn("border-b border-[var(--border)] transition-all", expanded ? "p-4" : "h-14 p-2")}>
+          <div className={cn("flex h-10 items-center", expanded ? "justify-between gap-2" : "justify-center")}>
+            {expanded && (
+              <Link
+                href="/analytics"
+                onClick={() => setOpen(false)}
+                className="flex min-w-0 flex-1 items-center justify-start rounded-lg px-1 text-2xl font-bold tracking-normal transition-all"
+                aria-label="MPHub"
+              >
+                <span className="text-[var(--text-muted)]">MP</span>
+                <span className="text-[var(--accent)]">Hub</span>
+              </Link>
             )}
-            title={pinned ? "Открепить меню" : "Закрепить меню"}
-            aria-label={pinned ? "Открепить меню" : "Закрепить меню"}
-            aria-pressed={pinned}
-          >
-            <Pin size={16} className={cn("transition-transform", pinned && "rotate-45")} aria-hidden="true" />
-          </button>
+            {open && (
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[var(--border)] text-base leading-none text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-card-hover)] hover:text-[var(--text)] md:hidden"
+                aria-label="Закрыть меню"
+              >
+                ✕
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                if (pinned) {
+                  setHovered(false);
+                  setSuppressHoverUntilLeave(true);
+                }
+                onTogglePinned();
+              }}
+              className={cn(
+                "hidden h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors md:flex",
+                pinned
+                  ? "bg-[var(--accent)]/10 text-[var(--accent)]"
+                  : "text-[var(--text-muted)] hover:bg-[var(--bg-card-hover)] hover:text-[var(--text)]"
+              )}
+              title={pinned ? "Открепить меню" : "Закрепить меню"}
+              aria-label={pinned ? "Открепить меню" : "Закрепить меню"}
+              aria-pressed={pinned}
+            >
+              <Pin size={15} className={cn("transition-transform", pinned && "rotate-45")} aria-hidden="true" />
+            </button>
+          </div>
         </div>
 
         <nav className="flex-1 py-4 overflow-y-auto overflow-x-hidden">

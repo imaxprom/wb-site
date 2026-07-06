@@ -38,9 +38,9 @@ interface NeedRow {
   size: string;
   group: SizeGroup;
   color: string;
-  stockPieces: number;
-  salesPieces: number;
-  needBeforeWarehousePieces: number;
+  targetPieces: number;
+  wbReadyPieces: number;
+  packingNeedPieces: number;
   warehousePieces: number;
   warehouseMergedPieces: number;
   needPieces: number;
@@ -49,9 +49,12 @@ interface NeedRow {
     article: string;
     title: string;
     colorQty: number;
-    stockPieces: number;
-    salesPieces: number;
-    needBeforeWarehousePieces: number;
+    sourceSize: string;
+    ordersKits: number;
+    targetKits: number;
+    wbStockKits: number;
+    needKits: number;
+    materialPieces: number;
   }>;
 }
 
@@ -444,6 +447,8 @@ function buildNeeds(
 
   for (const article of categoryArticles) {
     for (const size of article.sizes) {
+      const targetKits = Math.ceil(size.sales30Kits * multiplier);
+      const needKits = Math.max(0, targetKits - size.wbStockKits);
       for (const [rawColor, qty] of Object.entries(article.colors)) {
         const color = canonicalColor(rawColor);
         const normalizedSize = purchaseSize(size.size);
@@ -453,27 +458,31 @@ function buildNeeds(
           size: normalizedSize,
           group: size.group,
           color,
-          stockPieces: 0,
-          salesPieces: 0,
-          needBeforeWarehousePieces: 0,
+          targetPieces: 0,
+          wbReadyPieces: 0,
+          packingNeedPieces: 0,
           warehousePieces: 0,
           warehouseMergedPieces: 0,
           needPieces: 0,
           packs: 0,
           articleBreakdown: [],
         };
-        const stockPieces = size.wbStockKits * qty;
-        const salesPieces = size.sales30Kits * qty;
-        const needBeforeWarehousePieces = Math.max(0, salesPieces - stockPieces);
-        existing.stockPieces += stockPieces;
-        existing.salesPieces += salesPieces;
+        const targetPieces = targetKits * qty;
+        const wbReadyPieces = size.wbStockKits * qty;
+        const materialPieces = needKits * qty;
+        existing.targetPieces += targetPieces;
+        existing.wbReadyPieces += wbReadyPieces;
+        existing.packingNeedPieces += materialPieces;
         existing.articleBreakdown.push({
           article: article.article,
           title: article.title,
           colorQty: qty,
-          stockPieces,
-          salesPieces,
-          needBeforeWarehousePieces,
+          sourceSize: size.size,
+          ordersKits: size.sales30Kits,
+          targetKits,
+          wbStockKits: size.wbStockKits,
+          needKits,
+          materialPieces,
         });
         rows.set(key, existing);
       }
@@ -482,16 +491,12 @@ function buildNeeds(
 
   return [...rows.values()]
     .map((row) => {
-      const targetSalesPieces = Math.ceil(row.salesPieces * multiplier);
-      const needBeforeWarehousePieces = Math.max(0, targetSalesPieces - row.stockPieces);
       const warehouse = warehouseStock.get(stockKey(row.color, row.size)) || { pieces: 0, mergedPieces: 0 };
       const warehousePieces = warehouse.pieces;
-      const needPieces = Math.max(0, needBeforeWarehousePieces - warehousePieces);
+      const needPieces = Math.max(0, row.packingNeedPieces - warehousePieces);
 
       return {
         ...row,
-        salesPieces: targetSalesPieces,
-        needBeforeWarehousePieces,
         warehousePieces,
         warehouseMergedPieces: warehouse.mergedPieces,
         needPieces,
@@ -509,10 +514,10 @@ function buildNeeds(
 
 function groupTotals(rows: NeedRow[]) {
   return {
-    stock: rows.reduce((sum, row) => sum + row.stockPieces, 0),
-    sales: rows.reduce((sum, row) => sum + row.salesPieces, 0),
-    needBeforeWarehouse: rows.reduce((sum, row) => sum + row.needBeforeWarehousePieces, 0),
-    warehouse: rows.reduce((sum, row) => sum + Math.min(row.warehousePieces, row.needBeforeWarehousePieces), 0),
+    stock: rows.reduce((sum, row) => sum + row.wbReadyPieces, 0),
+    sales: rows.reduce((sum, row) => sum + row.targetPieces, 0),
+    needBeforeWarehouse: rows.reduce((sum, row) => sum + row.packingNeedPieces, 0),
+    warehouse: rows.reduce((sum, row) => sum + Math.min(row.warehousePieces, row.packingNeedPieces), 0),
     need: rows.reduce((sum, row) => sum + row.needPieces, 0),
     packs: rows.reduce((sum, row) => sum + row.packs, 0),
   };
@@ -528,8 +533,8 @@ function getCell(rows: NeedRow[], color: string, size: string) {
 
 function warehouseTooltip(row: NeedRow) {
   return row.warehouseMergedPieces > 0
-    ? `Остаток склада: ${formatNumber(row.warehousePieces)} шт, включая 40-42: ${formatNumber(row.warehouseMergedPieces)} шт`
-    : `Остаток склада: ${formatNumber(row.warehousePieces)} шт`;
+    ? `Остаток сырья на складе: ${formatNumber(row.warehousePieces)} шт, включая 40-42: ${formatNumber(row.warehouseMergedPieces)} шт`
+    : `Остаток сырья на складе: ${formatNumber(row.warehousePieces)} шт`;
 }
 
 function StatPill({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "need" | "packs" }) {
@@ -580,7 +585,7 @@ function MatrixVariant({ rows }: { rows: NeedRow[] }) {
                     return (
                       <td key={size} className="border border-[var(--border)] px-3 py-2 text-center tabular-nums">
                         {row ? (
-                          <div title={`Целевая потребность: ${formatNumber(row.salesPieces)} шт\nОстатки WB: ${formatNumber(row.stockPieces)} шт\nДефицит до склада: ${formatNumber(row.needBeforeWarehousePieces)} шт\n${warehouseTooltip(row)}\nК закупке: ${formatNumber(row.needPieces)} шт\nПачки: ${formatNumber(row.packs)}`}>
+                          <div title={`Цель сырья до готового товара: ${formatNumber(row.targetPieces)} шт\nГотовый товар WB учтён: ${formatNumber(row.wbReadyPieces)} шт\nНужно сырья для упаковки: ${formatNumber(row.packingNeedPieces)} шт\n${warehouseTooltip(row)}\nК закупке: ${formatNumber(row.needPieces)} шт\nПачки: ${formatNumber(row.packs)}`}>
                             <div className={row.needPieces > 0 ? "font-semibold text-white" : "text-[var(--text-muted)]"}>{formatNumber(row.needPieces)}</div>
                             <div className="text-[10px] text-[#38bdf8]">{formatNumber(row.packs)} пач.</div>
                           </div>
@@ -630,10 +635,10 @@ function SplitVariant({ rows }: { rows: NeedRow[] }) {
             <thead>
               <tr className="text-[var(--text-muted)]">
                 <th className="border border-[var(--border)] px-3 py-2 text-left">Размер</th>
-                <th className="border border-[var(--border)] px-3 py-2 text-center">Целевая потребность</th>
-                <th className="border border-[var(--border)] px-3 py-2 text-center">Остатки WB</th>
-                <th className="border border-[var(--border)] px-3 py-2 text-center">До склада</th>
-                <th className="border border-[var(--border)] px-3 py-2 text-center">Склад</th>
+                <th className="border border-[var(--border)] px-3 py-2 text-center">Цель сырья</th>
+                <th className="border border-[var(--border)] px-3 py-2 text-center">WB учтено</th>
+                <th className="border border-[var(--border)] px-3 py-2 text-center">Нужно сырья</th>
+                <th className="border border-[var(--border)] px-3 py-2 text-center">Сырьё склад</th>
                 <th className="border border-[var(--border)] px-3 py-2 text-center">К закупке</th>
                 <th className="border border-[var(--border)] px-3 py-2 text-center">Пачки</th>
                 <th className="border border-[var(--border)] px-3 py-2 text-left">Откуда пришло</th>
@@ -643,9 +648,9 @@ function SplitVariant({ rows }: { rows: NeedRow[] }) {
               {selectedRows.map((row) => (
                 <tr key={`${row.color}-${row.size}`} className="hover:bg-[var(--bg-card-hover)]">
                   <td className="border border-[var(--border)] px-3 py-2 font-semibold text-white">{row.size}</td>
-                  <td className="border border-[var(--border)] px-3 py-2 text-center tabular-nums">{formatNumber(row.salesPieces)}</td>
-                  <td className="border border-[var(--border)] px-3 py-2 text-center tabular-nums">{formatNumber(row.stockPieces)}</td>
-                  <td className="border border-[var(--border)] px-3 py-2 text-center text-[var(--text-muted)] tabular-nums">{formatNumber(row.needBeforeWarehousePieces)}</td>
+                  <td className="border border-[var(--border)] px-3 py-2 text-center tabular-nums">{formatNumber(row.targetPieces)}</td>
+                  <td className="border border-[var(--border)] px-3 py-2 text-center tabular-nums">{formatNumber(row.wbReadyPieces)}</td>
+                  <td className="border border-[var(--border)] px-3 py-2 text-center text-[var(--text-muted)] tabular-nums">{formatNumber(row.packingNeedPieces)}</td>
                   <td
                     className="border border-[var(--border)] px-3 py-2 text-center text-[#22c55e] tabular-nums"
                     title={warehouseTooltip(row)}
@@ -655,7 +660,7 @@ function SplitVariant({ rows }: { rows: NeedRow[] }) {
                   <td className="border border-[var(--border)] px-3 py-2 text-center font-semibold text-[#f97316] tabular-nums">{formatNumber(row.needPieces)}</td>
                   <td className="border border-[var(--border)] px-3 py-2 text-center text-[#38bdf8] tabular-nums">{formatNumber(row.packs)}</td>
                   <td className="border border-[var(--border)] px-3 py-2 text-[var(--text-muted)]">
-                    {row.articleBreakdown.map((item) => `${item.article}: x${item.colorQty}`).join(" · ")}
+                    {row.articleBreakdown.map((item) => `${item.article} ${item.sourceSize}: ${formatNumber(item.needKits)} комп. x${item.colorQty}`).join(" · ")}
                   </td>
                 </tr>
               ))}
@@ -725,7 +730,7 @@ function HeatmapVariant({ rows }: { rows: NeedRow[] }) {
                   key={`${color}-${column.size}`}
                   className="grid h-16 place-items-center rounded border border-[var(--border)] text-center text-xs tabular-nums"
                   style={{ background: row && row.packs > 0 ? bg : "var(--bg)" }}
-                  title={row ? `${color} ${column.size}: до склада ${formatNumber(row.needBeforeWarehousePieces)} шт, ${warehouseTooltip(row)}, к закупке ${formatNumber(row.needPieces)} шт, ${formatNumber(row.packs)} пач.` : ""}
+                  title={row ? `${color} ${column.size}: нужно сырья для упаковки ${formatNumber(row.packingNeedPieces)} шт, ${warehouseTooltip(row)}, к закупке ${formatNumber(row.needPieces)} шт, ${formatNumber(row.packs)} пач.` : ""}
                 >
                   {row ? (
                     <span className={row.packs > 0 ? "font-semibold text-white" : "text-[var(--text-muted)]"}>{formatNumber(row.packs)}</span>
@@ -806,7 +811,17 @@ function getArticleDisplaySizes(article: PurchaseArticle) {
   return [...sizes.values()].sort((a, b) => SIZE_ORDER.indexOf(a.size) - SIZE_ORDER.indexOf(b.size));
 }
 
-function ArticleVariant({ category, settings, catalog }: { category: CategoryKey; settings: ArticleSetting[]; catalog: PurchaseArticle[] }) {
+function ArticleVariant({
+  category,
+  settings,
+  catalog,
+  multiplier,
+}: {
+  category: CategoryKey;
+  settings: ArticleSetting[];
+  catalog: PurchaseArticle[];
+  multiplier: PurchaseMultiplier;
+}) {
   const categoryArticles = getArticlesForCategory(category, settings, catalog);
 
   return (
@@ -814,10 +829,10 @@ function ArticleVariant({ category, settings, catalog }: { category: CategoryKey
       <VariantHeader icon={Rows3} title="5. Контроль по артикулам и составу комплекта" />
       <div className="grid gap-3 p-4">
         <div className="rounded-md border border-[#f97316]/25 bg-[#f97316]/10 px-3 py-2 text-xs text-[#fdba74]">
-          Остаток склада учитывается в общей потребности по цвету и размеру. В этой разбивке он не списывается по артикулам, потому что складской остаток не привязан к конкретному артикулу.
+          Готовый товар WB списывается только с того же артикула и размера. В цветовую закупку попадает только то, что ещё нужно упаковать; склад сырья вычитается уже после раскладки в цвета.
         </div>
         {categoryArticles.map((article) => {
-          const articleNeeds = buildArticleNeeds(article, category);
+          const articleNeeds = buildArticleNeeds(article, category, multiplier);
           const totals = groupTotals(articleNeeds);
           return (
             <details key={article.article} className="rounded-md border border-[var(--border)] bg-[var(--bg)]" open={categoryArticles.length <= 2}>
@@ -828,7 +843,7 @@ function ArticleVariant({ category, settings, catalog }: { category: CategoryKey
                 </div>
                 <div className="flex items-center gap-4 text-right">
                   <div>
-                    <div className="text-[10px] uppercase text-[var(--text-muted)]">Потребность</div>
+                    <div className="text-[10px] uppercase text-[var(--text-muted)]">Сырьё к упаковке</div>
                     <div className="font-semibold text-[#f97316] tabular-nums">{formatNumber(totals.need)} шт</div>
                   </div>
                   <ChevronRight className="h-4 w-4 text-[var(--text-muted)]" />
@@ -851,20 +866,28 @@ function ArticleVariant({ category, settings, catalog }: { category: CategoryKey
                       <tr>
                         <th className="border border-[var(--border)] px-3 py-2 text-left">Размер</th>
                         <th className="border border-[var(--border)] px-3 py-2 text-left">Баркод</th>
-                        <th className="border border-[var(--border)] px-3 py-2 text-center">Остаток комплектов</th>
-                        <th className="border border-[var(--border)] px-3 py-2 text-center">Продажи комплектов</th>
-                        <th className="border border-[var(--border)] px-3 py-2 text-center">Потребность по цветам</th>
+                        <th className="border border-[var(--border)] px-3 py-2 text-center">Заказы 30д</th>
+                        <th className="border border-[var(--border)] px-3 py-2 text-center">Цель комплектов</th>
+                        <th className="border border-[var(--border)] px-3 py-2 text-center">WB готово</th>
+                        <th className="border border-[var(--border)] px-3 py-2 text-center">Нужно упаковать</th>
+                        <th className="border border-[var(--border)] px-3 py-2 text-center">Сырьё по цветам</th>
                       </tr>
                     </thead>
                     <tbody>
                       {getArticleDisplaySizes(article).map((size) => {
                         const sizeRows = articleNeeds.filter((row) => row.size === size.size && row.needPieces > 0);
+                        const sourceSizes = article.sizes.filter((item) => purchaseSize(item.size) === size.size);
+                        const targetKits = sourceSizes.reduce((sum, item) => sum + Math.ceil(item.sales30Kits * multiplier), 0);
+                        const wbStockKits = sourceSizes.reduce((sum, item) => sum + item.wbStockKits, 0);
+                        const needKits = sourceSizes.reduce((sum, item) => sum + Math.max(0, Math.ceil(item.sales30Kits * multiplier) - item.wbStockKits), 0);
                         return (
                           <tr key={size.barcode} className="hover:bg-[var(--bg-card-hover)]">
                             <td className="border border-[var(--border)] px-3 py-2 font-semibold text-white">{size.size}</td>
                             <td className="border border-[var(--border)] px-3 py-2 font-mono text-[var(--text-muted)]">{size.barcode}</td>
-                            <td className="border border-[var(--border)] px-3 py-2 text-center tabular-nums">{formatNumber(size.wbStockKits)}</td>
                             <td className="border border-[var(--border)] px-3 py-2 text-center tabular-nums">{formatNumber(size.sales30Kits)}</td>
+                            <td className="border border-[var(--border)] px-3 py-2 text-center tabular-nums">{formatNumber(targetKits)}</td>
+                            <td className="border border-[var(--border)] px-3 py-2 text-center tabular-nums">{formatNumber(wbStockKits)}</td>
+                            <td className="border border-[var(--border)] px-3 py-2 text-center font-semibold text-[#f97316] tabular-nums">{formatNumber(needKits)}</td>
                             <td className="border border-[var(--border)] px-3 py-2">
                               <div className="flex flex-wrap gap-1.5">
                                 {sizeRows.length ? sizeRows.map((row) => (
@@ -1090,7 +1113,7 @@ function GoogleStockVariant({ sheet, loading, error }: { sheet: PurchaseStockShe
               <StockGroupTable title="Большие размеры: 48-50 / 50-52 / 52-54" rows={sheet.big} bagPacks={300} />
             </div>
             <div className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs text-[var(--text-muted)]">
-              Общая пачка распределяется по 4 шт каждого размера, размерный короб считается как 12 шт конкретного размера. В расчёте закупки размер 40-42 суммируется в 42-44: продажи, остатки WB и складской остаток считаются одной строкой; в складской таблице 40-42 не выводится отдельной колонкой.
+              Общая пачка распределяется по 4 шт каждого размера, размерный короб считается как 12 шт конкретного размера. В расчёте сырья размер 40-42 суммируется в 42-44; готовый WB-остаток вычитается только на уровне своего артикула и размера.
             </div>
           </>
         )}
@@ -1099,11 +1122,13 @@ function GoogleStockVariant({ sheet, loading, error }: { sheet: PurchaseStockShe
   );
 }
 
-function buildArticleNeeds(article: PurchaseArticle, category: CategoryKey = article.category): NeedRow[] {
+function buildArticleNeeds(article: PurchaseArticle, category: CategoryKey = article.category, multiplier: PurchaseMultiplier = 1): NeedRow[] {
   const rows = new Map<string, NeedRow>();
 
   for (const size of article.sizes) {
     const normalizedSize = purchaseSize(size.size);
+    const targetKits = Math.ceil(size.sales30Kits * multiplier);
+    const needKits = Math.max(0, targetKits - size.wbStockKits);
     for (const [rawColor, qty] of Object.entries(article.colors)) {
       const color = canonicalColor(rawColor);
       const key = `${normalizedSize}:${color}`;
@@ -1112,28 +1137,32 @@ function buildArticleNeeds(article: PurchaseArticle, category: CategoryKey = art
         size: normalizedSize,
         group: size.group,
         color,
-        stockPieces: 0,
-        salesPieces: 0,
-        needBeforeWarehousePieces: 0,
+        targetPieces: 0,
+        wbReadyPieces: 0,
+        packingNeedPieces: 0,
         warehousePieces: 0,
         warehouseMergedPieces: 0,
         needPieces: 0,
         packs: 0,
         articleBreakdown: [],
       };
-      const stockPieces = size.wbStockKits * qty;
-      const salesPieces = size.sales30Kits * qty;
-      const needBeforeWarehousePieces = Math.max(0, salesPieces - stockPieces);
-      existing.stockPieces += stockPieces;
-      existing.salesPieces += salesPieces;
-      existing.needBeforeWarehousePieces += needBeforeWarehousePieces;
+      const targetPieces = targetKits * qty;
+      const wbReadyPieces = size.wbStockKits * qty;
+      const materialPieces = needKits * qty;
+      existing.targetPieces += targetPieces;
+      existing.wbReadyPieces += wbReadyPieces;
+      existing.packingNeedPieces += materialPieces;
+      existing.needPieces += materialPieces;
       existing.articleBreakdown.push({
         article: article.article,
         title: article.title,
         colorQty: qty,
-        stockPieces,
-        salesPieces,
-        needBeforeWarehousePieces,
+        sourceSize: size.size,
+        ordersKits: size.sales30Kits,
+        targetKits,
+        wbStockKits: size.wbStockKits,
+        needKits,
+        materialPieces,
       });
       rows.set(key, existing);
     }
@@ -1141,9 +1170,7 @@ function buildArticleNeeds(article: PurchaseArticle, category: CategoryKey = art
 
   return [...rows.values()].map((row) => ({
     ...row,
-    needBeforeWarehousePieces: Math.max(0, row.salesPieces - row.stockPieces),
-    needPieces: Math.max(0, row.salesPieces - row.stockPieces),
-    packs: Math.ceil(Math.max(0, row.salesPieces - row.stockPieces) / PACK_DIVISOR),
+    packs: Math.ceil(row.needPieces / PACK_DIVISOR),
   }));
 }
 
@@ -1160,16 +1187,16 @@ function PlanSection() {
           Цвета и количество штук берем из «Склад», столбец E. В тесте это <code className="text-white">colors: цвет → количество</code>.
         </div>
         <div className="rounded-md border border-[var(--border)] bg-[var(--bg)] p-3">
-          <div className="mb-2 flex items-center gap-2 font-semibold text-white"><Boxes className="h-4 w-4 text-[#38bdf8]" /> 2. Остатки WB</div>
-          Остатки комплектов умножаются на состав комплекта: `остаток комплектов x штук цвета`.
+          <div className="mb-2 flex items-center gap-2 font-semibold text-white"><Boxes className="h-4 w-4 text-[#38bdf8]" /> 2. Готовый товар WB</div>
+          WB-остаток вычитается только из цели того же артикула и размера. Он не компенсирует сырьё для других артикулов.
         </div>
         <div className="rounded-md border border-[var(--border)] bg-[var(--bg)] p-3">
-          <div className="mb-2 flex items-center gap-2 font-semibold text-white"><BarChart3 className="h-4 w-4 text-[#f97316]" /> 3. Продажи WB</div>
-          Продажи комплектов за период раскладываются тем же составом: `продажи x штук цвета`.
+          <div className="mb-2 flex items-center gap-2 font-semibold text-white"><BarChart3 className="h-4 w-4 text-[#f97316]" /> 3. Нужно упаковать</div>
+          `max(0, заказы 30д x коэффициент - WB-остаток)` считается по каждому артикулу и размеру.
         </div>
         <div className="rounded-md border border-[var(--border)] bg-[var(--bg)] p-3">
           <div className="mb-2 flex items-center gap-2 font-semibold text-white"><Layers3 className="h-4 w-4 text-[#a78bfa]" /> 4. Закупка</div>
-          Потребность: `max(0, продажи в штуках - остатки WB - остатки склада)`. Пачки: `ceil(потребность / 12)`.
+          Сырьё: `нужно упаковать x состав цвета`. Закупка: `max(0, сырьё - остаток сырья на складе)`.
         </div>
       </div>
     </section>
@@ -1214,7 +1241,7 @@ function PurchaseMultiplierSelector({
       <div className="flex flex-col gap-3 border-b border-[var(--border)] px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h3 className="text-sm font-semibold text-white">Коэффициент закупки</h3>
-          <div className="mt-1 text-xs text-[var(--text-muted)]">Цель: {formatNumber(BASE_SALES_DAYS * selected)} дней продаж</div>
+          <div className="mt-1 text-xs text-[var(--text-muted)]">Цель: {formatNumber(BASE_SALES_DAYS * selected)} дней заказов к упаковке</div>
         </div>
         <div className="flex flex-wrap gap-2">
           {PURCHASE_MULTIPLIERS.map((multiplier) => (
@@ -1234,12 +1261,26 @@ function PurchaseMultiplierSelector({
   );
 }
 
-function SelectedVariant({ variant, rows, category, settings, catalog }: { variant: DisplayVariant; rows: NeedRow[]; category: CategoryKey; settings: ArticleSetting[]; catalog: PurchaseArticle[] }) {
+function SelectedVariant({
+  variant,
+  rows,
+  category,
+  settings,
+  catalog,
+  multiplier,
+}: {
+  variant: DisplayVariant;
+  rows: NeedRow[];
+  category: CategoryKey;
+  settings: ArticleSetting[];
+  catalog: PurchaseArticle[];
+  multiplier: PurchaseMultiplier;
+}) {
   if (variant === "1") return <MatrixVariant rows={rows} />;
   if (variant === "2") return <SplitVariant rows={rows} />;
   if (variant === "3") return <HeatmapVariant rows={rows} />;
   if (variant === "4") return <GroupVariant rows={rows} />;
-  return <ArticleVariant category={category} settings={settings} catalog={catalog} />;
+  return <ArticleVariant category={category} settings={settings} catalog={catalog} multiplier={multiplier} />;
 }
 
 interface PurchasesCalculatorProps {
@@ -1250,7 +1291,7 @@ interface PurchasesCalculatorProps {
 
 export default function PurchasesTestPage({
   title = "Закупки: тест расчёта комплектов",
-  description = "Прототип по Excel «Расчет отгрузки.xlsx»: остатки WB и продажи комплектов раскладываются в штуки по цветам, затем считается потребность в штуках и пачках.",
+  description = "Прототип по Excel «Расчет отгрузки.xlsx»: готовый WB-товар вычитается по своему артикулу, остаток потребности раскладывается в сырьё по цветам и размерам.",
   showPlan = true,
 }: PurchasesCalculatorProps) {
   const [category, setCategory] = useState<CategoryKey>("rib");
@@ -1403,10 +1444,10 @@ export default function PurchasesTestPage({
 
           <div className="overflow-x-auto pb-1">
             <div className="grid min-w-[1080px] grid-cols-6 gap-3">
-              <StatPill label="Остатки WB в штуках" value={formatNumber(totals.stock)} />
-              <StatPill label={`Цель ${formatNumber(targetDays)} дней в штуках`} value={formatNumber(totals.sales)} />
-              <StatPill label="Дефицит до склада" value={formatNumber(totals.needBeforeWarehouse)} />
-              <StatPill label="Остаток склада" value={formatNumber(totals.warehouse)} />
+              <StatPill label="Готовый WB учтён" value={formatNumber(totals.stock)} />
+              <StatPill label={`Цель ${formatNumber(targetDays)} дней сырьё`} value={formatNumber(totals.sales)} />
+              <StatPill label="Нужно сырья" value={formatNumber(totals.needBeforeWarehouse)} />
+              <StatPill label="Сырьё на складе" value={formatNumber(totals.warehouse)} />
               <StatPill label="К закупке в штуках" value={formatNumber(totals.need)} tone="need" />
               <StatPill label="К закупке в пачках" value={formatNumber(totals.packs)} tone="need" />
             </div>
@@ -1417,7 +1458,7 @@ export default function PurchasesTestPage({
           {showPlan && <PlanSection />}
 
           <GoogleStockVariant sheet={selectedStockSheet} loading={stockLoading} error={stockError} />
-          <SelectedVariant variant={displayVariant} rows={rows} category={category} settings={articleSettings} catalog={purchaseArticles} />
+          <SelectedVariant variant={displayVariant} rows={rows} category={category} settings={articleSettings} catalog={purchaseArticles} multiplier={purchaseMultiplier} />
         </>
       )}
     </div>

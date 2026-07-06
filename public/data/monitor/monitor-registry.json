@@ -7,7 +7,7 @@
     "project": "MpHub",
     "type": "node",
     "pm2Name": "mphub",
-    "scriptPath": "/home/makson/website/node_modules/.bin/next",
+    "scriptPath": "/home/makson/current/node_modules/.bin/next",
     "logPath": "/home/makson/.pm2/logs/mphub-out.log",
     "lifecycle": "active"
   },
@@ -20,8 +20,8 @@
     "type": "bash",
     "cronPattern": "0 * * * *",
     "cronUser": "makson",
-    "scriptPath": "/home/makson/website/scripts/daily-sync-api.sh",
-    "logPath": "/home/makson/website/data/daily-sync.log",
+    "scriptPath": "/home/makson/current/scripts/daily-sync-api.sh",
+    "logPath": "/home/makson/current/data/daily-sync.log",
     "lifecycle": "active"
   },
   {
@@ -33,8 +33,8 @@
     "type": "node",
     "cronPattern": "0 7-20 * * 1-3",
     "cronUser": "makson",
-    "scriptPath": "/home/makson/website/scripts/sync-weekly-report.js",
-    "logPath": "/home/makson/website/data/weekly-sync.log",
+    "scriptPath": "/home/makson/current/scripts/sync-weekly-report.js",
+    "logPath": "/home/makson/current/data/weekly-sync.log",
     "lifecycle": "active"
   },
   {
@@ -46,8 +46,8 @@
     "type": "bash",
     "cronPattern": "0 * * * *",
     "cronUser": "makson",
-    "scriptPath": "/home/makson/website/scripts/shipment-sync.sh",
-    "logPath": "/home/makson/website/data/shipment-sync.log",
+    "scriptPath": "/home/makson/current/scripts/shipment-sync.sh",
+    "logPath": "/home/makson/current/data/shipment-sync.log",
     "lifecycle": "active"
   },
   {
@@ -59,8 +59,8 @@
     "type": "node",
     "cronPattern": "*/15 * * * *",
     "cronUser": "makson",
-    "scriptPath": "/home/makson/website/scripts/reviews-sync.js",
-    "logPath": "/home/makson/website/data/reviews-sync.log",
+    "scriptPath": "/home/makson/current/scripts/reviews-sync.js",
+    "logPath": "/home/makson/current/data/reviews-sync.log",
     "lifecycle": "active"
   },
   {
@@ -72,8 +72,8 @@
     "type": "node",
     "cronPattern": "*/30 * * * *",
     "cronUser": "makson",
-    "scriptPath": "/home/makson/website/scripts/reviews-complaints.js",
-    "logPath": "/home/makson/website/data/reviews-complaints.log",
+    "scriptPath": "/home/makson/current/scripts/reviews-complaints.js",
+    "logPath": "/home/makson/current/data/reviews-complaints.log",
     "lifecycle": "active"
   },
   {
@@ -85,8 +85,8 @@
     "type": "python",
     "cronPattern": "*/5 * * * *",
     "cronUser": "makson",
-    "scriptPath": "/home/makson/website/scripts/vps-watchdog.py",
-    "logPath": "/home/makson/website/data/watchdog.log",
+    "scriptPath": "/home/makson/current/scripts/vps-watchdog.py",
+    "logPath": "/home/makson/current/data/watchdog.log",
     "lifecycle": "active"
   },
   {
@@ -98,8 +98,8 @@
     "type": "node",
     "cronPattern": "0 19 * * *",
     "cronUser": "makson",
-    "scriptPath": "/home/makson/website/scripts/auth-check.js",
-    "logPath": "/home/makson/website/data/auth-check.log",
+    "scriptPath": "/home/makson/current/scripts/auth-check.js",
+    "logPath": "/home/makson/current/data/auth-check.log",
     "lifecycle": "active"
   },
   {
@@ -111,8 +111,8 @@
     "type": "node",
     "cronPattern": "0 2 * * *",
     "cronUser": "makson",
-    "scriptPath": "/home/makson/website/scripts/paid-storage-sync.js",
-    "logPath": "/home/makson/website/data/paid-storage-sync.log",
+    "scriptPath": "/home/makson/current/scripts/paid-storage-sync.js",
+    "logPath": "/home/makson/current/data/paid-storage-sync.log",
     "lifecycle": "active"
   },
   {
@@ -124,8 +124,8 @@
     "type": "node",
     "cronPattern": "0 3,6,9,12,15,18 * * *",
     "cronUser": "makson",
-    "scriptPath": "/home/makson/website/scripts/logistics-volume-sync.js",
-    "logPath": "/home/makson/website/data/warehouse-remains-sync.log",
+    "scriptPath": "/home/makson/current/scripts/logistics-volume-sync.js",
+    "logPath": "/home/makson/current/data/warehouse-remains-sync.log",
     "lifecycle": "active"
   },
   {
@@ -137,8 +137,8 @@
     "type": "node",
     "cronPattern": "10 3,6,9,12,15,18 * * *",
     "cronUser": "makson",
-    "scriptPath": "/home/makson/website/scripts/logistics-volume-sync.js",
-    "logPath": "/home/makson/website/data/warehouse-measurements-sync.log",
+    "scriptPath": "/home/makson/current/scripts/logistics-volume-sync.js",
+    "logPath": "/home/makson/current/data/warehouse-measurements-sync.log",
     "lifecycle": "active"
   },
   {
@@ -150,8 +150,8 @@
     "type": "bash",
     "cronPattern": "0 * * * *",
     "cronUser": "makson",
-    "scriptPath": "/home/makson/website/scripts/data-health-cron.sh",
-    "logPath": "/home/makson/website/public/data/monitor/data-health-cron.json",
+    "scriptPath": "/home/makson/current/scripts/data-health-cron.sh",
+    "logPath": "/home/makson/current/public/data/monitor/data-health-cron.json",
     "lifecycle": "active"
   }
 ]
