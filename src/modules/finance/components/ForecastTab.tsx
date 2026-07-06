@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { Calendar } from "lucide-react";
 import { formatNumber } from "@/lib/utils";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -59,6 +60,15 @@ function buyoutAvg(d: ForecastDay): string {
   return d.orders > 0 ? PCT((d.estimated_sales / d.orders) * 100) : "—";
 }
 
+function parseCommissionShift(value: string): number | null {
+  const parsed = Number(value.replace(",", "."));
+  return Number.isFinite(parsed) && Math.abs(parsed) <= 100 ? parsed : null;
+}
+
+function isDateValue(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
 const COLUMNS: ColDef[] = [
   { key: "orders",          label: "Заказы, шт",       dayFn: d => formatNumber(d.orders),             artFn: a => formatNumber(a.orders), defaultOn: true },
   { key: "orders_rub",      label: "Заказы, ₽",        dayFn: d => RUB(d.orders_rub),                  artFn: a => RUB(a.orders_rub),      defaultOn: true },
@@ -100,22 +110,26 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
   } | null>(null);
   const [visibleCols, setVisibleCols] = useState<Set<string>>(() => new Set(COLUMNS.filter(c => c.defaultOn).map(c => c.key)));
   const [showSettings, setShowSettings] = useState(false);
-  const [commissionScenarioEnabled, setCommissionScenarioEnabled] = useState(true);
-  const [commissionShiftPp, setCommissionShiftPp] = useState(DEFAULT_COMMISSION_SHIFT_PP);
-  const [commissionShiftFrom, setCommissionShiftFrom] = useState(DEFAULT_COMMISSION_SHIFT_FROM);
+  const [draftCommissionScenarioEnabled, setDraftCommissionScenarioEnabled] = useState(true);
+  const [draftCommissionShiftPp, setDraftCommissionShiftPp] = useState(DEFAULT_COMMISSION_SHIFT_PP);
+  const [draftCommissionShiftFrom, setDraftCommissionShiftFrom] = useState(DEFAULT_COMMISSION_SHIFT_FROM);
+  const [appliedCommissionScenarioEnabled, setAppliedCommissionScenarioEnabled] = useState(true);
+  const [appliedCommissionShiftPp, setAppliedCommissionShiftPp] = useState(DEFAULT_COMMISSION_SHIFT_PP);
+  const [appliedCommissionShiftFrom, setAppliedCommissionShiftFrom] = useState(DEFAULT_COMMISSION_SHIFT_FROM);
+  const dateInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!dateFrom || !dateTo) return;
     setLoading(true);
     const params = new URLSearchParams({ from: dateFrom, to: dateTo });
-    const numericCommissionShift = Number(commissionShiftPp.replace(",", "."));
+    const numericCommissionShift = parseCommissionShift(appliedCommissionShiftPp);
     if (
-      commissionScenarioEnabled &&
-      Number.isFinite(numericCommissionShift) &&
-      /^\d{4}-\d{2}-\d{2}$/.test(commissionShiftFrom)
+      appliedCommissionScenarioEnabled &&
+      numericCommissionShift !== null &&
+      isDateValue(appliedCommissionShiftFrom)
     ) {
       params.set("commissionShiftPp", String(numericCommissionShift));
-      params.set("commissionShiftFrom", commissionShiftFrom);
+      params.set("commissionShiftFrom", appliedCommissionShiftFrom);
     }
     fetch(`/api/finance/forecast?${params.toString()}`)
       .then(r => r.json())
@@ -125,7 +139,7 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, [dateFrom, dateTo, commissionScenarioEnabled, commissionShiftPp, commissionShiftFrom]);
+  }, [dateFrom, dateTo, appliedCommissionScenarioEnabled, appliedCommissionShiftPp, appliedCommissionShiftFrom]);
 
   if (loading) {
     return <div className="text-center py-12 text-[var(--text-muted)]">Расчёт прогноза...</div>;
@@ -148,13 +162,33 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
   const totalCommissionDelta = data.reduce((s, d) => s + (d.commission_delta_total || 0), 0);
   const totalProfitDelta = totalProfit - totalBaselineProfit;
   const totalProfitBeforeAds = data.reduce((s, d) => s + d.estimated_profit_before_ads, 0);
-  const scenarioPpValue = Number(commissionShiftPp.replace(",", "."));
-  const selectedVolumeCommissionImpact = commissionScenarioEnabled && Number.isFinite(scenarioPpValue)
+  const scenarioPpValue = parseCommissionShift(appliedCommissionShiftPp);
+  const selectedVolumeCommissionImpact = appliedCommissionScenarioEnabled && scenarioPpValue !== null
     ? totalRevenue * (scenarioPpValue / 100)
     : 0;
-  const scenarioImpactUsesSelectedVolume = commissionScenarioEnabled && totalCommissionDelta === 0 && selectedVolumeCommissionImpact !== 0;
+  const scenarioImpactUsesSelectedVolume = appliedCommissionScenarioEnabled && totalCommissionDelta === 0 && selectedVolumeCommissionImpact !== 0;
   const visibleCommissionImpact = scenarioImpactUsesSelectedVolume ? selectedVolumeCommissionImpact : totalCommissionDelta;
   const visibleProfitImpact = scenarioImpactUsesSelectedVolume ? -selectedVolumeCommissionImpact : totalProfitDelta;
+  const draftCommissionShift = parseCommissionShift(draftCommissionShiftPp);
+  const isDraftCommissionValid = draftCommissionShift !== null && isDateValue(draftCommissionShiftFrom);
+  const hasScenarioDraftChanges =
+    draftCommissionScenarioEnabled !== appliedCommissionScenarioEnabled ||
+    draftCommissionShiftPp !== appliedCommissionShiftPp ||
+    draftCommissionShiftFrom !== appliedCommissionShiftFrom;
+
+  const applyCommissionScenario = () => {
+    if (draftCommissionScenarioEnabled && !isDraftCommissionValid) return;
+    setAppliedCommissionScenarioEnabled(draftCommissionScenarioEnabled);
+    setAppliedCommissionShiftPp(draftCommissionShift !== null ? String(draftCommissionShift) : draftCommissionShiftPp);
+    setAppliedCommissionShiftFrom(draftCommissionShiftFrom);
+  };
+
+  const openDatePicker = () => {
+    const input = dateInputRef.current;
+    if (!input || input.disabled) return;
+    input.showPicker?.();
+    input.focus();
+  };
   const fmtM = (v: number) => {
     if (Math.abs(v) >= 1e6) {
       const millions = v / 1e6;
@@ -198,8 +232,8 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
           <label className="flex min-w-[220px] items-center gap-3 text-sm text-[var(--text)]">
             <input
               type="checkbox"
-              checked={commissionScenarioEnabled}
-              onChange={(event) => setCommissionScenarioEnabled(event.target.checked)}
+              checked={draftCommissionScenarioEnabled}
+              onChange={(event) => setDraftCommissionScenarioEnabled(event.target.checked)}
               className="h-4 w-4"
             />
             <span className="font-medium">Сценарий комиссии WB</span>
@@ -212,25 +246,51 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
                 min="-100"
                 max="100"
                 step="0.1"
-                value={commissionShiftPp}
-                disabled={!commissionScenarioEnabled}
-                onChange={(event) => setCommissionShiftPp(event.target.value)}
+                value={draftCommissionShiftPp}
+                disabled={!draftCommissionScenarioEnabled}
+                onChange={(event) => setDraftCommissionShiftPp(event.target.value)}
                 className="w-20 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-sm text-[var(--text)] disabled:opacity-50"
               />
             </label>
             <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
               с даты
-              <input
-                type="date"
-                value={commissionShiftFrom}
-                disabled={!commissionScenarioEnabled}
-                onChange={(event) => setCommissionShiftFrom(event.target.value)}
-                className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-sm text-[var(--text)] disabled:opacity-50"
-              />
+              <span className="flex items-center overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg)]">
+                <input
+                  ref={dateInputRef}
+                  type="date"
+                  value={draftCommissionShiftFrom}
+                  disabled={!draftCommissionScenarioEnabled}
+                  onClick={openDatePicker}
+                  onChange={(event) => setDraftCommissionShiftFrom(event.target.value)}
+                  className="border-0 bg-transparent px-2 py-1.5 text-sm text-[var(--text)] outline-none disabled:opacity-50"
+                />
+                <button
+                  type="button"
+                  onClick={openDatePicker}
+                  disabled={!draftCommissionScenarioEnabled}
+                  className="flex h-8 w-8 items-center justify-center border-l border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)] disabled:opacity-50"
+                  title="Открыть календарь"
+                >
+                  <Calendar size={15} aria-hidden="true" />
+                </button>
+              </span>
             </label>
+            <button
+              type="button"
+              onClick={applyCommissionScenario}
+              disabled={!hasScenarioDraftChanges || (draftCommissionScenarioEnabled && !isDraftCommissionValid)}
+              className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40"
+            >
+              Применить
+            </button>
           </div>
         </div>
-        {commissionScenarioEnabled && (
+        {draftCommissionScenarioEnabled && !isDraftCommissionValid && (
+          <p className="mt-2 text-xs text-[var(--danger)]">
+            Укажите процентные пункты от -100 до 100 и выберите дату.
+          </p>
+        )}
+        {appliedCommissionScenarioEnabled && (
           <div className="mt-3 grid grid-cols-1 gap-3 border-t border-[var(--border)] pt-3 text-sm sm:grid-cols-3">
             <div>
               <p className="text-xs uppercase text-[var(--text-muted)]">Доп. комиссия</p>
@@ -270,7 +330,7 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
           <p className={`text-2xl font-bold mt-1 ${totalProfit >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}`}>{RUB(totalProfit)}</p>
           <p className="text-xs text-[var(--text-muted)] mt-1">
             без рекламы: {RUB(totalProfitBeforeAds)}
-            {commissionScenarioEnabled && totalCommissionDelta !== 0 ? ` · без +комиссии: ${RUB(totalBaselineProfit)}` : ""}
+            {appliedCommissionScenarioEnabled && totalCommissionDelta !== 0 ? ` · без +комиссии: ${RUB(totalBaselineProfit)}` : ""}
           </p>
         </div>
       </div>
