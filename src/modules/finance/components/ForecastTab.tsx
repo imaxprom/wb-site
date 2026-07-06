@@ -148,6 +148,13 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
   const totalCommissionDelta = data.reduce((s, d) => s + (d.commission_delta_total || 0), 0);
   const totalProfitDelta = totalProfit - totalBaselineProfit;
   const totalProfitBeforeAds = data.reduce((s, d) => s + d.estimated_profit_before_ads, 0);
+  const scenarioPpValue = Number(commissionShiftPp.replace(",", "."));
+  const selectedVolumeCommissionImpact = commissionScenarioEnabled && Number.isFinite(scenarioPpValue)
+    ? totalRevenue * (scenarioPpValue / 100)
+    : 0;
+  const scenarioImpactUsesSelectedVolume = commissionScenarioEnabled && totalCommissionDelta === 0 && selectedVolumeCommissionImpact !== 0;
+  const visibleCommissionImpact = scenarioImpactUsesSelectedVolume ? selectedVolumeCommissionImpact : totalCommissionDelta;
+  const visibleProfitImpact = scenarioImpactUsesSelectedVolume ? -selectedVolumeCommissionImpact : totalProfitDelta;
   const fmtM = (v: number) => {
     if (Math.abs(v) >= 1e6) {
       const millions = v / 1e6;
@@ -227,7 +234,10 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
           <div className="mt-3 grid grid-cols-1 gap-3 border-t border-[var(--border)] pt-3 text-sm sm:grid-cols-3">
             <div>
               <p className="text-xs uppercase text-[var(--text-muted)]">Доп. комиссия</p>
-              <p className="mt-1 font-semibold text-[var(--warning)]">{RUB(totalCommissionDelta)}</p>
+              <p className="mt-1 font-semibold text-[var(--warning)]">{RUB(visibleCommissionImpact)}</p>
+              <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                {scenarioImpactUsesSelectedVolume ? "на выбранном объёме" : "по датам прогноза"}
+              </p>
             </div>
             <div>
               <p className="text-xs uppercase text-[var(--text-muted)]">Прибыль без сценария</p>
@@ -235,7 +245,7 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
             </div>
             <div>
               <p className="text-xs uppercase text-[var(--text-muted)]">Влияние на прибыль</p>
-              <p className={totalProfitDelta >= 0 ? "mt-1 font-semibold text-[var(--success)]" : "mt-1 font-semibold text-[var(--danger)]"}>{RUB(totalProfitDelta)}</p>
+              <p className={visibleProfitImpact >= 0 ? "mt-1 font-semibold text-[var(--success)]" : "mt-1 font-semibold text-[var(--danger)]"}>{RUB(visibleProfitImpact)}</p>
             </div>
           </div>
         )}
