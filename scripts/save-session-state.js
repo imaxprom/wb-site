@@ -207,7 +207,7 @@ function rsyncDryRunStatus() {
     "--exclude=/next-env.d.ts",
     "--exclude=/tsconfig.tsbuildinfo",
     "--exclude=/public/data/release-marker.json",
-    "--exclude=/public/data/monitor/",
+    "--exclude=/public/data/monitor",
     "--exclude=/src/app/debug/",
     "--exclude=/src/app/finance/settings/test/",
     "--exclude=/src/app/shipment/products-test/",
