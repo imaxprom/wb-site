@@ -9,7 +9,7 @@ Last verified: 2026-08-12 23:47 MSK from local code, `npm run save-session-state
 - Stack: Next.js 16, TypeScript, Tailwind CSS 4, PostgreSQL-only runtime. File-DB fallback is forbidden.
 - Production DB: VM 107, database `mphub`. Organization 1 uses schema `public`; organization 2 uses schema `organization_2`. Organization-scoped APIs/files must always run inside verified organization context.
 - PM2 application `mphub` runs as `makson` on `127.0.0.1:3000`; local nginx proxies `:80`; external HTTPS terminates on proxy CT 105.
-- Active production release: `/home/makson/releases/20260812-184908`, marker `fbs-pvz-main-supply-qr-20260812`; PM2 online, zero restarts, cwd equals active release.
+- Verified clean-baseline release at 2026-08-13 00:56 MSK: `/home/makson/releases/20260812-215338`, marker `production-baseline-2026-08-13`; PM2 online, zero restarts, cwd equals active release. Release size is 71 MB versus 399 MB before cleanup.
 - Preferred deploy is release-based. После baseline cleanup 2026-08-13 локальный Git должен быть источником истины; перед `SOURCE_MODE=local` обязательны clean status, build и пустой deploy parity. Для аварийного восстановления из работающего релиза остаётся `SOURCE_MODE=remote-current`.
 - Local current-data development requires the PostgreSQL SSH tunnel on `127.0.0.1:55432` and a small pool: `PGPOOL_MAX=2`. Use `127.0.0.1`, not literal `localhost`.
 - Runtime data/env, reports, Android build/APK/signing key, `.codex` и локальные visual test routes намеренно исключены из deploy/parity. Вся остальная source-разница между Git и production считается ошибкой и должна быть разобрана до deploy.
@@ -44,7 +44,7 @@ Last verified: 2026-08-12 23:47 MSK from local code, `npm run save-session-state
 - FBS photos should be cached from official WB card data; generated CDN paths remain fallback only.
 - Open-supply membership is reconciled against live WB on sync. After create/add, the app re-reads actual WB membership and persists only attached orders. Partial success is shown explicitly; rejected orders remain in “New”.
 - Verified incident fixed 2026-08-12: supply `WB-GI-264192275` (Yekaterinburg, organization 1) now contains order `5472246019`; local count is 1 and live status is `confirm/waiting`.
-- PVZ workflow requires cargo-place QR codes before delivery. After delivery it now also requires the main supply QR before allowing “Finish cycle”. WB live endpoint successfully returned the main QR for PVZ supply `WB-GI-264053929`; UI change is deployed in release `20260812-184908`.
+- PVZ workflow requires cargo-place QR codes before delivery. After delivery it now also requires the main supply QR before allowing “Finish cycle”. WB live endpoint successfully returned the main QR for PVZ supply `WB-GI-264053929`; UI change is included in the clean baseline.
 - Organization 2 PVZ supply `WB-GI-264053929`: 36 orders, one cargo place `WB-MP-48974219`, cargo-place QR printed, delivered, main supply QR still not printed at the last read-only check. Opening FBS should resume it on shipping and offer “Print supply QR”. Do not trigger the printer during diagnostics without user approval.
 - Separate warehouse Windows remote administration is not implemented. Proposed next step, only after explicit approval and while someone is on site: install Tailscale, enable Windows OpenSSH, create a dedicated admin account, allow key-only access and verify reconnect after reboot. This would let Codex diagnose print agent, Windows spooler and Zebra remotely; physical jams remain local work.
 
@@ -67,7 +67,7 @@ Last verified: 2026-08-12 23:47 MSK from local code, `npm run save-session-state
 
 ## Current Caveats
 
-- The Git worktree is heavily dirty and contains many untracked production features. Treat existing modifications as user work; never reset or bulk-deploy them.
+- Git `main` and `origin/main` now contain the full current application baseline. Generated reports and Android build/signing artifacts were moved to `/Users/octopus/Projects/website-artifacts/20260813`; the pre-cleanup archive is `/Users/octopus/Projects/website-backups/website-before-cleanup-20260813-004340.tar.gz`.
 - Исторический baseline `672c6ec` заменяется контрольной точкой `production-baseline-2026-08-13`, включающей актуальные production-функции, миграции, FBS portal/print-agent и исходники Android scanner без сборочных артефактов.
 - Automatically generated `SESSION_STATE.md` is current for runtime/DB but its Current Focus/Continue sections come from `scripts/session-state-notes.json`; update that JSON first, then rerun `npm run save-session-state`.
 - Use Moscow time (`Europe/Moscow`) in user-facing reports.

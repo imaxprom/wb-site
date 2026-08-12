@@ -1,12 +1,12 @@
 # MpHub TODO
 
-Last updated: 2026-08-12 23:47 MSK.
+Last updated: 2026-08-13 00:56 MSK.
 
 ## High Priority
 
 - Before context cleanup/handoff run `npm run save-session-state`; verify changing facts against production code, PostgreSQL and `ssh wb-site`.
 - Keep `scripts/session-state-notes.json` current because it feeds generated `SESSION_STATE.md` focus/continuation sections.
-- Завершить baseline cleanup: clean Git, tag `production-baseline-2026-08-13`, успешный build, пустой parity и чистый release из локального source.
+- Поддерживать baseline: clean Git, успешный build и пустой parity перед каждым production deploy.
 - Keep organization isolation: organization 1 is `public`, organization 2 is `organization_2`; no FBS queries, agents, queues, tokens or sync state may cross schemas.
 - Keep `public/data/docs.json` aligned with user-facing FBS/shipment logic.
 
@@ -20,7 +20,7 @@ Last updated: 2026-08-12 23:47 MSK.
 
 ## Production Checks
 
-- Active production should remain `/home/makson/current -> /home/makson/releases/20260812-184908` until another approved release; PM2 `mphub` must run from the same cwd with zero unexpected restarts.
+- Clean-baseline release `/home/makson/releases/20260812-215338` с marker `production-baseline-2026-08-13` проверен; после следующего approved release PM2 должен работать из нового active cwd с нулём неожиданных рестартов.
 - После baseline release проверить marker, PM2 cwd/restarts, `/login`, FBS portal login, обе организации и production 404 для debug/test URL.
 - Не возвращать в deploy runtime data/env, generated reports, Android build/APK/debug.keystore, `.codex` и локальные visual test routes.
 - Production snapshot at 23:44 MSK: shipment products 69, stock 922, orders 263364; reviews 159734; use a fresh snapshot for later factual answers.

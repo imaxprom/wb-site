@@ -116,6 +116,11 @@ rsync -a --delete \
   --exclude='/wb-support-appeal-*.html' \
   --exclude='/wb-support-appeal-*.pdf' \
   --exclude='/upload-tab-dates.png' \
+  --exclude='/CLAUDE.md' \
+  --exclude='/PROJECT_CONTEXT.md' \
+  --exclude='/SESSION_STATE.md' \
+  --exclude='/TODO.md' \
+  --exclude='/scripts/session-state-notes.json' \
   --exclude='/src/app/debug/' \
   --exclude='/src/app/finance/settings/test/' \
   --exclude='/src/app/shipment/products-test/' \
@@ -170,6 +175,11 @@ else
     --exclude='/wb-support-appeal-*.html' \
     --exclude='/wb-support-appeal-*.pdf' \
     --exclude='/upload-tab-dates.png' \
+    --exclude='/CLAUDE.md' \
+    --exclude='/PROJECT_CONTEXT.md' \
+    --exclude='/SESSION_STATE.md' \
+    --exclude='/TODO.md' \
+    --exclude='/scripts/session-state-notes.json' \
     --exclude='/src/app/debug/' \
     --exclude='/src/app/finance/settings/test/' \
     --exclude='/src/app/shipment/products-test/' \

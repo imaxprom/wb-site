@@ -2252,6 +2252,7 @@
             "  runtime data/env/node_modules/.next, локальная .codex, Android-приложение и его APK/ключ подписи",
             "  generated reports/PDF/HTML/JSON, каталог reports и одноразовые выгрузки",
             "  локальные визуальные FBS-макеты и вспомогательные debug/test URL; прямой доступ к test/debug URL в production также возвращает 404",
+            "  операторские CLAUDE.md, PROJECT_CONTEXT.md, SESSION_STATE.md, TODO.md и session-state-notes.json: они хранятся в Git, но обновляются после production-снимков и не являются runtime-кодом",
             "  исключения одинаковы в release-deploy.sh и save-session-state parity, поэтому служебные файлы не создают ложную рассинхронизацию",
             "",
             "Rollback:",
