@@ -9,7 +9,7 @@ Last verified: 2026-08-12 23:47 MSK from local code, `npm run save-session-state
 - Stack: Next.js 16, TypeScript, Tailwind CSS 4, PostgreSQL-only runtime. File-DB fallback is forbidden.
 - Production DB: VM 107, database `mphub`. Organization 1 uses schema `public`; organization 2 uses schema `organization_2`. Organization-scoped APIs/files must always run inside verified organization context.
 - PM2 application `mphub` runs as `makson` on `127.0.0.1:3000`; local nginx proxies `:80`; external HTTPS terminates on proxy CT 105.
-- Verified clean-baseline release at 2026-08-13 00:56 MSK: `/home/makson/releases/20260812-215338`, marker `production-baseline-2026-08-13`; PM2 online, zero restarts, cwd equals active release. Release size is 71 MB versus 399 MB before cleanup.
+- Verified clean-baseline release at 2026-08-13 01:00 MSK: `/home/makson/releases/20260812-215802`, marker `production-baseline-2026-08-13-v2`; PM2 online, zero restarts, cwd equals active release. Release size is about 71 MB versus 399 MB before cleanup.
 - Preferred deploy is release-based. После baseline cleanup 2026-08-13 локальный Git должен быть источником истины; перед `SOURCE_MODE=local` обязательны clean status, build и пустой deploy parity. Для аварийного восстановления из работающего релиза остаётся `SOURCE_MODE=remote-current`.
 - Local current-data development requires the PostgreSQL SSH tunnel on `127.0.0.1:55432` and a small pool: `PGPOOL_MAX=2`. Use `127.0.0.1`, not literal `localhost`.
 - Runtime data/env, reports, Android build/APK/signing key, `.codex` и локальные visual test routes намеренно исключены из deploy/parity. Вся остальная source-разница между Git и production считается ошибкой и должна быть разобрана до deploy.
