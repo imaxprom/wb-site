@@ -102,7 +102,7 @@ rsync -a --delete \
   --exclude='*.pyc' \
   --exclude='/0' \
   --exclude='/android-scanner/' \
-  --exclude='/data/' \
+  --exclude='/data' \
   --exclude='/reports/' \
   --exclude='/commission-*.pdf' \
   --exclude='/fbs-pvz-dispute-report-*.html' \
@@ -161,7 +161,7 @@ else
     --exclude='*.pyc' \
     --exclude='/0' \
     --exclude='/android-scanner/' \
-    --exclude='/data/' \
+    --exclude='/data' \
     --exclude='/reports/' \
     --exclude='/commission-*.pdf' \
     --exclude='/fbs-pvz-dispute-report-*.html' \
