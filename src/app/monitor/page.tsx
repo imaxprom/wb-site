@@ -416,7 +416,7 @@ function WatchdogBanner() {
   const [lastEntry, setLastEntry] = useState<{ time: string; action: string; serviceId: string; result: string; details: string } | null>(null);
 
   useEffect(() => {
-    fetch("/data/monitor/repair-log.json")
+    fetch("/api/monitor/static/repair-log", { cache: "no-store" })
       .then(r => r.json())
       .then((entries: Array<{ time: string; action: string; serviceId: string; result: string; details: string }>) => {
         if (entries.length === 0) return;
@@ -465,7 +465,7 @@ export default function MonitorPage() {
     try {
       const [statusRes, changesRes] = await Promise.all([
         fetch("/api/monitor/status"),
-        fetch("/data/monitor/changes.json"),
+        fetch("/api/monitor/static/changes", { cache: "no-store" }),
       ]);
       const statusData = await statusRes.json();
       setStatus(statusData);
@@ -476,7 +476,7 @@ export default function MonitorPage() {
         // changes might not exist yet
       }
       try {
-        const repairRes = await fetch("/data/monitor/repair-log.json");
+        const repairRes = await fetch("/api/monitor/static/repair-log", { cache: "no-store" });
         const repairData = await repairRes.json();
         setRepairLog(repairData);
       } catch {}

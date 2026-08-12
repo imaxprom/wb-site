@@ -9,14 +9,24 @@ from playwright.sync_api import sync_playwright
 import base64, json, time, sys, os, re, subprocess, urllib.request
 
 PHONE = os.environ.get("WB_PHONE", "9641521652")
-TARGET_SUPPLIER_QUERY = os.environ.get("WB_TARGET_SUPPLIER", "Беликова").strip()
+TARGET_SUPPLIER_QUERY = os.environ.get("WB_TARGET_SUPPLIER", "").strip()
 WEBSITE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TOKENS_PATH = os.path.join(WEBSITE_DIR, "data", "wb-tokens.json")
+ORGANIZATION_ID = int(os.environ.get("MPHUB_ORGANIZATION_ID", "0") or "0")
+DEFAULT_DATA_DIR = (
+    os.path.join(WEBSITE_DIR, "data", "organizations", str(ORGANIZATION_ID))
+    if ORGANIZATION_ID > 0
+    else os.path.join(WEBSITE_DIR, "data")
+)
+TOKENS_PATH = os.environ.get("WB_TOKENS_PATH", os.path.join(DEFAULT_DATA_DIR, "wb-tokens.json"))
 ENV_PATH = os.path.join(WEBSITE_DIR, ".env.production.local")
-PROFILE_DIR = os.environ.get("WB_PROFILE_DIR", os.path.join(WEBSITE_DIR, "data", "wb-playwright-profile"))
-LOG_PATH = "/tmp/wb_auth_log.txt"
-SMS_CODE_PATH = "/tmp/wb_sms_code"
-SUPPLIER_CHOICE_PATH = "/tmp/wb_supplier_choice"
+PROFILE_DIR = os.environ.get("WB_PROFILE_DIR", os.path.join(DEFAULT_DATA_DIR, "wb-playwright-profile"))
+LOG_PATH = os.environ.get("WB_AUTH_LOG_PATH", "/tmp/wb_auth_log.txt")
+SMS_CODE_PATH = os.environ.get("WB_SMS_CODE_PATH", "/tmp/wb_sms_code")
+SUPPLIER_CHOICE_PATH = os.environ.get("WB_SUPPLIER_CHOICE_PATH", "/tmp/wb_supplier_choice")
+DEBUG_PREFIX = os.environ.get(
+    "WB_AUTH_DEBUG_PREFIX",
+    f"/tmp/wb_supplier_debug-{ORGANIZATION_ID}" if ORGANIZATION_ID > 0 else "/tmp/wb_supplier_debug",
+)
 
 def load_env_file(path):
     if not os.path.exists(path):
@@ -74,6 +84,7 @@ def sync_review_account_tokens(tokens, cookies_dict):
         return
 
     payload = {
+        "organizationId": ORGANIZATION_ID,
         "supplierId": supplier_id,
         "authorizev3": tokens.get("authorizev3") or "",
         "validationKey": validation_key,
@@ -89,7 +100,15 @@ const payload = JSON.parse(process.argv[1]);
     application_name: "mphub-wb-seller-login",
   });
   try {
-    const result = await pool.query(`
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      if (payload.organizationId > 0) {
+        await client.query("SELECT set_config('app.current_organization_id', $1, true)", [String(payload.organizationId)]);
+        const schema = payload.organizationId === 1 ? "public" : `organization_${payload.organizationId}`;
+        await client.query("SELECT set_config('search_path', $1, true)", [`${schema},pg_catalog`]);
+      }
+      const result = await client.query(`
       UPDATE review_accounts
          SET wb_authorize_v3 = $1,
              wb_validation_key = COALESCE(NULLIF($2, ''), wb_validation_key),
@@ -97,8 +116,15 @@ const payload = JSON.parse(process.argv[1]);
              wb_cookie_updated_at = CURRENT_TIMESTAMP,
              updated_at = CURRENT_TIMESTAMP
        WHERE supplier_id = $4
-    `, [payload.authorizev3, payload.validationKey, payload.wbSellerLk, payload.supplierId]);
-    console.log(String(result.rowCount || 0));
+      `, [payload.authorizev3, payload.validationKey, payload.wbSellerLk, payload.supplierId]);
+      await client.query("COMMIT");
+      console.log(String(result.rowCount || 0));
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   } finally {
     await pool.end();
   }
@@ -132,7 +158,12 @@ class TeeWriter:
         for s in self.streams:
             s.flush()
 
+os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
 log_file = open(LOG_PATH, "w")
+try:
+    os.chmod(LOG_PATH, 0o600)
+except OSError:
+    pass
 sys.stdout = TeeWriter(sys.__stdout__, log_file)
 sys.stderr = TeeWriter(sys.__stderr__, log_file)
 
@@ -410,6 +441,71 @@ def normalize_supplier_name(value):
     value = value.replace("Индивидуальный предприниматель", "ИП")
     return value
 
+def parse_legal_entity_text(value, fallback_name=""):
+    """Parse the same legal-entity metadata that WBADS exposes to its UI."""
+    raw = value or ""
+    clean = normalize_supplier_name(raw)
+    names = []
+    for line in raw.splitlines():
+        names.extend(supplier_names_from_text(line))
+    if not names:
+        names = supplier_names_from_text(clean)
+    name = names[0] if names else normalize_supplier_name(fallback_name)
+    if not name:
+        return None
+
+    supplier_match = re.search(r"(?:^|\s)(?:ID|ИД)\s*[:№#]?\s*(\d+)", clean, re.IGNORECASE)
+    inn_match = re.search(r"(?:^|\s)(?:INN|ИНН)\s*[:№#]?\s*(\d{8,12})", clean, re.IGNORECASE)
+    supplier_id = supplier_match.group(1) if supplier_match else ""
+    inn = inn_match.group(1) if inn_match else ""
+
+    store_name = ""
+    lines = [normalize_supplier_name(line) for line in raw.splitlines() if normalize_supplier_name(line)]
+    ignored = re.compile(
+        r"^(?:ID|ИД|INN|ИНН|Ваш\s+(?:аккаунт|кабинет)|Your\s+account|Выбрать|Продолжить)",
+        re.IGNORECASE,
+    )
+    for line in lines:
+        candidate = re.sub(r"\s+(?:INN|ИНН|ID|ИД)\s*[:№#]?\s*\d+.*$", "", line, flags=re.IGNORECASE).strip(" ·•-")
+        if not candidate or ignored.search(candidate):
+            continue
+        if supplier_matches_query(candidate, name) or supplier_names_from_text(candidate):
+            remainder = normalize_supplier_name(candidate.replace(name, "", 1)).strip(" ·•-")
+            if remainder and not ignored.search(remainder):
+                store_name = remainder
+            continue
+        if len(candidate) <= 80:
+            store_name = candidate
+            break
+
+    if not store_name:
+        before_meta = re.sub(
+            r"\s+(?:INN|ИНН|ID|ИД)\s*[:№#]?\s*\d+.*$",
+            "",
+            clean,
+            flags=re.IGNORECASE,
+        )
+        remainder = normalize_supplier_name(before_meta.replace(name, "", 1)).strip(" ·•-")
+        if remainder and len(remainder) <= 80 and not ignored.search(remainder):
+            store_name = remainder
+
+    entity_id = supplier_id or ("name:" + re.sub(r"[^а-яёa-z0-9]+", "-", name.lower(), flags=re.IGNORECASE).strip("-"))
+    subtitle_parts = []
+    if store_name:
+        subtitle_parts.append(store_name)
+    if inn:
+        subtitle_parts.append("ИНН " + inn)
+    if supplier_id:
+        subtitle_parts.append("ID " + supplier_id)
+    return {
+        "id": entity_id,
+        "name": name,
+        "subtitle": " · ".join(subtitle_parts),
+        "supplierId": supplier_id,
+        "storeName": store_name,
+        "inn": inn,
+    }
+
 def supplier_names_from_text(value):
     value = normalize_supplier_name(value)
     names = []
@@ -446,12 +542,13 @@ def supplier_matches_query(name, query):
 
 def collect_supplier_elements(page, header_only=False):
     items = []
-    seen = set()
+    by_key = {}
     for el in page.query_selector_all("*"):
         try:
             if not el.is_visible():
                 continue
-            names = supplier_names_from_text(el.inner_text())
+            raw_text = el.inner_text()
+            names = supplier_names_from_text(raw_text)
             if not names:
                 continue
             box = el.bounding_box()
@@ -460,21 +557,49 @@ def collect_supplier_elements(page, header_only=False):
             if header_only and not (box["x"] > 900 and box["y"] < 90):
                 continue
             for name in names:
-                key = name.lower()
-                if key in seen:
-                    continue
-                seen.add(key)
-                items.append({
+                entity = parse_legal_entity_text(raw_text, name) or {"name": name, "id": "", "supplierId": ""}
+                key = (entity.get("supplierId") or name).lower()
+                item = {
                     "name": name,
+                    "text": normalize_supplier_name(raw_text),
+                    "entity": entity,
                     "x": box["x"],
                     "y": box["y"],
                     "width": box["width"],
                     "height": box["height"],
                     "el": el,
-                })
+                }
+                previous = by_key.get(key)
+                if previous is None or box["width"] * box["height"] < previous["width"] * previous["height"]:
+                    by_key[key] = item
         except Exception:
             pass
+    items.extend(by_key.values())
+    items.sort(key=lambda item: (item["y"], item["x"], item["width"] * item["height"]))
     return items
+
+def legal_entity_list(page, fallback_name=""):
+    entities = {}
+    for item in collect_supplier_elements(page, header_only=False):
+        entity = item.get("entity") or parse_legal_entity_text(item.get("text", ""), item.get("name", ""))
+        if not entity:
+            continue
+        key = entity["id"]
+        previous = entities.get(key)
+        score = int(bool(entity.get("supplierId"))) + int(bool(entity.get("inn"))) + int(bool(entity.get("storeName")))
+        previous_score = -1 if previous is None else (
+            int(bool(previous.get("supplierId"))) + int(bool(previous.get("inn"))) + int(bool(previous.get("storeName")))
+        )
+        if score > previous_score:
+            entities[key] = entity
+
+    if not entities and fallback_name and fallback_name != "Неизвестно":
+        fallback = parse_legal_entity_text(fallback_name, fallback_name)
+        if fallback:
+            entities[fallback["id"]] = fallback
+    result = list(entities.values())
+    identified = [entity for entity in result if entity.get("supplierId")]
+    return identified or result
 
 def current_supplier_from_header(page):
     header_suppliers = collect_supplier_elements(page, header_only=True)
@@ -492,11 +617,15 @@ def click_supplier_header(page, current_supplier):
     return False
 
 def click_supplier_choice(page, choice):
-    wanted = normalize_supplier_name(choice)
+    selected = choice if isinstance(choice, dict) else {"name": str(choice), "supplierId": ""}
+    wanted = normalize_supplier_name(selected.get("name", ""))
+    wanted_id = str(selected.get("supplierId") or "")
     matches = []
     for item in collect_supplier_elements(page, header_only=False):
         try:
-            if (item["name"] == wanted or supplier_matches_query(item["name"], wanted)) and item["y"] > 45:
+            name_matches = item["name"] == wanted or supplier_matches_query(item["name"], wanted)
+            id_matches = not wanted_id or bool(re.search(r"(?:ID|ИД)\s*[:№#]?\s*" + re.escape(wanted_id) + r"\b", item.get("text", ""), re.IGNORECASE))
+            if name_matches and id_matches and item["y"] > 45:
                 matches.append(item)
         except Exception:
             pass
@@ -573,12 +702,12 @@ def supplier_debug_state(page):
 
 def dump_supplier_debug(page):
     try:
-        page.screenshot(path="/tmp/wb_supplier_debug.png", full_page=True)
-        with open("/tmp/wb_supplier_debug.html", "w", encoding="utf-8") as f:
+        page.screenshot(path=DEBUG_PREFIX + ".png", full_page=True)
+        with open(DEBUG_PREFIX + ".html", "w", encoding="utf-8") as f:
             f.write(page.content())
-        with open("/tmp/wb_supplier_debug.json", "w", encoding="utf-8") as f:
+        with open(DEBUG_PREFIX + ".json", "w", encoding="utf-8") as f:
             json.dump(supplier_debug_state(page), f, ensure_ascii=False, indent=2)
-        print("    Supplier debug dumped to /tmp/wb_supplier_debug.*")
+        print("    Supplier debug dumped to", DEBUG_PREFIX + ".*")
     except Exception as e:
         print("    Supplier debug dump failed:", e)
 
@@ -594,7 +723,7 @@ def supplier_name_list(page, fallback=None):
         names.append(name)
     return names or (fallback or [])
 
-def wait_for_manual_supplier_switch(page, current_supplier, supplier_list, reason):
+def wait_for_manual_supplier_switch(page, current_supplier, legal_entities, reason):
     """Keep the WB browser session alive until a supplier can be selected."""
     attempt = 0
     message = reason
@@ -602,13 +731,14 @@ def wait_for_manual_supplier_switch(page, current_supplier, supplier_list, reaso
     while True:
         attempt += 1
         dump_supplier_debug(page)
-        latest_suppliers = supplier_name_list(page, supplier_list)
+        latest_entities = legal_entity_list(page, current_supplier) or legal_entities
         debug = supplier_debug_state(page)
 
         status(
             "supplier_select",
             message=message,
-            suppliers=latest_suppliers,
+            legalEntities=latest_entities,
+            suppliers=[entity["name"] for entity in latest_entities],
             current=current_supplier,
             attempt=attempt,
             debug=debug,
@@ -624,18 +754,24 @@ def wait_for_manual_supplier_switch(page, current_supplier, supplier_list, reaso
             message = "Сессия WB открыта. Ожидаю ручной выбор юрлица."
             continue
 
-        choice = normalize_supplier_name(choice)
-        print("    Manual retry supplier:", choice)
+        selected = next(
+            (entity for entity in latest_entities if entity["id"] == choice or entity["name"] == normalize_supplier_name(choice)),
+            None,
+        )
+        if not selected:
+            message = "Выбранное юрлицо отсутствует в текущей сессии WB."
+            legal_entities = latest_entities
+            continue
+        print("    Manual retry supplier:", selected["name"], selected["id"])
 
-        if choice == current_supplier:
-            return current_supplier
+        if selected["name"] == current_supplier and not selected.get("supplierId"):
+            return selected
 
-        if click_supplier_header(page, current_supplier) and click_supplier_choice(page, choice):
-            header_suppliers = collect_supplier_elements(page, header_only=True)
-            return header_suppliers[0]["name"] if header_suppliers else choice
+        if click_supplier_header(page, current_supplier) and click_supplier_choice(page, selected):
+            return selected
 
-        supplier_list = supplier_name_list(page, latest_suppliers)
-        message = f"Не удалось выбрать юрлицо: {choice}. Сессия WB оставлена открытой."
+        legal_entities = latest_entities
+        message = f"Не удалось выбрать юрлицо: {selected['name']}. Сессия WB оставлена открытой."
 
 cleanup()
 print("Starting WB SELLER auth...")
@@ -826,84 +962,100 @@ with sync_playwright() as p:
     current_supplier = header_suppliers[0]["name"] if header_suppliers else "Неизвестно"
     print("    Current supplier:", current_supplier)
 
-    # Try clicking to see if dropdown opens with more suppliers
-    all_suppliers = [{"name": current_supplier}] if current_supplier != "Неизвестно" else []
+    # Open the WB cabinet menu and collect structured legal entities just like WBADS.
+    legal_entities = []
     if current_supplier != "Неизвестно" and click_supplier_header(page, current_supplier):
-        dropdown_items = collect_supplier_elements(page, header_only=False)
-        dropdown_names = []
-        seen_names = set()
-        for item in dropdown_items:
-            key = item["name"].lower()
-            if key in seen_names:
-                continue
-            seen_names.add(key)
-            dropdown_names.append({"name": item["name"]})
-
-        if len(dropdown_names) > len(all_suppliers):
-            all_suppliers = dropdown_names
-        print("    Supplier candidates:", [s["name"] for s in all_suppliers])
+        legal_entities = legal_entity_list(page, current_supplier)
+        print("    Legal entity candidates:", [(entity["name"], entity["id"]) for entity in legal_entities])
     else:
         print("    Supplier dropdown not opened")
 
-    supplier_list = [s["name"] for s in all_suppliers]
+    if not legal_entities and current_supplier != "Неизвестно":
+        fallback_entity = parse_legal_entity_text(current_supplier, current_supplier)
+        if fallback_entity:
+            legal_entities = [fallback_entity]
+
+    supplier_list = [entity["name"] for entity in legal_entities]
+    selected_entity = None
     if TARGET_SUPPLIER_QUERY:
-        choice = next((name for name in supplier_list if supplier_matches_query(name, TARGET_SUPPLIER_QUERY)), "")
-        if not choice:
+        selected_entity = next(
+            (entity for entity in legal_entities if supplier_matches_query(entity["name"], TARGET_SUPPLIER_QUERY)),
+            None,
+        )
+        if not selected_entity:
             found = ", ".join(supplier_list) if supplier_list else "нет"
             status(
                 "supplier_select",
                 message=f"Не найден кабинет {TARGET_SUPPLIER_QUERY}. Найдены: {found}",
+                legalEntities=legal_entities,
                 suppliers=supplier_list,
                 current=current_supplier,
             )
-            choice = wait_for_file(SUPPLIER_CHOICE_PATH, timeout=300)
-            if not choice:
+            choice_id = wait_for_file(SUPPLIER_CHOICE_PATH, timeout=300)
+            if not choice_id:
                 status(
                     "failed",
                     message=f"Таймаут ручного выбора юрлица. Найдены: {found}",
+                    legalEntities=legal_entities,
                     suppliers=supplier_list,
                     current=current_supplier,
                 )
                 browser.close()
                 sys.exit(0)
-            choice = normalize_supplier_name(choice)
-            print("    Manual target supplier:", choice)
-        print("    Target supplier:", choice)
-    elif len(supplier_list) > 1:
-        status("supplier_select", suppliers=supplier_list, current=current_supplier)
+            selected_entity = next(
+                (entity for entity in legal_entities if entity["id"] == choice_id or entity["name"] == normalize_supplier_name(choice_id)),
+                None,
+            )
+            if not selected_entity:
+                status("failed", message="Выбранное юрлицо отсутствует в текущей сессии WB.")
+                browser.close()
+                sys.exit(0)
+        print("    Target supplier:", selected_entity["name"], selected_entity["id"])
+    else:
+        # Always ask the user to confirm the legal entity, even if WB returned only one.
+        status(
+            "supplier_select",
+            legalEntities=legal_entities,
+            suppliers=supplier_list,
+            current=current_supplier,
+        )
 
-        choice = wait_for_file(SUPPLIER_CHOICE_PATH, timeout=180)
-        if not choice:
+        choice_id = wait_for_file(SUPPLIER_CHOICE_PATH, timeout=180)
+        if not choice_id:
             status("failed", message="Таймаут: юрлицо не выбрано за 3 минуты.")
             browser.close()
             sys.exit(0)
 
-        choice = normalize_supplier_name(choice)
-        print("    User chose:", choice)
+        selected_entity = next(
+            (entity for entity in legal_entities if entity["id"] == choice_id or entity["name"] == normalize_supplier_name(choice_id)),
+            None,
+        )
+        if not selected_entity:
+            status("failed", message="Выбранное юрлицо отсутствует в текущей сессии WB.")
+            browser.close()
+            sys.exit(0)
+        print("    User chose:", selected_entity["name"], selected_entity["id"])
 
-        if choice not in supplier_list:
-            print("    Choice is not in auto-detected list, trying manual click:", choice)
-    else:
-        choice = current_supplier
+    if not selected_entity:
+        status("failed", message="WB не вернул ни одного доступного юрлица.")
+        browser.close()
+        sys.exit(0)
 
-    if choice != current_supplier:
-        if click_supplier_header(page, current_supplier):
-            if click_supplier_choice(page, choice):
-                current_supplier = choice
-            else:
-                current_supplier = wait_for_manual_supplier_switch(
-                    page,
-                    current_supplier,
-                    supplier_list,
-                    f"Не удалось выбрать юрлицо: {choice}",
-                )
+    choice = selected_entity["name"]
+    should_switch = choice != current_supplier or bool(selected_entity.get("supplierId"))
+    if should_switch:
+        if click_supplier_choice(page, selected_entity):
+            current_supplier = choice
+        elif click_supplier_header(page, current_supplier) and click_supplier_choice(page, selected_entity):
+            current_supplier = choice
         else:
-            current_supplier = wait_for_manual_supplier_switch(
+            selected_entity = wait_for_manual_supplier_switch(
                 page,
                 current_supplier,
-                supplier_list,
-                "Не удалось открыть список юрлиц для переключения.",
+                legal_entities,
+                f"Не удалось выбрать юрлицо: {choice}",
             )
+            current_supplier = selected_entity["name"]
 
     if current_supplier == "Неизвестно":
         status("failed", message="Не удалось определить текущее юрлицо после авторизации.")
@@ -911,7 +1063,12 @@ with sync_playwright() as p:
         sys.exit(0)
 
     # === Step 8: Collect cookies and save tokens ===
-    status("saving", message="WB принял код, сохраняем токены...", supplier=current_supplier)
+    status(
+        "saving",
+        message="WB принял код, сохраняем токены...",
+        supplier=current_supplier,
+        selectedLegalEntity=selected_entity,
+    )
     print("[8] Capturing auth token...")
 
     auth_token = capture_authorizev3(page)
@@ -930,6 +1087,20 @@ with sync_playwright() as p:
 
     if auth_token:
         refreshed = refresh_seller_token(auth_token, cookie_string) or {}
+        actual_supplier_id = str(refreshed.get("supplierId") or "")
+        expected_supplier_id = str(selected_entity.get("supplierId") or "")
+        if expected_supplier_id and actual_supplier_id and expected_supplier_id != actual_supplier_id:
+            status(
+                "failed",
+                message=(
+                    f"WB открыл кабинет ID {actual_supplier_id}, хотя был выбран ID {expected_supplier_id}. "
+                    "Токены не сохранены, чтобы не подключить чужое юрлицо."
+                ),
+                selectedLegalEntity=selected_entity,
+                actualSupplierId=actual_supplier_id,
+            )
+            browser.close()
+            sys.exit(0)
         previous_tokens = {}
         try:
             with open(TOKENS_PATH, "r", encoding="utf-8") as f:
@@ -942,13 +1113,22 @@ with sync_playwright() as p:
             "wbSellerLkExpires": refreshed.get("wbSellerLkExpires", 0),
             "supplierId": refreshed.get("supplierId") or previous_tokens.get("supplierId", ""),
             "supplierUuid": refreshed.get("supplierUuid") or previous_tokens.get("supplierUuid", ""),
+            "supplierName": selected_entity.get("name", ""),
+            "storeName": selected_entity.get("storeName", ""),
+            "inn": selected_entity.get("inn", ""),
+            "phone": ("+7" + PHONE) if len(PHONE) == 10 else ("+" + PHONE.lstrip("+")),
             "cookies": cookie_string,
             "savedAt": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
         }
         write_secret_json(TOKENS_PATH, tokens)
         sync_review_account_tokens(tokens, cookies_dict)
         print("Tokens saved to", TOKENS_PATH)
-        status("success", message="Авторизация успешна!", supplier=current_supplier)
+        status(
+            "success",
+            message="Авторизация успешна!",
+            supplier=current_supplier,
+            selectedLegalEntity=selected_entity,
+        )
     else:
         status("failed", message="Не удалось получить токен авторизации.")
 

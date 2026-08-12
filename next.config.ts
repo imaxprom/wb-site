@@ -19,6 +19,8 @@ const contentSecurityPolicy = [
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  serverExternalPackages: ["puppeteer"],
+  allowedDevOrigins: ["192.168.2.90"],
   outputFileTracingExcludes: {
     "/*": [
       "./data/**/*",

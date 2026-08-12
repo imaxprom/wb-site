@@ -62,7 +62,7 @@ export default function ChangelogPage() {
   const [filter, setFilter] = useState<string>("all");
 
   useEffect(() => {
-    fetch("/data/changelog.json")
+    fetch("/api/admin/changelog", { cache: "no-store" })
       .then((r) => r.json())
       .then(setData)
       .catch(() => {});

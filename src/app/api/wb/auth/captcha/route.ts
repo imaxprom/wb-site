@@ -1,26 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
-import { cdpSubmitCaptcha } from "@/lib/wb-auth-cdp";
-import { localReadonlyGuard } from "@/lib/local-readonly-guard";
+import { activateAuthenticatedRequestContext, requireOrganizationAdmin } from "@/lib/api-auth";
 
 /**
  * POST /api/wb/auth/captcha — Submit captcha solution (CDP approach)
  */
 
 export async function POST(req: NextRequest) {
-  const authError = await requireAdmin(req);
+  const authError = await requireOrganizationAdmin(req);
   if (authError) return authError;
-  const readonlyError = localReadonlyGuard("WB cabinet captcha submission");
-  if (readonlyError) return readonlyError;
-
-  try {
-    const { captcha } = await req.json();
-    if (!captcha) {
-      return NextResponse.json({ ok: false, step: "error", error: "Введите текст капчи" }, { status: 400 });
-    }
-    const result = await cdpSubmitCaptcha(captcha);
-    return NextResponse.json(result);
-  } catch (err) {
-    return NextResponse.json({ ok: false, step: "error", error: String(err) }, { status: 500 });
-  }
+  activateAuthenticatedRequestContext(req);
+  return NextResponse.json(
+    {
+      ok: false,
+      step: "error",
+      error: "Устаревший общий CAPTCHA-сеанс отключён; повторите вход через текущую форму авторизации",
+    },
+    { status: 410 },
+  );
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { getPgExcludeDailyFilter } from "@/modules/analytics/lib/db";
 import { pgGet, pgRows } from "@/lib/postgres";
 
@@ -16,6 +16,7 @@ import { pgGet, pgRows } from "@/lib/postgres";
 export async function GET(request: NextRequest) {
   const authError = await requireAdmin(request);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(request);
 
   const { searchParams } = new URL(request.url);
   const from = searchParams.get("from") || "";

@@ -4,12 +4,22 @@ import { useState, useEffect, useRef } from "react";
 import { AutoCheckLine } from "./AutoCheckLine";
 
 type Step = "loading" | "phone" | "captcha" | "code" | "supplier_select" | "authenticated";
+type LegalEntityOption = {
+  id: string;
+  name: string;
+  subtitle?: string;
+  supplierId?: string;
+  storeName?: string;
+  inn?: string;
+};
 type AuthApiResult = {
   ok: boolean;
   step: string;
   captchaImage?: string;
   error?: string;
   warning?: string;
+  legalEntities?: LegalEntityOption[];
+  selectedLegalEntity?: LegalEntityOption;
   suppliers?: string[];
   currentSupplier?: string;
   retryAfterSeconds?: number;
@@ -38,10 +48,16 @@ export function WbAuth() {
   const [code, setCode] = useState("");
   const [captchaText, setCaptchaText] = useState("");
   const [captchaImage, setCaptchaImage] = useState("");
-  const [suppliers, setSuppliers] = useState<string[]>([]);
-  const [manualSupplier, setManualSupplier] = useState("ИП Беликова");
+  const [legalEntities, setLegalEntities] = useState<LegalEntityOption[]>([]);
   const [currentSupplier, setCurrentSupplier] = useState("");
-  const [sessionInfo, setSessionInfo] = useState<{ supplier?: string; phone?: string }>({});
+  const [sessionInfo, setSessionInfo] = useState<{
+    supplier?: string;
+    phone?: string;
+    storeName?: string;
+    inn?: string;
+    supplierId?: string;
+  }>({});
+  const [sessionActive, setSessionActive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
@@ -72,19 +88,46 @@ export function WbAuth() {
     if (step === "captcha") captchaRef.current?.focus();
   }, [step]);
 
-  async function checkSession() {
+  function applyActiveSession(data: {
+    supplier?: string;
+    phone?: string;
+    storeName?: string;
+    inn?: string;
+    supplierId?: string;
+  }) {
+    setSessionInfo({
+      supplier: data.supplier,
+      phone: data.phone,
+      storeName: data.storeName,
+      inn: data.inn,
+      supplierId: data.supplierId,
+    });
+    setSessionActive(true);
+    setError("");
+    setStep("authenticated");
+  }
+
+  async function checkSession(): Promise<boolean> {
     try {
-      const res = await fetch("/api/wb/auth");
+      const res = await fetch(`/api/wb/auth?ts=${Date.now()}`, { cache: "no-store" });
       const data = await res.json();
       if (data.ok) {
-        setSessionInfo({ supplier: data.supplier, phone: data.phone });
-        setStep("authenticated");
+        applyActiveSession(data);
+        return true;
       } else {
+        setSessionActive(false);
         setStep("phone");
       }
     } catch {
+      setSessionActive(false);
       setStep("phone");
     }
+    return false;
+  }
+
+  async function recoverFromConnectionError() {
+    const ok = await checkSession();
+    if (!ok) setError("Ошибка соединения с сервером");
   }
 
   function handleStepResult(data: AuthApiResult) {
@@ -106,6 +149,7 @@ export function WbAuth() {
     }
 
     setError("");
+    setSessionActive(false);
     setCooldownUntil(null);
     if (data.warning) setWarning(data.warning);
 
@@ -120,20 +164,26 @@ export function WbAuth() {
         setStep("code");
         break;
       case "supplier_select":
-        setSuppliers(data.suppliers || []);
+        setLegalEntities(
+          data.legalEntities?.length
+            ? data.legalEntities
+            : (data.suppliers || []).map((name) => ({ id: `legacy:${name}`, name }))
+        );
         setCurrentSupplier(data.currentSupplier || "");
-        setManualSupplier("ИП Беликова");
         setStep("supplier_select");
         break;
       case "authenticated":
-        fetch("/api/wb/auth").then(r => r.json()).then(d => {
+        fetch(`/api/wb/auth?ts=${Date.now()}`, { cache: "no-store" }).then(r => r.json()).then(d => {
           if (d.ok) {
-            setStep("authenticated");
+            applyActiveSession(d);
           } else {
+            setSessionActive(false);
             setError("Авторизация прошла, но токены не сохранились. Попробуйте ещё раз.");
             setStep("phone");
           }
         }).catch(() => {
+          setSessionActive(true);
+          setError("");
           setStep("authenticated");
         });
         break;
@@ -164,7 +214,7 @@ export function WbAuth() {
       });
       handleStepResult(await res.json());
     } catch {
-      setError("Ошибка соединения с сервером");
+      await recoverFromConnectionError();
     } finally {
       setLoading(false);
     }
@@ -187,7 +237,7 @@ export function WbAuth() {
       });
       handleStepResult(await res.json());
     } catch {
-      setError("Ошибка соединения с сервером");
+      await recoverFromConnectionError();
     } finally {
       setLoading(false);
     }
@@ -211,24 +261,24 @@ export function WbAuth() {
       });
       handleStepResult(await res.json());
     } catch {
-      setError("Ошибка соединения с сервером");
+      await recoverFromConnectionError();
     } finally {
       setLoading(false);
     }
   }
 
-  async function handleSelectSupplier(name: string) {
+  async function handleSelectSupplier(entityId: string) {
     setLoading(true);
     setError("");
     try {
       const res = await fetch("/api/wb/auth/select-supplier", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ supplier: name }),
+        body: JSON.stringify({ entityId }),
       });
       handleStepResult(await res.json());
     } catch {
-      setError("Ошибка соединения с сервером");
+      await recoverFromConnectionError();
     } finally {
       setLoading(false);
     }
@@ -244,7 +294,9 @@ export function WbAuth() {
     setCode("");
     setCaptchaText("");
     setCaptchaImage("");
+    setLegalEntities([]);
     setError("");
+    setSessionActive(false);
     setLoading(false);
   }
 
@@ -264,7 +316,7 @@ export function WbAuth() {
           <StepIndicator current={step} />
         )}
       </div>
-      <AutoCheckLine channel="lk" />
+      <AutoCheckLine channel="lk" liveOk={sessionActive} />
 
       {/* Error banner */}
       {error && (
@@ -388,44 +440,30 @@ export function WbAuth() {
       {step === "supplier_select" && (
         <div className="space-y-3">
           <div className="rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/5 p-3 text-sm text-[var(--accent)]">
-            К номеру <span className="font-medium">{phone}</span> привязано несколько кабинетов. Выберите нужный:
+            Выберите юрлицо, под которым MPHub будет работать в WB. Выбор проверяется по ID кабинета перед сохранением.
           </div>
 
           <div className="space-y-2">
-            {suppliers.map((name) => (
+            {legalEntities.map((entity) => (
               <button
-                key={name}
-                onClick={() => handleSelectSupplier(name)}
+                key={entity.id}
+                onClick={() => handleSelectSupplier(entity.id)}
                 disabled={loading}
-                className={`w-full text-left px-4 py-3 rounded-lg border text-sm font-medium transition-colors flex items-center justify-between ${
-                  name === currentSupplier
+                className={`w-full text-left px-4 py-3 rounded-lg border text-sm transition-colors flex items-center justify-between gap-4 ${
+                  entity.name === currentSupplier
                     ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]"
                     : "border-[var(--border)] bg-[var(--bg)] text-[var(--text)] hover:border-[var(--accent)]/50"
                 } disabled:opacity-50`}
               >
-                <span>{name}</span>
-                {name === currentSupplier && <span className="text-xs text-[var(--text-muted)]">текущий</span>}
+                <span className="min-w-0">
+                  <span className="block font-medium">{entity.name}</span>
+                  {entity.subtitle && (
+                    <span className="mt-0.5 block text-xs font-normal text-[var(--text-muted)]">{entity.subtitle}</span>
+                  )}
+                </span>
+                {entity.name === currentSupplier && <span className="shrink-0 text-xs text-[var(--text-muted)]">текущий</span>}
               </button>
             ))}
-          </div>
-
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <input
-              type="text"
-              value={manualSupplier}
-              onChange={(e) => setManualSupplier(e.target.value)}
-              placeholder="Название юрлица"
-              className="min-w-0 flex-1 bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-[var(--accent)] transition-colors"
-              onKeyDown={(e) => e.key === "Enter" && manualSupplier.trim() && handleSelectSupplier(manualSupplier.trim())}
-              disabled={loading}
-            />
-            <button
-              onClick={() => manualSupplier.trim() && handleSelectSupplier(manualSupplier.trim())}
-              disabled={loading || !manualSupplier.trim()}
-              className="px-4 py-2.5 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white text-sm rounded-lg font-medium transition-colors disabled:opacity-50"
-            >
-              Выбрать вручную
-            </button>
           </div>
 
           <button onClick={handleBack} disabled={loading} className="btn-secondary text-sm">
@@ -452,7 +490,14 @@ export function WbAuth() {
               {sessionInfo.supplier && (
                 <div className="flex items-center gap-2 border-l border-[var(--border)] pl-4">
                   <span className="text-xs text-[var(--text-muted)]">Кабинет</span>
-                  <span className="text-sm font-medium text-[var(--text)]">{sessionInfo.supplier}</span>
+                  <span className="text-sm font-medium text-[var(--text)]">
+                    {sessionInfo.supplier}
+                    {(sessionInfo.storeName || sessionInfo.inn || sessionInfo.supplierId) && (
+                      <span className="ml-2 text-xs font-normal text-[var(--text-muted)]">
+                        {[sessionInfo.storeName, sessionInfo.inn ? `ИНН ${sessionInfo.inn}` : "", sessionInfo.supplierId ? `ID ${sessionInfo.supplierId}` : ""].filter(Boolean).join(" · ")}
+                      </span>
+                    )}
+                  </span>
                 </div>
               )}
               {sessionInfo.phone && (

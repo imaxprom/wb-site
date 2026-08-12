@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiError } from "@/lib/api-utils";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin, requireOrganizationAdmin } from "@/lib/api-auth";
 import { getWbApiKey, setWbApiKey, deleteWbApiKey } from "@/lib/wb-api-key";
 import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 
@@ -8,6 +8,7 @@ import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 export async function GET(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
 
   try {
     const key = getWbApiKey();
@@ -23,8 +24,9 @@ export async function GET(req: NextRequest) {
 
 /** PUT — save API key */
 export async function PUT(req: NextRequest) {
-  const authError = await requireAdmin(req);
+  const authError = await requireOrganizationAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
   const readonlyError = localReadonlyGuard("WB API key deletion");
   if (readonlyError) return readonlyError;
 
@@ -42,8 +44,9 @@ export async function PUT(req: NextRequest) {
 
 /** DELETE — remove API key */
 export async function DELETE(req: NextRequest) {
-  const authError = await requireAdmin(req);
+  const authError = await requireOrganizationAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
   const readonlyError = localReadonlyGuard("WB API key deletion");
   if (readonlyError) return readonlyError;
 

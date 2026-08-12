@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { verifyToken } from "@/lib/auth";
 import {
@@ -10,6 +10,7 @@ import {
 } from "@/lib/shipment-db";
 import { getPgExcludeDailyFilter } from "@/modules/analytics/lib/db";
 import { calculateTrend, type WeeklyData } from "@/modules/shipment/lib/trend-engine";
+import { normalizeExcludedWarehouseNames } from "@/modules/shipment/lib/warehouse-stock-exclusions";
 import { isPostgresReadonlyConnection, pgGet, pgQuery, pgRows } from "@/lib/postgres";
 
 interface StockRow {
@@ -30,6 +31,8 @@ interface StockRow {
   target_sales_qty: number;
   target_sales_45d: number;
   wb_stock_qty: number;
+  wb_stock_total_qty: number;
+  wb_stock_excluded_qty: number;
   supply_packed_qty: number;
   supply_accepted_qty: number;
   supply_unloading_qty: number;
@@ -262,15 +265,46 @@ function getUserIdFromRequest(req: NextRequest): number | null {
   return verifyToken(token)?.userId ?? null;
 }
 
-async function buildWbStockByBarcodePg(): Promise<Map<string, number>> {
-  if (!await tableExistsPg("shipment_stock")) return new Map();
-  const rows = await pgRows<Array<{ barcode: string | null; value: number | null }>[number]>(`
-    SELECT barcode, SUM(quantity) AS value
+interface WbStockByBarcode {
+  included: Map<string, number>;
+  excluded: Map<string, number>;
+  total: Map<string, number>;
+}
+
+async function buildWbStockByBarcodePg(excludedWarehouseNames: string[]): Promise<WbStockByBarcode> {
+  const empty = { included: new Map<string, number>(), excluded: new Map<string, number>(), total: new Map<string, number>() };
+  if (!await tableExistsPg("shipment_stock")) return empty;
+
+  const excludedExpression = excludedWarehouseNames.length > 0
+    ? "SUM(CASE WHEN BTRIM(warehouse) = ANY(?::text[]) THEN quantity ELSE 0 END)"
+    : "0";
+  const rows = await pgRows<{
+    barcode: string | null;
+    total_value: number | null;
+    excluded_value: number | null;
+  }>(`
+    SELECT
+      barcode,
+      SUM(quantity) AS total_value,
+      ${excludedExpression} AS excluded_value
     FROM shipment_stock
     WHERE barcode != ''
     GROUP BY barcode
-  `);
-  return buildNumberMap(rows);
+  `, excludedWarehouseNames.length > 0 ? [excludedWarehouseNames] : []);
+
+  const included = new Map<string, number>();
+  const excluded = new Map<string, number>();
+  const total = new Map<string, number>();
+  for (const row of rows) {
+    const barcode = String(row.barcode || "").trim();
+    if (!barcode) continue;
+    const totalValue = Number(row.total_value || 0);
+    const excludedValue = Number(row.excluded_value || 0);
+    total.set(barcode, totalValue);
+    excluded.set(barcode, excludedValue);
+    included.set(barcode, Math.max(0, totalValue - excludedValue));
+  }
+  return { included, excluded, total };
 }
 
 function normalizePackingDays(value: string | null): number {
@@ -451,13 +485,13 @@ function buildPackingPlan(
   row: RawStockRow,
   barcode: string | null,
   packingDays: number,
-  wbStockByBarcode: Map<string, number>,
+  wbStockByBarcode: WbStockByBarcode,
   ordersByBarcode: Map<string, number>,
   trendByArticle: Map<string, { multiplier: number; direction: "up" | "down" | "flat" }>,
   buyoutRate: number,
   disabledBarcodes: Set<string>,
   packingMultiplier: number,
-): Pick<StockRow, "packing_days" | "packing_multiplier" | "base_orders_qty" | "base_sales_qty" | "buyout_rate" | "trend_multiplier" | "trend_direction" | "target_sales_qty" | "target_sales_45d" | "wb_stock_qty" | "supply_packed_qty" | "supply_accepted_qty" | "supply_unloading_qty" | "supply_ready_for_sale_qty" | "supply_plan_deduct_qty" | "warehouse_required_units" | "plan_pack_units" | "plan_pack_boxes"> {
+): Pick<StockRow, "packing_days" | "packing_multiplier" | "base_orders_qty" | "base_sales_qty" | "buyout_rate" | "trend_multiplier" | "trend_direction" | "target_sales_qty" | "target_sales_45d" | "wb_stock_qty" | "wb_stock_total_qty" | "wb_stock_excluded_qty" | "supply_packed_qty" | "supply_accepted_qty" | "supply_unloading_qty" | "supply_ready_for_sale_qty" | "supply_plan_deduct_qty" | "warehouse_required_units" | "plan_pack_units" | "plan_pack_boxes"> {
   const code = String(barcode || "").trim();
   const isDisabledInShipment = code ? disabledBarcodes.has(code) : false;
   const baseOrders = code && !isDisabledInShipment ? ordersByBarcode.get(code) || 0 : 0;
@@ -465,7 +499,9 @@ function buildPackingPlan(
   const articleTrend = trendByArticle.get(String(row.article_wb));
   const trendMultiplier = articleTrend?.multiplier ?? 1;
   const targetSales = baseSales * trendMultiplier * packingMultiplier;
-  const wbStock = code ? wbStockByBarcode.get(code) || 0 : 0;
+  const wbStock = code ? wbStockByBarcode.included.get(code) || 0 : 0;
+  const wbStockTotal = code ? wbStockByBarcode.total.get(code) || 0 : 0;
+  const wbStockExcluded = code ? wbStockByBarcode.excluded.get(code) || 0 : 0;
   const warehouseRequired = Math.max(0, targetSales - wbStock);
   const planUnits = Math.max(0, warehouseRequired - Number(row.units_qty || 0));
   const planBoxes = row.per_box && row.per_box > 0 ? planUnits / row.per_box : null;
@@ -481,6 +517,8 @@ function buildPackingPlan(
     target_sales_qty: round2(targetSales),
     target_sales_45d: round2(targetSales),
     wb_stock_qty: round2(wbStock),
+    wb_stock_total_qty: round2(wbStockTotal),
+    wb_stock_excluded_qty: round2(wbStockExcluded),
     supply_packed_qty: 0,
     supply_accepted_qty: 0,
     supply_unloading_qty: 0,
@@ -495,6 +533,7 @@ function buildPackingPlan(
 export async function GET(request: NextRequest) {
   const authError = await requireAdmin(request);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(request);
 
   try {
     await initShipmentTablesPg();
@@ -518,8 +557,12 @@ export async function GET(request: NextRequest) {
       buyoutRate: 0.75,
       uploadDays: 28,
       warehousePackingMultiplier: 1,
+      shipmentExcludedWarehouseNames: [] as string[],
       ...settings,
     };
+    const excludedWarehouseNames = normalizeExcludedWarehouseNames(
+      effectiveSettings.shipmentExcludedWarehouseNames,
+    );
     const packingDays = 30;
     const packingMultiplier = normalizePackingMultiplier(
       request.nextUrl.searchParams.get("packingMultiplier") ?? effectiveSettings.warehousePackingMultiplier,
@@ -535,6 +578,10 @@ export async function GET(request: NextRequest) {
           totalArticles: 0,
           totalUnits: 0,
           totalBoxes: 0,
+          wbStockTotalUnits: 0,
+          wbStockIncludedUnits: 0,
+          wbStockExcludedUnits: 0,
+          excludedWarehouseNames,
           overallTrend: { multiplier: 1, direction: "flat", totalOrders: 0 },
           lastRun: null,
         },
@@ -560,7 +607,7 @@ export async function GET(request: NextRequest) {
     const rawRows = await pgRows<RawStockRow>(rawRowsSql);
 
     const productSizesByArticle = await buildProductSizesByArticlePg();
-    const wbStockByBarcode = await buildWbStockByBarcodePg();
+    const wbStockByBarcode = await buildWbStockByBarcodePg(excludedWarehouseNames);
     const ordersByBarcode = await buildOrdersByBarcodePg(packingDays);
     const includedArticles = new Set(rawRows.map((row) => String(row.article_wb)));
     const trendStats = await buildArticleTrendByArticlePg(productSizesByArticle, loadedDays, disabledByArticle, includedArticles);
@@ -631,6 +678,8 @@ export async function GET(request: NextRequest) {
 
     const totalUnits = rows.reduce((sum, row) => sum + row.units_qty, 0);
     const totalBoxes = rows.reduce((sum, row) => sum + (row.boxes_qty || 0), 0);
+    const wbStockTotalUnits = [...wbStockByBarcode.total.values()].reduce((sum, value) => sum + value, 0);
+    const wbStockExcludedUnits = [...wbStockByBarcode.excluded.values()].reduce((sum, value) => sum + value, 0);
 
     return NextResponse.json({
       meta: {
@@ -639,6 +688,10 @@ export async function GET(request: NextRequest) {
         totalArticles: articles.length,
         totalUnits: Math.round(totalUnits * 100) / 100,
         totalBoxes: Math.round(totalBoxes * 100) / 100,
+        wbStockTotalUnits: round2(wbStockTotalUnits),
+        wbStockIncludedUnits: round2(Math.max(0, wbStockTotalUnits - wbStockExcludedUnits)),
+        wbStockExcludedUnits: round2(wbStockExcludedUnits),
+        excludedWarehouseNames,
         overallTrend: {
           multiplier: round4(trendStats.overall.multiplier),
           direction: trendStats.overall.direction,

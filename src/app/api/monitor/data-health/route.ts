@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import path from "path";
 import fs from "fs";
-import { requireMonitorAdmin } from "@/lib/monitor-auth";
+import { activateMonitorOrganizationContext, requireMonitorAdmin } from "@/lib/monitor-auth";
 import { pgGet } from "@/lib/postgres";
+import { getOrganizationDataPath } from "@/lib/organization-paths";
 
 /**
  * GET /api/monitor/data-health
@@ -11,10 +11,11 @@ import { pgGet } from "@/lib/postgres";
  * SQL + файлы, без внешних HTTP запросов.
  */
 
-const STATUS_PATH = path.join(process.cwd(), "data", "daily-sync-status.json");
-const API_KEY_PATH = path.join(process.cwd(), "data", "wb-api-key.txt");
-const TOKENS_PATH = path.join(process.cwd(), "data", "wb-tokens.json");
-const CRON_HEALTH_PATH = path.join(process.cwd(), "public", "data", "monitor", "data-health-cron.json");
+const statusPath = () => getOrganizationDataPath("daily-sync-status.json");
+const apiKeyPath = () => getOrganizationDataPath("wb-api-key.txt");
+const tokensPath = () => getOrganizationDataPath("wb-tokens.json");
+const cronHealthPath = () => getOrganizationDataPath("data-health-cron.json");
+const shipmentSyncLogPath = () => getOrganizationDataPath("shipment-sync.log");
 
 interface Check {
   id: string;
@@ -36,6 +37,46 @@ function formatDbTimestamp(value: unknown): string {
   return String(value);
 }
 
+function parseTimestamp(value: unknown): Date | null {
+  if (!value) return null;
+  let text = String(value).trim();
+  if (!text) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) text += "T00:00:00Z";
+  if (/^\d{4}-\d{2}-\d{2} \d/.test(text)) text = text.replace(" ", "T");
+  text = text.replace(/(\.\d{3})\d+/, "$1");
+  text = text.replace(/([+-]\d{2})$/, "$1:00");
+  const dt = new Date(text);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+function ageMinutes(value: unknown): number {
+  const dt = parseTimestamp(value);
+  if (!dt) return 999999;
+  return Math.round((Date.now() - dt.getTime()) / 60000);
+}
+
+function formatAge(minutes: number): string {
+  if (minutes >= 999999) return "нет даты";
+  if (minutes < 0) return "только что";
+  if (minutes < 60) return `${minutes} мин назад`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} ч назад`;
+  return `${Math.floor(hours / 24)} д назад`;
+}
+
+function latestShipmentStockLogState(): { skipped: boolean | null; line: string | null } {
+  try {
+    const lines = fs.readFileSync(shipmentSyncLogPath(), "utf-8").trim().split(/\r?\n/).slice(-120).reverse();
+    const line = lines.find((entry) => entry.includes("Sync OK:") || entry.includes("ERROR: sync failed"));
+    if (!line) return { skipped: null, line: null };
+    if (/"stockSkipped"\s*:\s*true/.test(line)) return { skipped: true, line };
+    if (/"stockSkipped"\s*:\s*false/.test(line)) return { skipped: false, line };
+    return { skipped: null, line };
+  } catch {
+    return { skipped: null, line: null };
+  }
+}
+
 async function tableExistsPg(tableName: string): Promise<boolean> {
   const row = await pgGet<{ exists: boolean }>(`
     SELECT EXISTS (
@@ -49,6 +90,7 @@ async function tableExistsPg(tableName: string): Promise<boolean> {
 export async function GET(req: NextRequest) {
   const authError = await requireMonitorAdmin(req);
   if (authError) return authError;
+  activateMonitorOrganizationContext(req);
 
   const checks: Check[] = [];
   const yd = yesterday();
@@ -90,8 +132,8 @@ export async function GET(req: NextRequest) {
 
     // 3. WB API ключ существует
     {
-      const exists = fs.existsSync(API_KEY_PATH);
-      const size = exists ? fs.readFileSync(API_KEY_PATH, "utf-8").trim().length : 0;
+      const exists = fs.existsSync(apiKeyPath());
+      const size = exists ? fs.readFileSync(apiKeyPath(), "utf-8").trim().length : 0;
       checks.push({
         id: "api_key",
         name: "WB API ключ",
@@ -104,8 +146,8 @@ export async function GET(req: NextRequest) {
     {
       let hasTokens = false;
       try {
-        if (fs.existsSync(TOKENS_PATH)) {
-          const tokens = JSON.parse(fs.readFileSync(TOKENS_PATH, "utf-8"));
+        if (fs.existsSync(tokensPath())) {
+          const tokens = JSON.parse(fs.readFileSync(tokensPath(), "utf-8"));
           hasTokens = !!tokens.authorizev3 && !!tokens.cookies;
         }
       } catch { /* */ }
@@ -226,12 +268,23 @@ export async function GET(req: NextRequest) {
 
       // 11. Shipment stock
       {
-        const row = await pgGet<{ cnt: number }>("SELECT COUNT(*) as cnt FROM shipment_stock") || { cnt: 0 };
+        const row = await pgGet<{ cnt: number; updated_at: string | null }>(
+          "SELECT COUNT(*) as cnt, MAX(updated_at) as updated_at FROM shipment_stock"
+        ) || { cnt: 0, updated_at: null };
+        const stockAge = ageMinutes(row.updated_at);
+        const logState = latestShipmentStockLogState();
+        let status: Check["status"] = row.cnt > 0 && stockAge <= 150 ? "ok" : row.cnt > 0 && stockAge <= 240 ? "warn" : "error";
+        if (logState.skipped === true) status = "error";
         checks.push({
           id: "shipment_stock",
           name: "Остатки на складах",
-          status: row.cnt > 0 ? "ok" : "error",
+          status,
           value: row.cnt > 0 ? `${row.cnt} позиций` : "Нет данных",
+          detail: logState.skipped === true
+            ? `Последний sync пропустил остатки: ${logState.line}`
+            : row.updated_at
+              ? `Последний синк остатков: ${formatDbTimestamp(row.updated_at)} (${formatAge(stockAge)})`
+              : "Нет синка остатков",
         });
       }
 
@@ -298,8 +351,8 @@ export async function GET(req: NextRequest) {
         let syncOk = false;
         let syncDetail = "Файл не найден";
         try {
-          if (fs.existsSync(STATUS_PATH)) {
-            const status = JSON.parse(fs.readFileSync(STATUS_PATH, "utf-8"));
+          if (fs.existsSync(statusPath())) {
+            const status = JSON.parse(fs.readFileSync(statusPath(), "utf-8"));
             if (status.today?.date === yd) {
               syncOk = status.today.complete === true;
               const parts = [];
@@ -334,8 +387,8 @@ export async function GET(req: NextRequest) {
 
     // 17+: Крон-проверки (из файла, обновляется отдельным скриптом)
     try {
-      if (fs.existsSync(CRON_HEALTH_PATH)) {
-        const cronData = JSON.parse(fs.readFileSync(CRON_HEALTH_PATH, "utf-8")) as { checks: Check[]; timestamp: string };
+      if (fs.existsSync(cronHealthPath())) {
+        const cronData = JSON.parse(fs.readFileSync(cronHealthPath(), "utf-8")) as { checks: Check[]; timestamp: string };
         const existingIds = new Set(checks.map((check) => check.id));
         for (const c of cronData.checks) {
           if (!existingIds.has(c.id)) {

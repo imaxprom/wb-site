@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin, requireOrganizationAdmin } from "@/lib/api-auth";
 import { playwrightSendPhone, playwrightCheckSession, playwrightLogout } from "@/lib/wb-auth-playwright";
 import fs from "fs";
-import path from "path";
 import { localReadonlyGuard } from "@/lib/local-readonly-guard";
-
-const TOKENS_PATH = path.join(process.cwd(), "data", "wb-tokens.json");
+import { getWbAuthPaths } from "@/lib/wb-auth-paths";
 
 /**
  * POST /api/wb/auth — Start auth: send phone number (Playwright on VPS)
@@ -14,8 +12,9 @@ const TOKENS_PATH = path.join(process.cwd(), "data", "wb-tokens.json");
  */
 
 export async function POST(req: NextRequest) {
-  const authError = await requireAdmin(req);
+  const authError = await requireOrganizationAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
   const readonlyError = localReadonlyGuard("WB cabinet auth");
   if (readonlyError) return readonlyError;
 
@@ -34,6 +33,7 @@ export async function POST(req: NextRequest) {
 export async function GET(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
   const readonlyError = localReadonlyGuard("WB cabinet auth status");
   if (readonlyError) return readonlyError;
 
@@ -42,14 +42,27 @@ export async function GET(req: NextRequest) {
 
     // Enrich with session info from tokens
     if (result.ok) {
+      const paths = getWbAuthPaths();
       let supplier = "";
       let phone = "";
+      let storeName = "";
+      let inn = "";
+      let supplierId = "";
       try {
-        if (fs.existsSync(TOKENS_PATH)) {
-          const tokens = JSON.parse(fs.readFileSync(TOKENS_PATH, "utf-8"));
+        if (fs.existsSync(paths.tokensPath)) {
+          const tokens = JSON.parse(fs.readFileSync(paths.tokensPath, "utf-8"));
+          supplier = String(tokens.supplierName || "").trim();
+          storeName = String(tokens.storeName || "").trim();
+          inn = String(tokens.inn || "").replace(/\D/g, "");
+          supplierId = String(tokens.supplierId || "").trim();
+          const savedPhone = String(tokens.phone || "").replace(/\D/g, "");
+          if (savedPhone.length >= 10) {
+            const d = savedPhone.slice(-10);
+            phone = `+7 (${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6,8)}-${d.slice(8,10)}`;
+          }
 
           // Get supplier name from wbSellerLk JWT
-          if (tokens.wbSellerLk) {
+          if (!supplier && tokens.wbSellerLk) {
             try {
               const payload = JSON.parse(Buffer.from(tokens.wbSellerLk.split(".")[1], "base64").toString());
               const sd = payload.data || {};
@@ -60,15 +73,15 @@ export async function GET(req: NextRequest) {
 
           // Try reading supplier name from last auth log
           try {
-            const log = fs.readFileSync("/tmp/wb_auth_log.txt", "utf-8");
+            const log = fs.readFileSync(paths.authLogPath, "utf-8");
             const match = log.match(/supplier":\s*"([^"]+)"/);
-            if (match) supplier = match[1];
+            if (match && !supplier) supplier = match[1];
           } catch {}
 
           // Get phone from saved tokens
-          if (tokens.savedAt) {
+          if (!phone && tokens.savedAt) {
             try {
-              const log = fs.readFileSync("/tmp/wb_auth_log.txt", "utf-8");
+              const log = fs.readFileSync(paths.authLogPath, "utf-8");
               const match = log.match(/phone":\s*"(\d+)"/);
               if (match) {
                 const d = match[1];
@@ -77,13 +90,13 @@ export async function GET(req: NextRequest) {
             } catch {}
           }
 
-          if (!supplier && tokens.supplierId) {
-            supplier = `Кабинет ${tokens.supplierId}`;
+          if (!supplier && supplierId) {
+            supplier = `Кабинет ${supplierId}`;
           }
         }
       } catch {}
 
-      return NextResponse.json({ ...result, supplier, phone });
+      return NextResponse.json({ ...result, supplier, phone, storeName, inn, supplierId });
     }
 
     return NextResponse.json(result);
@@ -93,8 +106,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const authError = await requireAdmin(req);
+  const authError = await requireOrganizationAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
   const readonlyError = localReadonlyGuard("WB cabinet logout");
   if (readonlyError) return readonlyError;
 

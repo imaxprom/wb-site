@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { getWbApiKeyFromRequest } from "@/lib/wb-api-key";
 import { localReadonlyGuard } from "@/lib/local-readonly-guard";
@@ -7,6 +7,7 @@ import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 export async function GET(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
   const readonlyError = localReadonlyGuard("WB warehouses proxy");
   if (readonlyError) return readonlyError;
 

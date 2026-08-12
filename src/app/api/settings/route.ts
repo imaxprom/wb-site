@@ -4,8 +4,8 @@ import {
   initShipmentTablesPg,
   setUserSettingPg,
 } from "@/lib/shipment-db";
-import { verifyToken } from "@/lib/auth";
 import { isPostgresReadonlyConnection } from "@/lib/postgres";
+import { activateAuthenticatedRequestContext, getAuthenticatedRequestContext } from "@/lib/api-auth";
 
 const DEFAULT_SETTINGS = {
   buyoutMode: "auto",
@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS = {
   uploadDays: 28,
   warehousePackingDays: 30,
   warehousePackingMultiplier: 1,
+  shipmentExcludedWarehouseNames: [],
   logisticsSelectedWarehouseNames: [],
   logisticsWarehouseLimit: 10,
   boxLengthCm: 60,
@@ -21,21 +22,15 @@ const DEFAULT_SETTINGS = {
   boxHeightCm: 40,
 };
 
-function getUserIdFromRequest(req: NextRequest): number | null {
-  const token = req.cookies.get("mphub-token")?.value;
-  if (!token) return null;
-  const payload = verifyToken(token);
-  return payload?.userId ?? null;
-}
-
 export async function GET(req: NextRequest) {
-  const userId = getUserIdFromRequest(req);
-  if (!userId) {
+  const context = await getAuthenticatedRequestContext(req);
+  if (!context) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  activateAuthenticatedRequestContext(req);
 
   await initShipmentTablesPg();
-  const stored = await getUserSettingsPg(userId);
+  const stored = await getUserSettingsPg(context.userId);
 
   // Merge defaults with stored settings
   const settings = { ...DEFAULT_SETTINGS, ...stored };
@@ -44,10 +39,11 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
-  const userId = getUserIdFromRequest(req);
-  if (!userId) {
+  const context = await getAuthenticatedRequestContext(req);
+  if (!context) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  activateAuthenticatedRequestContext(req);
 
   try {
     if (isPostgresReadonlyConnection()) {
@@ -60,7 +56,7 @@ export async function PUT(req: NextRequest) {
     const body = await req.json() as Record<string, unknown>;
     await initShipmentTablesPg();
     for (const [key, value] of Object.entries(body)) {
-      await setUserSettingPg(userId, key, value);
+      await setUserSettingPg(context.userId, key, value);
     }
     return NextResponse.json({ ok: true });
   } catch (err) {

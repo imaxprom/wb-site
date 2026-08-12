@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
-import { isCronRequest } from "@/lib/cron-auth";
-import { getSyncStatus, syncDailyReport, syncYesterday, startDailyCron } from "@/lib/daily-sync";
+import { activateCronOrganizationContext, enterCronOrganizationContext, isCronRequest } from "@/lib/cron-auth";
+import { getSyncStatus, syncDailyReport, syncYesterday } from "@/lib/daily-sync";
 import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 
 /**
@@ -11,12 +11,10 @@ import { localReadonlyGuard } from "@/lib/local-readonly-guard";
  *   Body: { date?: "YYYY-MM-DD" } — omit date to sync yesterday
  */
 
-// Start cron on first request (lazy init)
-let cronStarted = false;
-
 export async function GET(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
 
   const readonlyError = localReadonlyGuard("Daily sync cron");
   if (readonlyError) {
@@ -24,27 +22,24 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ...status, disabled: true, reason: "local_postgres_readonly" });
   }
 
-  if (!cronStarted) {
-    startDailyCron();
-    cronStarted = true;
-  }
-
   const status = getSyncStatus();
   return NextResponse.json(status);
 }
 
 export async function POST(req: NextRequest) {
-  if (!isCronRequest(req)) {
+  const cronRequest = isCronRequest(req);
+  if (cronRequest) {
+    if (!await enterCronOrganizationContext(req)) {
+      return NextResponse.json({ error: "Active organization is required for cron" }, { status: 400 });
+    }
+    activateCronOrganizationContext(req);
+  } else {
     const authError = await requireAdmin(req);
     if (authError) return authError;
+    activateAuthenticatedRequestContext(req);
   }
   const readonlyError = localReadonlyGuard("Manual daily sync");
   if (readonlyError) return readonlyError;
-
-  if (!cronStarted) {
-    startDailyCron();
-    cronStarted = true;
-  }
 
   try {
     const body = await req.json().catch(() => ({}));

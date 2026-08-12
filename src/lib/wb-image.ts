@@ -4,6 +4,11 @@
  */
 
 function getBasketNumber(vol: number): string {
+  // WB moved the newest 1.26–1.27B nmID ranges to a compact CDN layout that
+  // no longer follows the older arithmetic progression below. Verified
+  // against live product images on the user site on 2026-07-31.
+  if (vol >= 12600 && vol <= 12699) return "44";
+  if (vol >= 12700 && vol <= 12799) return "45";
   if (vol <= 143) return "01";
   if (vol <= 287) return "02";
   if (vol <= 431) return "03";
@@ -43,6 +48,27 @@ export function getWbImageUrl(nmId: string | number, size: "small" | "medium" = 
   const dimensions = size === "small" ? "c246x328" : "c516x688";
 
   return `https://basket-${basket}.wbbasket.ru/vol${vol}/part${part}/${id}/images/${dimensions}/1.webp`;
+}
+
+/**
+ * Upgrade a URL already returned by WB without recalculating its basket.
+ * Newer nmID ranges no longer follow one stable basket arithmetic rule, while
+ * the URL stored with an order already contains the authoritative host/path.
+ */
+export function getWbImageUrlFromKnownSource(source: string, size: "small" | "medium" = "small"): string {
+  const value = source.trim();
+  if (!value) return "";
+  try {
+    const url = new URL(value);
+    if (!url.hostname.endsWith(".wbbasket.ru")) return "";
+    const dimensions = size === "small" ? "c246x328" : "c516x688";
+    const nextPath = url.pathname.replace(/\/images\/[^/]+\//, `/images/${dimensions}/`);
+    if (nextPath === url.pathname && !url.pathname.includes(`/images/${dimensions}/`)) return "";
+    url.pathname = nextPath;
+    return url.toString();
+  } catch {
+    return "";
+  }
 }
 
 export function getWbImageUrlCandidates(nmId: string | number, size: "small" | "medium" = "small"): string[] {

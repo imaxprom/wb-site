@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireSystemAdmin } from "@/lib/api-auth";
+
+export const activateMonitorOrganizationContext = activateAuthenticatedRequestContext;
 
 export async function requireMonitorAdmin(req: NextRequest): Promise<NextResponse | null> {
-  return requireAdmin(req);
+  return requireSystemAdmin(req);
 }

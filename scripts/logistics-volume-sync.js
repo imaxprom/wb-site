@@ -15,10 +15,12 @@
 const fs = require("fs");
 const path = require("path");
 const { Pool } = require("pg");
+const { ensureOrganizationDataDir, organizationDataPath, organizationPoolOptions, requireOrganizationId } = require("./lib/organization-runtime");
 
 const PROJECT_DIR = path.join(__dirname, "..");
-const API_KEY_PATH = path.join(PROJECT_DIR, "data", "wb-api-key.txt");
-const DATA_DIR = path.join(PROJECT_DIR, "data");
+const ORGANIZATION_ID = requireOrganizationId();
+const DATA_DIR = ensureOrganizationDataDir(PROJECT_DIR, ORGANIZATION_ID);
+const API_KEY_PATH = organizationDataPath(PROJECT_DIR, "wb-api-key.txt", ORGANIZATION_ID);
 const HOST = "https://seller-analytics-api.wildberries.ru";
 
 const POLL_DELAY_MS = 3000;
@@ -49,6 +51,7 @@ function getPgPool() {
     if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required when MPHUB_DB_ENGINE=postgres");
     pgPool = new Pool({
       connectionString: process.env.DATABASE_URL,
+      options: organizationPoolOptions(ORGANIZATION_ID),
       max: Number(process.env.PGPOOL_MAX || 5),
       application_name: process.env.PGAPPNAME || "mphub-logistics-volume-sync",
     });

@@ -4,6 +4,7 @@ import React, { createContext, useContext, useReducer, useEffect, useCallback, u
 import type { StockItem, OrderRecord, OrderAggregates, Product, ProductOverrides, WarehouseReadyStockRow } from "@/types";
 import type { AppSettings } from "@/types";
 import { getDefaultRegions, getDefaultRegionGroups } from "@/modules/shipment/lib/engine";
+import { normalizeExcludedWarehouseNames } from "@/modules/shipment/lib/warehouse-stock-exclusions";
 
 // --- State ---
 
@@ -123,7 +124,7 @@ interface DataContextType {
   updateProductPerBox: (articleWB: string, barcode: string, perBox: number) => void;
   updateCustomName: (articleWB: string, customName: string) => void;
   toggleSizeDisabled: (articleWB: string, barcode: string, disabled: boolean) => void;
-  updateSettings: (settings: Partial<AppSettings>) => void;
+  updateSettings: (settings: Partial<AppSettings>) => Promise<void>;
   clearAllData: () => void;
 }
 
@@ -295,6 +296,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           boxWidthCm: typeof raw.boxWidthCm === "number" ? raw.boxWidthCm : 40,
           boxHeightCm: typeof raw.boxHeightCm === "number" ? raw.boxHeightCm : 40,
           uploadDays: typeof raw.uploadDays === "number" ? raw.uploadDays : 28,
+          shipmentExcludedWarehouseNames: normalizeExcludedWarehouseNames(raw.shipmentExcludedWarehouseNames),
           maxArticlesPerBox: typeof raw.maxArticlesPerBox === "number" ? raw.maxArticlesPerBox : undefined,
           shipmentsPerMonth: typeof raw.shipmentsPerMonth === "number" ? raw.shipmentsPerMonth : undefined,
           minUnits: typeof raw.minUnits === "number" ? raw.minUnits : undefined,
@@ -417,14 +419,21 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   );
 
   const updateSettings = useCallback(
-    (partial: Partial<AppSettings>) => {
+    async (partial: Partial<AppSettings>) => {
       dispatch({ type: "UPDATE_SETTINGS", settings: partial });
       // Persist to API
-      fetch("/api/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(partial),
-      }).catch(console.warn);
+      try {
+        const response = await fetch("/api/settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(partial),
+        });
+        if (!response.ok) {
+          throw new Error(`Settings save failed: HTTP ${response.status}`);
+        }
+      } catch (error) {
+        console.warn(error);
+      }
     },
     []
   );

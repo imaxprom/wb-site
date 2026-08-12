@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { getWeeklyReports, downloadReportById } from "@/lib/wb-seller-api";
 import { listReports } from "@/lib/wb-scraper";
 import fs from "fs";
@@ -15,6 +15,7 @@ import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 export async function GET(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
   const readonlyError = localReadonlyGuard("WB report download");
   if (readonlyError) return readonlyError;
 
@@ -59,6 +60,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
 
   try {
     const body = await req.json();

@@ -11,10 +11,13 @@
 const path = require("path");
 const fs = require("fs");
 const { Pool } = require("pg");
+const { ensureOrganizationDataDir, organizationDataPath, organizationPoolOptions, organizationTempPath, requireOrganizationId } = require("./lib/organization-runtime");
 
 const PROJECT_DIR = path.join(__dirname, "..");
-const LOG_PATH = path.join(PROJECT_DIR, "data", "reviews-sync.log");
-const LOCK_PATH = path.join(PROJECT_DIR, "data", "reviews-sync.lock");
+const ORGANIZATION_ID = requireOrganizationId();
+ensureOrganizationDataDir(PROJECT_DIR, ORGANIZATION_ID);
+const LOG_PATH = organizationDataPath(PROJECT_DIR, "reviews-sync.log", ORGANIZATION_ID);
+const LOCK_PATH = organizationTempPath("reviews-sync.lock", ORGANIZATION_ID);
 
 function loadEnvFile(filePath) {
   try {
@@ -40,6 +43,7 @@ function getPgPool() {
     if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required when MPHUB_DB_ENGINE=postgres");
     pgPool = new Pool({
       connectionString: process.env.DATABASE_URL,
+      options: organizationPoolOptions(ORGANIZATION_ID),
       max: Number(process.env.PGPOOL_MAX || 5),
       application_name: process.env.PGAPPNAME || "mphub-reviews-sync",
     });

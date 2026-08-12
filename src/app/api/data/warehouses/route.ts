@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { getWbApiKey } from "@/lib/wb-api-key";
 import { FALLBACK_WAREHOUSES } from "@/lib/warehouses-fallback";
 
@@ -7,6 +7,7 @@ import { FALLBACK_WAREHOUSES } from "@/lib/warehouses-fallback";
 export async function GET(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
 
   const url = new URL(req.url);
   const raw = url.searchParams.get("raw") === "1";

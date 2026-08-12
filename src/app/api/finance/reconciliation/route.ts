@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { pgGet, pgRows } from "@/lib/postgres";
 
@@ -160,15 +160,29 @@ async function getLoyaltyCompensationPg(dateFrom: string, dateTo: string): Promi
 export async function GET(request: NextRequest) {
   const authError = await requireAdmin(request);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(request);
 
   try {
-    const weeks = await pgRows<{ date_from: string; date_to: string }>(`
-      SELECT DISTINCT date_from, date_to
-      FROM realization
-      WHERE source = 'weekly_final' AND date_from != '' AND date_to != ''
+    const weeks = await pgRows<{ date_from: string; date_to: string; has_api: boolean; has_excel: boolean }>(`
+      WITH periods AS (
+        SELECT date_from, date_to, TRUE AS has_api, FALSE AS has_excel
+        FROM realization
+        WHERE source = 'weekly_final' AND date_from != '' AND date_to != ''
+        GROUP BY date_from, date_to
+
+        UNION ALL
+
+        SELECT period_from AS date_from, period_to AS date_to, FALSE AS has_api, TRUE AS has_excel
+        FROM weekly_rows
+        WHERE period_from != '' AND period_to != ''
+        GROUP BY period_from, period_to
+      )
+      SELECT date_from, date_to,
+        BOOL_OR(has_api) AS has_api,
+        BOOL_OR(has_excel) AS has_excel
+      FROM periods
       GROUP BY date_from, date_to
       ORDER BY date_from DESC
-      LIMIT 12
     `);
 
     const result: Array<{
@@ -178,10 +192,14 @@ export async function GET(request: NextRequest) {
     }> = [];
 
     for (const w of weeks) {
-      const apiWeekly = await getFinanceMetricsPg(w.date_from, w.date_to, "weekly_final");
-      const loyaltyFromWeekly = await getLoyaltyCompensationPg(w.date_from, w.date_to);
-      if (loyaltyFromWeekly !== 0) {
-        apiWeekly.compensation = loyaltyFromWeekly;
+      const apiWeekly = w.has_api
+        ? await getFinanceMetricsPg(w.date_from, w.date_to, "weekly_final")
+        : { ...EMPTY_METRICS };
+      if (w.has_api) {
+        const loyaltyFromWeekly = await getLoyaltyCompensationPg(w.date_from, w.date_to);
+        if (loyaltyFromWeekly !== 0) {
+          apiWeekly.compensation = loyaltyFromWeekly;
+        }
       }
       const excelLk = await getExcelMetricsPg(w.date_from, w.date_to);
       const hasExcel = excelLk.sales > 0 || excelLk.logistics > 0;
@@ -189,7 +207,7 @@ export async function GET(request: NextRequest) {
       result.push({
         dateFrom: w.date_from,
         dateTo: w.date_to,
-        status: "final" as const,
+        status: w.has_api ? "final" as const : "preliminary" as const,
         apiWeekly,
         excelLk,
         hasExcel,

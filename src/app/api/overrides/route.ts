@@ -4,32 +4,27 @@ import {
   initShipmentTablesPg,
   setUserOverridePg,
 } from "@/lib/shipment-db";
-import { verifyToken } from "@/lib/auth";
 import { localReadonlyGuard } from "@/lib/local-readonly-guard";
-
-function getUserIdFromRequest(req: NextRequest): number | null {
-  const token = req.cookies.get("mphub-token")?.value;
-  if (!token) return null;
-  const payload = verifyToken(token);
-  return payload?.userId ?? null;
-}
+import { activateAuthenticatedRequestContext, getAuthenticatedRequestContext } from "@/lib/api-auth";
 
 export async function GET(req: NextRequest) {
-  const userId = getUserIdFromRequest(req);
-  if (!userId) {
+  const context = await getAuthenticatedRequestContext(req);
+  if (!context) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  activateAuthenticatedRequestContext(req);
 
   await initShipmentTablesPg();
-  const overrides = await getUserOverridesPg(userId);
+  const overrides = await getUserOverridesPg(context.userId);
   return NextResponse.json(overrides);
 }
 
 export async function PUT(req: NextRequest) {
-  const userId = getUserIdFromRequest(req);
-  if (!userId) {
+  const context = await getAuthenticatedRequestContext(req);
+  if (!context) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  activateAuthenticatedRequestContext(req);
   const readonlyError = localReadonlyGuard("Product override updates");
   if (readonlyError) return readonlyError;
 
@@ -51,7 +46,7 @@ export async function PUT(req: NextRequest) {
     const barcodeKey = barcode || "";
 
     await initShipmentTablesPg();
-    await setUserOverridePg(userId, articleWB, barcodeKey, {
+    await setUserOverridePg(context.userId, articleWB, barcodeKey, {
       customName,
       perBox,
       disabled,

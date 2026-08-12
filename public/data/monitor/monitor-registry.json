@@ -51,6 +51,19 @@
     "lifecycle": "active"
   },
   {
+    "id": "supply-reports-sync",
+    "name": "Supply Reports Sync",
+    "nameRu": "Отчёты о поставках",
+    "description": "Ежедневно в 08:00 МСК проверяет новые принятые поставки и сохраняет акт приёмки, отчёт сверки и Честный знак",
+    "project": "MpHub",
+    "type": "bash",
+    "cronPattern": "0 5 * * *",
+    "cronUser": "makson",
+    "scriptPath": "/home/makson/current/scripts/supply-reports-sync.sh",
+    "logPath": "/home/makson/current/data/supply-reports-sync.log",
+    "lifecycle": "active"
+  },
+  {
     "id": "reviews-sync",
     "name": "Reviews Sync",
     "nameRu": "Синхронизация отзывов",

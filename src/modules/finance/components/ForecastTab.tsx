@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { Calendar } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
 import { formatNumber } from "@/lib/utils";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -11,17 +10,21 @@ import {
 const RUB = (v: number) => formatNumber(v) + " ₽";
 const fmtDate = (d: string) => d.slice(8) + "." + d.slice(5, 7);
 const PCT = (v: number) => `${Math.round(v * 10) / 10}%`;
-const DEFAULT_COMMISSION_SHIFT_FROM = "2026-07-07";
-const DEFAULT_COMMISSION_SHIFT_PP = "9";
 
 interface ForecastArticle {
-  nm_id: number; article: string; custom_name: string; orders: number; orders_rub: number; buyout: number;
+  nm_id: number; article: string; custom_name: string; subject: string; orders: number; orders_rub: number; buyout: number;
   avg_price: number; cogs_unit: number; logistics_unit: number;
   commission_unit: number; tax_unit: number; profit_per_unit: number;
   estimated_sales: number; cogs_total: number; logistics_total: number;
-  commission_total: number; commission_delta: number; tax_total: number; gross_profit: number;
+  commission_total: number; tax_total: number; gross_profit: number;
   ad_spend: number; storage: number; penalties: number;
-  estimated_revenue: number; estimated_profit: number; estimated_profit_baseline: number; estimated?: boolean;
+  estimated_revenue: number; estimated_profit: number; estimated?: boolean;
+  commission_rate?: number;
+  commission_source?: "factual_article" | "subject_average" | "store_average";
+  logistics_source?: "factual" | "dimensions_warehouse_tariff" | "volume_analogs" | "subject_average" | "store_average";
+  logistics_per_order?: number;
+  volume_liters?: number;
+  tariff_date?: string;
 }
 
 interface ForecastDay {
@@ -29,10 +32,79 @@ interface ForecastDay {
   estimated_sales: number;
   estimated_revenue: number; estimated_profit_before_ads: number;
   cogs_total: number; logistics_total: number; commission_total: number;
-  commission_delta_total: number; tax_total: number; gross_profit: number;
+  tax_total: number; gross_profit: number;
   ad_spend: number; storage: number; penalties: number; overhead: number;
-  estimated_profit: number; estimated_profit_baseline: number; running_profit: number; running_revenue: number;
+  estimated_profit: number; running_profit: number; running_revenue: number;
   articles: ForecastArticle[];
+}
+
+const FORECAST_SUBJECTS = ["Трусы", "Рюкзаки"] as const;
+type ForecastSubject = typeof FORECAST_SUBJECTS[number];
+
+const sumArticles = (articles: ForecastArticle[], field: keyof ForecastArticle) =>
+  articles.reduce((sum, article) => sum + Number(article[field] || 0), 0);
+
+function filterForecastBySubjects(
+  days: ForecastDay[],
+  selectedSubjects: Set<ForecastSubject>,
+): ForecastDay[] {
+  // Обе кнопки активны: сохраняем исходный общий расчёт без перераспределений.
+  if (selectedSubjects.size === FORECAST_SUBJECTS.length) return days;
+
+  let runningProfit = 0;
+  let runningRevenue = 0;
+
+  return days
+    .map((day) => {
+      const articles = day.articles.filter((article) =>
+        selectedSubjects.has(article.subject as ForecastSubject)
+      );
+      if (!articles.length) return null;
+
+      const allArticleOrders = sumArticles(day.articles, "orders");
+      const orders = sumArticles(articles, "orders");
+      const share = allArticleOrders > 0 ? Math.min(1, orders / allArticleOrders) : 0;
+
+      const articleAds = sumArticles(articles, "ad_spend");
+      const allArticleAds = sumArticles(day.articles, "ad_spend");
+      const unmappedAds = Math.max(0, day.ad_spend - allArticleAds);
+      const allocatedUnmappedAds = unmappedAds * share;
+      const overhead = day.overhead * share;
+      const estimatedRevenue = sumArticles(articles, "estimated_revenue");
+      const estimatedProfitBeforeAds = articles.reduce(
+        (sum, article) => sum + article.gross_profit - article.storage - article.penalties,
+        0,
+      );
+      const estimatedProfit = sumArticles(articles, "estimated_profit")
+        - allocatedUnmappedAds
+        - overhead;
+
+      runningProfit += estimatedProfit;
+      runningRevenue += estimatedRevenue;
+
+      return {
+        ...day,
+        orders: Math.round(orders),
+        orders_rub: Math.round(sumArticles(articles, "orders_rub")),
+        estimated_sales: Math.round(sumArticles(articles, "estimated_sales")),
+        estimated_revenue: Math.round(estimatedRevenue),
+        cogs_total: Math.round(sumArticles(articles, "cogs_total")),
+        logistics_total: Math.round(sumArticles(articles, "logistics_total")),
+        commission_total: Math.round(sumArticles(articles, "commission_total")),
+        tax_total: Math.round(sumArticles(articles, "tax_total")),
+        gross_profit: Math.round(sumArticles(articles, "gross_profit")),
+        estimated_profit_before_ads: Math.round(estimatedProfitBeforeAds),
+        ad_spend: Math.round(articleAds + allocatedUnmappedAds),
+        storage: Math.round(sumArticles(articles, "storage")),
+        penalties: Math.round(sumArticles(articles, "penalties")),
+        overhead: Math.round(overhead),
+        estimated_profit: Math.round(estimatedProfit),
+        running_profit: Math.round(runningProfit),
+        running_revenue: Math.round(runningRevenue),
+        articles,
+      };
+    })
+    .filter((day): day is ForecastDay => day !== null);
 }
 
 // ── Column definitions ──
@@ -57,16 +129,15 @@ function wavg(d: ForecastDay, field: keyof ForecastArticle): string {
 }
 
 function buyoutAvg(d: ForecastDay): string {
+  const articleOrders = d.articles.reduce((sum, article) => sum + article.orders, 0);
+  if (articleOrders > 0) {
+    const weightedBuyout = d.articles.reduce(
+      (sum, article) => sum + article.orders * article.buyout,
+      0,
+    ) / articleOrders;
+    return PCT(weightedBuyout);
+  }
   return d.orders > 0 ? PCT((d.estimated_sales / d.orders) * 100) : "—";
-}
-
-function parseCommissionShift(value: string): number | null {
-  const parsed = Number(value.replace(",", "."));
-  return Number.isFinite(parsed) && Math.abs(parsed) <= 100 ? parsed : null;
-}
-
-function isDateValue(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
 const COLUMNS: ColDef[] = [
@@ -77,7 +148,6 @@ const COLUMNS: ColDef[] = [
   { key: "est_rev",         label: "Прогн. выручка",   dayFn: d => RUB(d.estimated_revenue),          artFn: a => RUB(a.estimated_revenue), defaultOn: true },
   { key: "cogs_total",      label: "Себестоимость",    dayFn: d => RUB(d.cogs_total),                 artFn: a => RUB(a.cogs_total),      defaultOn: true },
   { key: "commission_total", label: "Комиссия WB",     dayFn: d => RUB(d.commission_total),           artFn: a => RUB(a.commission_total), defaultOn: true },
-  { key: "commission_delta", label: "+комиссия",        dayFn: d => d.commission_delta_total ? RUB(d.commission_delta_total) : "—", artFn: a => a.commission_delta ? RUB(a.commission_delta) : "—", defaultOn: true },
   { key: "logistics_total", label: "Логистика",        dayFn: d => RUB(d.logistics_total),            artFn: a => RUB(a.logistics_total), defaultOn: true },
   { key: "tax_total",       label: "Налоги",           dayFn: d => RUB(d.tax_total),                  artFn: a => RUB(a.tax_total),       defaultOn: true },
   { key: "gross_profit",    label: "Валовая прибыль",  dayFn: d => RUB(d.gross_profit),               artFn: a => RUB(a.gross_profit),    defaultOn: true },
@@ -97,49 +167,85 @@ const COLUMNS: ColDef[] = [
 ];
 
 export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
-  const [data, setData] = useState<ForecastDay[]>([]);
+  const [rawData, setRawData] = useState<ForecastDay[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
+  const [selectedSubjects, setSelectedSubjects] = useState<Set<ForecastSubject>>(
+    () => new Set(FORECAST_SUBJECTS),
+  );
   const [meta, setMeta] = useState<{
     econFrom: string;
     econTo: string;
     econDays: number;
     articlesCount: number;
     estimatedArticlesCount?: number;
-    commissionScenario?: { from: string; shiftPp: number } | null;
+    dimensionalLogisticsArticlesCount?: number;
+    logisticsTariffDate?: string | null;
+    subjectUnitEconomics?: Array<{
+      subject: string;
+      commissionRatePct: number;
+      commissionSource: "subject_average" | "store_average";
+      buyoutRatePct: number;
+      buyoutSource: "subject_override" | "subject_average" | "store_average";
+      logisticsPerSale: number;
+      logisticsSource: "subject_average" | "store_average";
+      fallbackOrders: number;
+      fallbackSales: number;
+    }>;
   } | null>(null);
   const [visibleCols, setVisibleCols] = useState<Set<string>>(() => new Set(COLUMNS.filter(c => c.defaultOn).map(c => c.key)));
   const [showSettings, setShowSettings] = useState(false);
-  const [draftCommissionScenarioEnabled, setDraftCommissionScenarioEnabled] = useState(true);
-  const [draftCommissionShiftPp, setDraftCommissionShiftPp] = useState(DEFAULT_COMMISSION_SHIFT_PP);
-  const [draftCommissionShiftFrom, setDraftCommissionShiftFrom] = useState(DEFAULT_COMMISSION_SHIFT_FROM);
-  const [appliedCommissionScenarioEnabled, setAppliedCommissionScenarioEnabled] = useState(true);
-  const [appliedCommissionShiftPp, setAppliedCommissionShiftPp] = useState(DEFAULT_COMMISSION_SHIFT_PP);
-  const [appliedCommissionShiftFrom, setAppliedCommissionShiftFrom] = useState(DEFAULT_COMMISSION_SHIFT_FROM);
-  const dateInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!dateFrom || !dateTo) return;
     setLoading(true);
     const params = new URLSearchParams({ from: dateFrom, to: dateTo });
-    const numericCommissionShift = parseCommissionShift(appliedCommissionShiftPp);
-    if (
-      appliedCommissionScenarioEnabled &&
-      numericCommissionShift !== null &&
-      isDateValue(appliedCommissionShiftFrom)
-    ) {
-      params.set("commissionShiftPp", String(numericCommissionShift));
-      params.set("commissionShiftFrom", appliedCommissionShiftFrom);
-    }
     fetch(`/api/finance/forecast?${params.toString()}`)
       .then(r => r.json())
       .then(resp => {
-        setData(Array.isArray(resp?.days) ? resp.days : (Array.isArray(resp) ? resp : []));
+        setRawData(Array.isArray(resp?.days) ? resp.days : (Array.isArray(resp) ? resp : []));
         if (resp?.meta) setMeta(resp.meta);
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, [dateFrom, dateTo, appliedCommissionScenarioEnabled, appliedCommissionShiftPp, appliedCommissionShiftFrom]);
+  }, [dateFrom, dateTo]);
+
+  const data = useMemo(
+    () => filterForecastBySubjects(rawData, selectedSubjects),
+    [rawData, selectedSubjects],
+  );
+  const allSubjectsSelected = selectedSubjects.size === FORECAST_SUBJECTS.length;
+  const selectedSubjectName = allSubjectsSelected
+    ? null
+    : Array.from(selectedSubjects)[0] || null;
+  const displayMeta = useMemo(() => {
+    if (!meta || allSubjectsSelected) return meta;
+    const articleMap = new Map<number, ForecastArticle>();
+    for (const day of data) {
+      for (const article of day.articles) articleMap.set(article.nm_id, article);
+    }
+    const articles = Array.from(articleMap.values());
+    return {
+      ...meta,
+      articlesCount: articles.length,
+      estimatedArticlesCount: articles.filter((article) => article.estimated).length,
+      dimensionalLogisticsArticlesCount: articles.filter(
+        (article) => article.logistics_source === "dimensions_warehouse_tariff"
+      ).length,
+    };
+  }, [meta, data, allSubjectsSelected]);
+  const selectedSubjectUnit = selectedSubjectName
+    ? displayMeta?.subjectUnitEconomics?.find(item => item.subject === selectedSubjectName)
+    : null;
+
+  const selectSubject = (subject: ForecastSubject) => {
+    setSelectedSubjects((current) => {
+      if (current.size === FORECAST_SUBJECTS.length) return new Set([subject]);
+      if (current.has(subject)) return new Set(FORECAST_SUBJECTS);
+      return new Set([subject]);
+    });
+    setExpandedDay(null);
+  };
 
   if (loading) {
     return <div className="text-center py-12 text-[var(--text-muted)]">Расчёт прогноза...</div>;
@@ -158,37 +264,7 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
   const totalRevenue = data.reduce((s, d) => s + d.estimated_revenue, 0);
   const totalAds = data.reduce((s, d) => s + d.ad_spend, 0);
   const totalProfit = data.reduce((s, d) => s + d.estimated_profit, 0);
-  const totalBaselineProfit = data.reduce((s, d) => s + (d.estimated_profit_baseline ?? d.estimated_profit), 0);
-  const totalCommissionDelta = data.reduce((s, d) => s + (d.commission_delta_total || 0), 0);
-  const totalProfitDelta = totalProfit - totalBaselineProfit;
   const totalProfitBeforeAds = data.reduce((s, d) => s + d.estimated_profit_before_ads, 0);
-  const scenarioPpValue = parseCommissionShift(appliedCommissionShiftPp);
-  const selectedVolumeCommissionImpact = appliedCommissionScenarioEnabled && scenarioPpValue !== null
-    ? totalRevenue * (scenarioPpValue / 100)
-    : 0;
-  const scenarioImpactUsesSelectedVolume = appliedCommissionScenarioEnabled && totalCommissionDelta === 0 && selectedVolumeCommissionImpact !== 0;
-  const visibleCommissionImpact = scenarioImpactUsesSelectedVolume ? selectedVolumeCommissionImpact : totalCommissionDelta;
-  const visibleProfitImpact = scenarioImpactUsesSelectedVolume ? -selectedVolumeCommissionImpact : totalProfitDelta;
-  const draftCommissionShift = parseCommissionShift(draftCommissionShiftPp);
-  const isDraftCommissionValid = draftCommissionShift !== null && isDateValue(draftCommissionShiftFrom);
-  const hasScenarioDraftChanges =
-    draftCommissionScenarioEnabled !== appliedCommissionScenarioEnabled ||
-    draftCommissionShiftPp !== appliedCommissionShiftPp ||
-    draftCommissionShiftFrom !== appliedCommissionShiftFrom;
-
-  const applyCommissionScenario = () => {
-    if (draftCommissionScenarioEnabled && !isDraftCommissionValid) return;
-    setAppliedCommissionScenarioEnabled(draftCommissionScenarioEnabled);
-    setAppliedCommissionShiftPp(draftCommissionShift !== null ? String(draftCommissionShift) : draftCommissionShiftPp);
-    setAppliedCommissionShiftFrom(draftCommissionShiftFrom);
-  };
-
-  const openDatePicker = () => {
-    const input = dateInputRef.current;
-    if (!input || input.disabled) return;
-    input.showPicker?.();
-    input.focus();
-  };
   const fmtM = (v: number) => {
     if (Math.abs(v) >= 1e6) {
       const millions = v / 1e6;
@@ -223,92 +299,41 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
       <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] px-4 py-3">
         <p className="text-xs text-[var(--text-muted)]">
           Прогноз прибыли: <strong className="text-[var(--text)]">заказы × % выкупа × прибыль/шт − реклама − хранение − штрафы</strong>.
-          {meta && <> Юнит-экономика за <strong className="text-[var(--text)]">{fmtDate(meta.econFrom)} — {fmtDate(meta.econTo)}</strong> ({meta.articlesCount} артикулов{meta.estimatedArticlesCount ? `, ${meta.estimatedArticlesCount} оценочно` : ""}). % выкупа — исторический.</>}
+          {displayMeta && <> Юнит-экономика за <strong className="text-[var(--text)]">{fmtDate(displayMeta.econFrom)} — {fmtDate(displayMeta.econTo)}</strong> ({displayMeta.articlesCount} артикулов{displayMeta.estimatedArticlesCount ? `, ${displayMeta.estimatedArticlesCount} оценочно` : ""}). % выкупа — исторический.</>}
+          {displayMeta?.dimensionalLogisticsArticlesCount ? <> Для {displayMeta.dimensionalLogisticsArticlesCount} новых артикулов логистика рассчитана по габариту и складам заказов{displayMeta.logisticsTariffDate ? `, тарифы на ${fmtDate(displayMeta.logisticsTariffDate)}` : ""}.</> : null}
+          {selectedSubjectUnit ? <> Для оценочных артикулов предмета «{selectedSubjectUnit.subject}»: выкуп <strong className="text-[var(--text)]">{PCT(selectedSubjectUnit.buyoutRatePct)}</strong>{selectedSubjectUnit.buyoutSource === "subject_override" ? " (установлен вручную)" : ""}, комиссия <strong className="text-[var(--text)]">{PCT(selectedSubjectUnit.commissionRatePct)}</strong>.</> : null}
         </p>
       </div>
 
-      <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] px-4 py-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <label className="flex min-w-[220px] items-center gap-3 text-sm text-[var(--text)]">
-            <input
-              type="checkbox"
-              checked={draftCommissionScenarioEnabled}
-              onChange={(event) => setDraftCommissionScenarioEnabled(event.target.checked)}
-              className="h-4 w-4"
-            />
-            <span className="font-medium">Сценарий комиссии WB</span>
-          </label>
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-              + п.п.
-              <input
-                type="number"
-                min="-100"
-                max="100"
-                step="0.1"
-                value={draftCommissionShiftPp}
-                disabled={!draftCommissionScenarioEnabled}
-                onChange={(event) => setDraftCommissionShiftPp(event.target.value)}
-                className="w-20 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-sm text-[var(--text)] disabled:opacity-50"
-              />
-            </label>
-            <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-              с даты
-              <span className="flex items-center overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg)]">
-                <input
-                  ref={dateInputRef}
-                  type="date"
-                  value={draftCommissionShiftFrom}
-                  disabled={!draftCommissionScenarioEnabled}
-                  onClick={openDatePicker}
-                  onChange={(event) => setDraftCommissionShiftFrom(event.target.value)}
-                  className="border-0 bg-transparent px-2 py-1.5 text-sm text-[var(--text)] outline-none disabled:opacity-50"
-                />
-                <button
-                  type="button"
-                  onClick={openDatePicker}
-                  disabled={!draftCommissionScenarioEnabled}
-                  className="flex h-8 w-8 items-center justify-center border-l border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)] disabled:opacity-50"
-                  title="Открыть календарь"
-                >
-                  <Calendar size={15} aria-hidden="true" />
-                </button>
-              </span>
-            </label>
+      {/* Subject filter */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg-card)] px-4 py-3">
+        <span className="mr-1 text-xs font-medium uppercase tracking-wide text-[var(--text-muted)]">
+          Предмет
+        </span>
+        {FORECAST_SUBJECTS.map((subject) => {
+          const active = selectedSubjects.has(subject);
+          return (
             <button
+              key={subject}
               type="button"
-              onClick={applyCommissionScenario}
-              disabled={!hasScenarioDraftChanges || (draftCommissionScenarioEnabled && !isDraftCommissionValid)}
-              className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40"
+              aria-pressed={active}
+              onClick={() => selectSubject(subject)}
+              className={
+                "rounded-lg border px-4 py-2 text-sm font-medium transition-colors " +
+                (active
+                  ? "border-[var(--accent)] bg-[var(--accent)]/15 text-white"
+                  : "border-[var(--border)] bg-transparent text-[var(--text-muted)] hover:border-[var(--accent)] hover:text-white")
+              }
             >
-              Применить
+              {subject}
             </button>
-          </div>
-        </div>
-        {draftCommissionScenarioEnabled && !isDraftCommissionValid && (
-          <p className="mt-2 text-xs text-[var(--danger)]">
-            Укажите процентные пункты от -100 до 100 и выберите дату.
-          </p>
-        )}
-        {appliedCommissionScenarioEnabled && (
-          <div className="mt-3 grid grid-cols-1 gap-3 border-t border-[var(--border)] pt-3 text-sm sm:grid-cols-3">
-            <div>
-              <p className="text-xs uppercase text-[var(--text-muted)]">Доп. комиссия</p>
-              <p className="mt-1 font-semibold text-[var(--warning)]">{RUB(visibleCommissionImpact)}</p>
-              <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-                {scenarioImpactUsesSelectedVolume ? "на выбранном объёме" : "по датам прогноза"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs uppercase text-[var(--text-muted)]">Прибыль без сценария</p>
-              <p className={totalBaselineProfit >= 0 ? "mt-1 font-semibold text-[var(--success)]" : "mt-1 font-semibold text-[var(--danger)]"}>{RUB(totalBaselineProfit)}</p>
-            </div>
-            <div>
-              <p className="text-xs uppercase text-[var(--text-muted)]">Влияние на прибыль</p>
-              <p className={visibleProfitImpact >= 0 ? "mt-1 font-semibold text-[var(--success)]" : "mt-1 font-semibold text-[var(--danger)]"}>{RUB(visibleProfitImpact)}</p>
-            </div>
-          </div>
-        )}
+          );
+        })}
+        <span className="ml-1 text-xs text-[var(--text-muted)]">
+          {allSubjectsSelected
+            ? "Общий прогноз"
+            : `Только ${selectedSubjectName?.toLowerCase() || ""}`}
+        </span>
       </div>
 
       {/* Summary cards */}
@@ -330,7 +355,6 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
           <p className={`text-2xl font-bold mt-1 ${totalProfit >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}`}>{RUB(totalProfit)}</p>
           <p className="text-xs text-[var(--text-muted)] mt-1">
             без рекламы: {RUB(totalProfitBeforeAds)}
-            {appliedCommissionScenarioEnabled && totalCommissionDelta !== 0 ? ` · без +комиссии: ${RUB(totalBaselineProfit)}` : ""}
           </p>
         </div>
       </div>
@@ -440,8 +464,13 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
                           <span className="text-[var(--text-muted)] opacity-60 w-[120px] shrink-0 truncate text-[11px]" title={art.article}>{art.article}</span>
                           {art.custom_name && <span className="text-white font-medium truncate text-xs" title={art.custom_name}>{art.custom_name}</span>}
                           {art.estimated && (
-                            <span className="ml-2 rounded border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--warning)]">
-                              оценка
+                            <span
+                              className="ml-2 rounded border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--warning)]"
+                              title={art.logistics_source === "dimensions_warehouse_tariff"
+                                ? `Логистика: габарит ${art.volume_liters ?? "—"} л × тариф складов; ${art.logistics_per_order ?? "—"} ₽/заказ`
+                                : undefined}
+                            >
+                              {art.logistics_source === "dimensions_warehouse_tariff" ? "оценка · габарит" : "оценка"}
                             </span>
                           )}
                         </div>
@@ -450,7 +479,14 @@ export default function ForecastTab({ dateFrom, dateTo }: { dateFrom: string; da
                         const val = c.artFn?.(art) || "";
                         const isProfit = c.key === "est_profit";
                         return (
-                          <td key={c.key} className={`num ${isProfit ? (art.estimated_profit >= 0 ? "cell-positive" : "cell-negative") : ""}`}>
+                          <td
+                            key={c.key}
+                            title={(c.key === "logistics_total" || c.key === "logistics_unit")
+                              && art.logistics_source === "dimensions_warehouse_tariff"
+                              ? `Объём ${art.volume_liters ?? "—"} л; средняя логистика ${art.logistics_per_order ?? "—"} ₽/заказ; тариф ${art.tariff_date || "—"}`
+                              : undefined}
+                            className={`num ${isProfit ? (art.estimated_profit >= 0 ? "cell-positive" : "cell-negative") : ""}`}
+                          >
                             {val || "—"}
                           </td>
                         );

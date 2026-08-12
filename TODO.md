@@ -1,79 +1,42 @@
 # MpHub TODO
 
-Last updated: 2026-06-08 19:40 MSK.
+Last updated: 2026-08-12 23:47 MSK.
 
 ## High Priority
-- Before context cleanup or a new handoff, run `npm run save-session-state`, then verify `SESSION_STATE.md` against production if the answer depends on data, cron, PM2, deploy or WB API.
-- Keep `scripts/session-state-notes.json` current; it feeds generated Current Focus and Continue From Here.
-- Do not switch data direction back to local sync. Production PostgreSQL is the runtime source of truth; local dev should read current data through the configured tunnel and must not run background sync jobs unless explicitly requested.
-- Before debugging local empty pages, infinite loading, API `500`, or `Unexpected end of JSON input`, first check the production PostgreSQL tunnel: `nc -zv 127.0.0.1 55432`. If closed, start `ssh -N -L 55432:127.0.0.1:5432 -J proxmox-jump -i ~/.ssh/id_ed25519_backup makson@192.168.55.107`, then restart local Next on `127.0.0.1:3000`.
-- Do not deploy without explicit user approval. The worktree contains migration/runtime changes, docs and context updates; inspect deploy scope first.
-- Default production deploy is now release-based: `SOURCE_MODE=local bash scripts/release-deploy.sh`. Use `SOURCE_MODE=remote-current bash scripts/release-deploy.sh` only for bootstrap/rebuild from the current production tree without local dirty files. Old `scripts/deploy.sh` / `prod-safe-build.sh` is fallback/clean rebuild.
-- After any UI/logic change, run at least `npm run build` before deploy and update `public/data/docs.json` if user-facing behavior changes.
 
-## Production Checks To Keep Watching
-- Release deploy:
-  - active production symlink should be `/home/makson/current -> /home/makson/releases/<stamp>`;
-  - PM2 `mphub` and all cron jobs should run from `/home/makson/current`;
-  - `data/deploy.lock` must be cleared after deploy/rollback;
-  - keep disk below warning threshold after release retention and old `.deploy-backups` cleanup.
-- Weekly Excel reports:
-  - WB `archived-excel` returns a ZIP; large reports can be split into several `.xlsx` parts of 20000 rows each;
-  - `sync-weekly-report.js` must read every `.xlsx` part in ZIP order before comparing parsed rows with `detailsCount`;
-  - `sync-weekly-report.js` treats an already loaded report as incomplete when `reports.rows_count < detailsCount` and reloads it;
-  - `sync-weekly-report.js` now has a guard that refuses to delete old rows when parsed Excel rows are below `detailsCount`;
-  - `sync-weekly-report.js` validates critical WB headers before deleting old report rows and logs unknown headers/alias usage/control sums for each imported report;
-  - `sync-weekly-report.js` writes `data/weekly-sync.log` and PostgreSQL `weekly_import_status`; monitor data-health surfaces the last weekly import status and warnings/errors;
-  - after ZIP-part loading is verified on production, affected periods from `2026-04-20` onward can be safely reloaded from full archives.
-- Reviews archive sync:
-  - active cron is every 15 minutes;
-  - expected behavior is one WB archive request per run;
-  - `429` should be recorded in `reviews_archive_sync_state` and `sync_status`, not treated as a broken app state.
-- Watchdog for `reviews-sync` should use `max_age_min=45`.
-- Reviews archive sync already advanced beyond the previous 27.05 snapshot; current generated snapshot is `reviews=148891`, `archive_skip=100000`, `last_status=ok`. Continue monitoring new WB `429` windows and archive progress after `skip=100000`.
-- Confirm production monitor/data-health does not show false stale warnings after the PG-mode cron changes.
-- Orders funnel:
-  - `daily-sync` now refreshes the last 7 closed days from WB Sales Funnel on every run and writes `ordersRefresh` into `daily-sync-status.json`;
-  - monitor should show `orders7d✓ checked 7, upd N` in Daily Sync detail;
-  - direct WB Sales Funnel API rejected a 30-day range with `invalid start day: excess limit on days`, so do not extend the rewrite window beyond available WB API depth without a new verified source.
-- Purchases:
-  - `/purchases` is deployed from `src/app/purchases/test/page.tsx`; production/local SHA matched for `src/app/purchases/test/page.tsx`, `src/app/api/purchases/stock/route.ts`, `src/app/purchases/page.tsx` after the latest summary-card fix.
-  - After user hard-refresh, visually confirm the six summary cards stay in one horizontal row and that `К закупке в штуках` / `К закупке в пачках` numbers are orange (`tone="need"`).
-  - If the user still sees stale color/layout, check browser cache/service assets first; source code on prod currently matches local for purchases.
+- Before context cleanup/handoff run `npm run save-session-state`; verify changing facts against production code, PostgreSQL and `ssh wb-site`.
+- Keep `scripts/session-state-notes.json` current because it feeds generated `SESSION_STATE.md` focus/continuation sections.
+- Завершить baseline cleanup: clean Git, tag `production-baseline-2026-08-13`, успешный build, пустой parity и чистый release из локального source.
+- Keep organization isolation: organization 1 is `public`, organization 2 is `organization_2`; no FBS queries, agents, queues, tokens or sync state may cross schemas.
+- Keep `public/data/docs.json` aligned with user-facing FBS/shipment logic.
 
-## PostgreSQL Follow-Up
-- Runtime/API and production cron scripts must stay PostgreSQL-only. Do not add file-DB fallback paths back.
-- Keep production `.env.production.local` secret. Never print `DATABASE_URL`, JWT secret or WB keys in user-facing answers.
-- Consider cleaning production crontab comments so the Reviews Sync heading says every 15 minutes instead of hourly.
+## Current FBS Follow-Up
 
-## Supplies Follow-Up
-- Visually verify production `/supplies` after login:
-  - up to 20 latest supplies are fetched, and draft rows are hidden;
-  - accepted supplies use cached DB data;
-  - `Допринято` appears as supply type, not status;
-  - rows expand with article/detail data where WB exposes it.
-- Watch accepted-supply cache growth and decide later whether older accepted supplies need a backfill beyond the currently displayed set.
+- On organization 2, open PVZ supply `WB-GI-264053929` and print the main supply QR. Cargo-place QR `WB-MP-48974219` is already printed; do not initiate this print remotely without the user.
+- Verify the UI then permits “Finish cycle” only after `qr_printed_at` is confirmed by the print agent.
+- Monitor future partial WB add failures: actual live membership must be persisted, attached orders move to assembly, rejected orders stay in New, and sync must reconcile open supplies.
+- If the user approves remote Windows administration, configure Tailscale + Windows OpenSSH + dedicated key-only admin account on the warehouse computer, then test access after reboot. This is not installed yet.
+- For printer failures, inspect print-agent status/log, PostgreSQL print job, Windows spooler and Zebra state before resetting any queue. Never reprint blindly when physical output is unknown.
 
-## Shipment/Warehouse/Logistics Follow-Up
-- Recheck `/shipment` → `Товары`: version 1.1 layout, small top cards, hover highlight, renamed columns `Размер`/`Баркод`, no duplicate expanded headers.
-- Recheck `/shipment` → расчёт отгрузки after future changes: manual `Учитывать отгрузки` should be the only supply deduction path, and regional summary/export columns should stay `Коробов / План / Факт / Нужно`.
-- Recheck `/warehouse`: search placeholder `Артикул или название`, selected article table stability, Google Sheets import into PostgreSQL.
-- Continue validating warehouse-family matching for sales-based default warehouses, especially Samara/Novosemeykino and long WB warehouse names.
-- Visually recheck deployed warehouse/logistics changes after login:
-  - `/warehouse` plan tooltip should show active supply deduction as `упаковано - поступило в продажу`;
-  - `/logistics` should no longer mark article `178439058` critical because remains volume `0.99 л` confirms correction against card volume `2.5 л`.
-- Decide whether the logistics new-measurements window should stay 7 days or become configurable.
+## Production Checks
+
+- Active production should remain `/home/makson/current -> /home/makson/releases/20260812-184908` until another approved release; PM2 `mphub` must run from the same cwd with zero unexpected restarts.
+- После baseline release проверить marker, PM2 cwd/restarts, `/login`, FBS portal login, обе организации и production 404 для debug/test URL.
+- Не возвращать в deploy runtime data/env, generated reports, Android build/APK/debug.keystore, `.codex` и локальные visual test routes.
+- Production snapshot at 23:44 MSK: shipment products 69, stock 922, orders 263364; reviews 159734; use a fresh snapshot for later factual answers.
+- Continue monitoring `warehouse_remains` shipment sync, reviews retry windows, supply reports and data-health. Do not restore file-DB fallbacks or old `supplier/stocks` logic.
+- Keep release `data/deploy.lock` cleared after deploy/rollback and retain shared data/env/node_modules outside release deletion.
 
 ## Medium Priority
-- Add a visible reviews sync/rate-limit status in UI, so users can see when WB `429` delayed archive sync.
-- Improve Reviews charts to show complaint breakdown explicitly: submitted, approved, rejected, error.
-- Review default `/reviews` filters. It opens with ratings `1,2,3`, which can look like missing data if the user expects all reviews.
-- Hide or relabel the legacy manual full-sync control in reviews account settings: `/api/reviews?sync=true` is intentionally disabled and sync belongs to production cron.
-- Consider persisting shipment UI manual export values if users need them to survive reload/navigation.
+
+- Add a visible reviews WB rate-limit/retry status if operators still confuse `429` waiting with missing reviews.
+- Consider cleaning outdated production crontab comments; active review sync cadence is 15 minutes.
+- Decide later whether logistics new-measurement window should be configurable.
+- Preserve the independent Android scanner workflow and archive; do not couple it to MpHub unless explicitly requested.
 
 ## Operational Notes
-- Rollback path: `bash scripts/release-rollback.sh` switches `/home/makson/current` to the previous release and restarts PM2; with only one release it falls back to legacy `/home/makson/website`.
-- Do not bypass `reviews-sync.lock`; remove it only after confirming no `node scripts/reviews-sync.js` process is running.
-- Production DB, logs, `.env.production.local`, WB keys and service account files are not committed and must stay excluded from deploys.
-- Use `127.0.0.1` for local MpHub dev URLs and health checks; do not use the literal `localhost` hostname.
-- Local current-data dev depends on the SSH tunnel to VM107 Postgres. Keep local PG pool small (`PGPOOL_MAX=2`) for tunnel stability; do not interpret local loading/empty data as a frontend bug until the tunnel and API responses are verified.
+
+- Local current-data development requires the SSH PostgreSQL tunnel on `127.0.0.1:55432`, `PGPOOL_MAX=2`, and local Next on `127.0.0.1:3000`.
+- If Turbopack/CSS compilation fails, use webpack dev mode.
+- Rollback: `bash scripts/release-rollback.sh`; then verify PM2 cwd and health.
+- Never expose DB URLs, JWT secrets, WB tokens, printer-agent tokens or service-account files.

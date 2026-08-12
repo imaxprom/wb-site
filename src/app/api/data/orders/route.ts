@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { getLastWeekCorrectionPg, getOrdersPg } from "@/lib/shipment-db";
 import { apiError } from "@/lib/api-utils";
 
 export async function GET(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
 
   try {
     const now = new Date();

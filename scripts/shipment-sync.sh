@@ -6,10 +6,15 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-DATA_DIR="$PROJECT_DIR/data"
+ORG_ID="${MPHUB_ORGANIZATION_ID:-}"
+if ! [[ "$ORG_ID" =~ ^[1-9][0-9]*$ ]]; then
+  echo "MPHUB_ORGANIZATION_ID is required" >&2
+  exit 2
+fi
+DATA_DIR="$PROJECT_DIR/data/organizations/$ORG_ID"
 LOG="$DATA_DIR/shipment-sync.log"
 LOCK_DIR="$DATA_DIR/shipment-sync.lock"
-CRON_SECRET_FILE="$DATA_DIR/cron-secret.txt"
+CRON_SECRET_FILE="$PROJECT_DIR/data/cron-secret.txt"
 
 mkdir -p "$DATA_DIR"
 
@@ -88,6 +93,7 @@ fi
 RESP=$(curl --max-time 600 -sS -X POST "$URL" \
   -H "Content-Type: application/json" \
   -H "x-mphub-cron-secret: $CRON_SECRET" \
+  -H "x-mphub-organization-id: $ORG_ID" \
   -d "{\"days\": $DAYS}" \
   -w "\n%{http_code}" 2>&1)
 

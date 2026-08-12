@@ -1,0 +1,14 @@
+<resources>
+    <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:navigationBarColor">@color/primary_dark</item>
+        <item name="android:statusBarColor">@color/primary_dark</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <style name="ChoicePopupAnimation">
+        <item name="android:windowEnterAnimation">@anim/choice_popup_in</item>
+        <item name="android:windowExitAnimation">@anim/choice_popup_out</item>
+    </style>
+</resources>

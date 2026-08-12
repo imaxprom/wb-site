@@ -10,14 +10,20 @@ set -e
 
 TG_TOKEN="$1"
 BODY_B64="$2"
+TG_RELAY_HOST="${TG_RELAY_HOST:-192.168.55.106}"
+TG_RELAY_USER="${TG_RELAY_USER:-makson}"
 
 if [ -z "$TG_TOKEN" ] || [ -z "$BODY_B64" ]; then
   echo "Usage: $0 <TG_TOKEN> <BODY_BASE64>" >&2
   exit 2
 fi
 
+if ! ssh -o ConnectTimeout=5 -o BatchMode=yes "$TG_RELAY_USER@$TG_RELAY_HOST" true >/dev/null 2>&1; then
+  ssh-keygen -R "$TG_RELAY_HOST" >/dev/null 2>&1 || true
+fi
+
 # Вызываем curl на claude-cli через SSH, прокидывая body через env
-ssh -o ConnectTimeout=5 -o BatchMode=yes makson@192.168.55.106 \
+ssh -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$TG_RELAY_USER@$TG_RELAY_HOST" \
   "BODY=\$(echo '$BODY_B64' | base64 -d); \
    HTTPS_PROXY=http://localhost:8888 \
    curl -s --max-time 10 \

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { getWbApiKey } from "@/lib/wb-api-key";
 import { isPostgresReadonlyConnection, pgGet, pgRows } from "@/lib/postgres";
@@ -425,6 +425,7 @@ function normalizeStockPayload(payload: WbTariffsResponse, date: string, cargoTy
 export async function GET(request: NextRequest) {
   const authError = await requireAdmin(request);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(request);
 
   try {
     const { searchParams } = new URL(request.url);

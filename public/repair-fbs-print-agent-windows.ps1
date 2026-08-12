@@ -1,0 +1,149 @@
+param(
+  [string]$ServerUrl = "https://hub.imaxprom.site",
+  [string]$RequestUri = ""
+)
+
+$ErrorActionPreference = "Stop"
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$ServerUrl = $ServerUrl.TrimEnd("/")
+$appDir = Join-Path $env:LOCALAPPDATA "MpHub\FbsPrintAgent"
+$configPath = Join-Path $appDir "config.json"
+$agentPath = Join-Path $appDir "fbs-print-agent-windows.ps1"
+$launcherPath = Join-Path $appDir "run-agent.ps1"
+$repairPath = Join-Path $appDir "repair-fbs-print-agent-windows.ps1"
+$logPath = Join-Path $appDir "repair.log"
+$taskName = "MpHub FBS Print Agent"
+
+function Write-RecoveryLog {
+  param([string]$Message)
+  $stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+  Add-Content -LiteralPath $logPath -Value "$stamp $Message" -Encoding UTF8
+}
+
+function Send-RecoveryStatus {
+  param([object]$Config, [string]$Status, [string]$Message)
+  foreach ($connection in @($Config.Connections)) {
+    $token = [string]$connection.Token
+    if ([string]::IsNullOrWhiteSpace($token)) { continue }
+    $url = if ([string]::IsNullOrWhiteSpace([string]$connection.ServerUrl)) { $ServerUrl } else { ([string]$connection.ServerUrl).TrimEnd("/") }
+    try {
+      Invoke-RestMethod -Method Post -Uri "$url/api/fbs/print-agent" `
+        -Headers @{ Authorization = "Bearer $token" } `
+        -ContentType "application/json; charset=utf-8" `
+        -Body (@{ action = "heartbeat"; printerName = [string]$Config.PrinterName; status = $Status; error = $Message } | ConvertTo-Json -Compress) | Out-Null
+    } catch {}
+  }
+}
+
+function Register-RecoveryTools {
+  $protocolRoot = "HKCU:\Software\Classes\mphub-print"
+  New-Item -Path $protocolRoot -Force | Out-Null
+  Set-Item -Path $protocolRoot -Value "URL:MpHub printer recovery"
+  New-ItemProperty -Path $protocolRoot -Name "URL Protocol" -Value "" -PropertyType String -Force | Out-Null
+  $commandKey = Join-Path $protocolRoot "shell\open\command"
+  New-Item -Path $commandKey -Force | Out-Null
+  $powershell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+  Set-Item -Path $commandKey -Value "`"$powershell`" -NoProfile -ExecutionPolicy Bypass -File `"$repairPath`" -RequestUri `"%1`""
+
+  $desktop = [Environment]::GetFolderPath("Desktop")
+  if (-not [string]::IsNullOrWhiteSpace($desktop)) {
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut((Join-Path $desktop "FBS Printer Recovery.lnk"))
+    $shortcut.TargetPath = $powershell
+    $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$repairPath`" -RequestUri `"mphub-print://repair?code=PRN-002`""
+    $shortcut.WorkingDirectory = $appDir
+    $shortcut.Save()
+  }
+}
+
+try {
+  New-Item -ItemType Directory -Path $appDir -Force | Out-Null
+  Write-RecoveryLog "Recovery started"
+  if (-not (Test-Path -LiteralPath $configPath)) { throw "PRN-001: print-agent is not installed" }
+  $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+  if (-not [string]::IsNullOrWhiteSpace([string]$config.ServerUrl)) { $ServerUrl = ([string]$config.ServerUrl).TrimEnd("/") }
+  Send-RecoveryStatus -Config $config -Status "repairing" -Message "Automatic printer recovery started"
+
+  $spooler = Get-Service -Name Spooler -ErrorAction Stop
+  if ($spooler.Status -ne "Running") {
+    Start-Service -Name Spooler
+    $spooler.WaitForStatus("Running", [TimeSpan]::FromSeconds(20))
+    Write-RecoveryLog "Windows Print Spooler started"
+  }
+
+  $printerName = [string]$config.PrinterName
+  if ([string]::IsNullOrWhiteSpace($printerName)) {
+    $zebra = @(Get-Printer | Where-Object { $_.Name -match "ZT220" })
+    if ($zebra.Count -ne 1) { throw "PRN-003: Windows cannot identify one Zebra ZT220" }
+    $printerName = [string]$zebra[0].Name
+    $config.PrinterName = $printerName
+    $config | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $configPath -Encoding UTF8
+  }
+  $printer = Get-Printer -Name $printerName -ErrorAction Stop
+  Write-RecoveryLog "Printer found: $($printer.Name), status: $($printer.PrinterStatus)"
+
+  $temporaryAgent = "$agentPath.download"
+  Invoke-WebRequest -UseBasicParsing -Uri "$ServerUrl/fbs-print-agent-windows.ps1" -OutFile $temporaryAgent
+  Move-Item -LiteralPath $temporaryAgent -Destination $agentPath -Force
+
+  @'
+$ErrorActionPreference = "Stop"
+$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$log = Join-Path $root "agent.log"
+while ($true) {
+  try {
+    & (Join-Path $root "fbs-print-agent-windows.ps1") -ConfigPath (Join-Path $root "config.json") *>> $log
+  } catch {
+    $stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    Add-Content -LiteralPath $log -Value "$stamp Supervisor restart: $($_.Exception.Message)"
+  }
+  Start-Sleep -Seconds 10
+}
+'@ | Set-Content -LiteralPath $launcherPath -Encoding ASCII
+
+  $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+  if ($null -eq $task) {
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $actionArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcherPath`""
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $actionArgs
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $identity
+    $trigger.Delay = "PT15S"
+    $settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Description "MpHub resilient silent FBS printing for Zebra" -Force | Out-Null
+    $task = Get-ScheduledTask -TaskName $taskName
+  }
+  $restartRequested = $RequestUri -match "PRN-(002|005|007|009)"
+  if ($task.State -eq "Running" -and $restartRequested) {
+    Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+      $_.ProcessId -ne $PID -and [string]$_.CommandLine -match 'MpHub\\FbsPrintAgent\\(run-agent|fbs-print-agent-windows)\.ps1'
+    } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Seconds 2
+    Start-ScheduledTask -TaskName $taskName
+    Write-RecoveryLog "Agent task restarted for $RequestUri"
+  } elseif ($task.State -ne "Running") {
+    Start-ScheduledTask -TaskName $taskName
+  }
+
+  Invoke-WebRequest -UseBasicParsing -Uri "$ServerUrl/repair-fbs-print-agent-windows.ps1" -OutFile "$repairPath.download"
+  Move-Item -LiteralPath "$repairPath.download" -Destination $repairPath -Force
+  Register-RecoveryTools
+  Write-RecoveryLog "Recovery completed; task started"
+
+  Write-Host ""
+  Write-Host "Printer recovery completed." -ForegroundColor Green
+  Write-Host "Return to the FBS page and click 'Check again'."
+  Write-Host "Log: $logPath"
+} catch {
+  $message = $_.Exception.Message
+  Write-RecoveryLog "Recovery failed: $message"
+  if ($null -ne $config) { Send-RecoveryStatus -Config $config -Status "error" -Message $message }
+  Write-Host ""
+  Write-Host "Could not recover printing." -ForegroundColor Red
+  Write-Host $message -ForegroundColor Red
+  Write-Host "Tell the administrator this error code."
+  Write-Host "Log: $logPath"
+}
+
+Write-Host ""
+Read-Host "Press Enter to close"

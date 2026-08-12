@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Check, RefreshCw, Search, Settings2, Truck, X } from "lucide-react";
 import { formatNumber } from "@/lib/utils";
+import { getWbImageUrlCandidates } from "@/lib/wb-image";
 
 interface LogisticsProduct {
   articleWB: string;
@@ -140,6 +141,31 @@ type CargoType = "box" | "pallet";
 const WAREHOUSE_LIMIT_OPTIONS = [6, 10, 16, 24];
 const NEW_MEASUREMENT_DAYS = 7;
 
+function LogisticsProductThumb({ articleWB }: { articleWB: string }) {
+  const candidates = useMemo(
+    () => getWbImageUrlCandidates(articleWB, "small"),
+    [articleWB],
+  );
+  const [index, setIndex] = useState(0);
+
+  useEffect(() => setIndex(0), [articleWB]);
+
+  if (!candidates[index]) {
+    return <div className="h-32 w-24 shrink-0 rounded-lg bg-[var(--border)]" />;
+  }
+
+  return (
+    <img
+      src={candidates[index]}
+      alt=""
+      width={96}
+      height={128}
+      className="h-32 w-24 shrink-0 rounded-lg object-cover"
+      onError={() => setIndex((current) => current + 1)}
+    />
+  );
+}
+
 function todayMsk(): string {
   const dt = new Date(Date.now() + 3 * 60 * 60 * 1000);
   return dt.toISOString().slice(0, 10);
@@ -250,6 +276,13 @@ function isCriticalMeasurement(row: Pick<LogisticsArticleRow, "cardVolumeLiters"
   const measuredVolume = latestMeasurementVolume(row.measurementHistory);
   if (!row.cardVolumeLiters || !measuredVolume || measuredVolume <= row.cardVolumeLiters) return false;
   return !row.remainsVolumeLiters || row.remainsVolumeLiters > row.cardVolumeLiters;
+}
+
+function measurementDeltaLiters(row: Pick<LogisticsArticleRow, "cardVolumeLiters" | "remainsVolumeLiters" | "measurementHistory">): number {
+  if (!isCriticalMeasurement(row)) return 0;
+  const measuredVolume = latestMeasurementVolume(row.measurementHistory);
+  if (!row.cardVolumeLiters || !measuredVolume) return 0;
+  return measuredVolume - row.cardVolumeLiters;
 }
 
 function isRecentMeasurement(measurement: MeasurementEntry | null): boolean {
@@ -452,6 +485,8 @@ export default function LogisticsPage() {
 
     return filtered
       .sort((a, b) => {
+        const criticalDelta = measurementDeltaLiters(b) - measurementDeltaLiters(a);
+        if (criticalDelta !== 0) return criticalDelta;
         if ((a.volumeLiters === null) !== (b.volumeLiters === null)) return a.volumeLiters === null ? 1 : -1;
         const stock = b.stockQty - a.stockQty;
         if (stock !== 0) return stock;
@@ -743,7 +778,7 @@ export default function LogisticsPage() {
           <table className="data-table logistics-table min-w-[1720px]">
             <thead>
               <tr>
-                <th className="sticky left-0 top-0 z-30 min-w-[200px] bg-[var(--bg-card)]">Артикул</th>
+                <th className="sticky left-0 top-0 z-30 min-w-[250px] bg-[var(--bg-card)]">Артикул</th>
                 <th className="num min-w-[112px]">Объём из карточки</th>
                 <th className="num min-w-[132px]">Объём из отчёта остатков</th>
                 <th className="min-w-[190px] text-center">Замеры</th>
@@ -776,10 +811,15 @@ export default function LogisticsPage() {
                 const measurementOverCard = isCriticalMeasurement(product);
                 return (
                   <tr key={product.articleWB || product.articleSeller}>
-                    <td className="sticky left-0 z-10 min-w-[200px] bg-[var(--bg-card)] align-middle">
-                      <div>
-                        <p className="font-mono text-sm leading-5 text-[var(--accent)]">{product.articleSeller || "—"}</p>
-                        <p className="mt-1 text-xs leading-4 text-[var(--text-muted)]">WB {product.articleWB}</p>
+                    <td className="sticky left-0 z-10 min-w-[250px] bg-[var(--bg-card)] align-middle">
+                      <div className="flex items-center gap-3">
+                        <LogisticsProductThumb articleWB={product.articleWB} />
+                        <div className="min-w-0">
+                          <p className="break-words font-mono text-sm leading-5 text-[var(--accent)]">
+                            {product.articleSeller || "—"}
+                          </p>
+                          <p className="mt-1 text-xs leading-4 text-[var(--text-muted)]">WB {product.articleWB}</p>
+                        </div>
                       </div>
                     </td>
                     <td className="num tabular-nums align-middle">

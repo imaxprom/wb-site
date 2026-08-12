@@ -12,9 +12,12 @@
 const path = require("path");
 const fs = require("fs");
 const { Pool } = require("pg");
+const { ensureOrganizationDataDir, organizationDataPath, organizationPoolOptions, requireOrganizationId } = require("./lib/organization-runtime");
 
 const PROJECT_DIR = path.join(__dirname, "..");
-const LOG_PATH = path.join(PROJECT_DIR, "data", "reviews-complaints.log");
+const ORGANIZATION_ID = requireOrganizationId();
+ensureOrganizationDataDir(PROJECT_DIR, ORGANIZATION_ID);
+const LOG_PATH = organizationDataPath(PROJECT_DIR, "reviews-complaints.log", ORGANIZATION_ID);
 const CODEX_GATEWAY_ENV_PATH = path.join(PROJECT_DIR, "data", "codex-gateway.env");
 
 const WB_COMPLAINTS_URL =
@@ -62,6 +65,7 @@ function getPgPool() {
     if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required when MPHUB_DB_ENGINE=postgres");
     pgPool = new Pool({
       connectionString: process.env.DATABASE_URL,
+      options: organizationPoolOptions(ORGANIZATION_ID),
       max: Number(process.env.PGPOOL_MAX || 5),
       application_name: process.env.PGAPPNAME || "mphub-reviews-complaints",
     });

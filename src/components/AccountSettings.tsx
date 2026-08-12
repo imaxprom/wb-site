@@ -104,8 +104,6 @@ function StarIcon({ filled }: { filled: boolean }) {
 
 function SyncPanel() {
   const [status, setStatus] = useState({ total: 0, loaded: 0, status: "idle", message: "" });
-  const [syncing, setSyncing] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const poll = useCallback(() => {
@@ -116,13 +114,7 @@ function SyncPanel() {
     poll();
     intervalRef.current = setInterval(poll, 2000);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [poll, syncing]);
-
-  const handleFullSync = () => {
-    setShowConfirm(false);
-    setSyncing(true);
-    fetch("/api/reviews?sync=full").then(() => setSyncing(false)).catch(() => setSyncing(false));
-  };
+  }, [poll]);
 
   const fmt = (n: number) => n.toLocaleString("ru-RU");
   const isSyncing = status.status === "syncing";
@@ -162,39 +154,8 @@ function SyncPanel() {
           )}
         </div>
       )}
-      <div className="relative inline-block">
-        <button
-          onClick={() => setShowConfirm(true)}
-          disabled={syncing}
-          className="text-xs px-3 py-1.5 rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--bg-card-hover)] transition-colors disabled:opacity-50"
-        >
-          {syncing ? "Загрузка..." : "Полная загрузка"}
-        </button>
-        {showConfirm && (
-          <div className="absolute left-0 bottom-full mb-2 w-72 bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-4 shadow-xl z-50">
-            <p className="text-sm font-medium mb-2">Полная загрузка отзывов</p>
-            <p className="text-xs text-[var(--text-muted)] mb-2">
-              Эта операция загружает все отзывы из Wildberries с нуля. Используется только при первом подключении аккаунта.
-            </p>
-            <p className="text-xs text-[var(--text-muted)] mb-3">
-              Повторный запуск не требуется — новые отзывы подгружаются автоматически каждые 10 минут.
-            </p>
-            <div className="flex items-center gap-2 justify-end">
-              <button
-                onClick={handleFullSync}
-                className="text-xs px-3 py-1.5 rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
-              >
-                Да, загрузить
-              </button>
-              <button
-                onClick={() => setShowConfirm(false)}
-                className="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] transition-colors"
-              >
-                Отмена
-              </button>
-            </div>
-          </div>
-        )}
+      <div className="inline-flex rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs text-[var(--text-muted)]">
+        Автообновление на сервере
       </div>
     </div>
   );

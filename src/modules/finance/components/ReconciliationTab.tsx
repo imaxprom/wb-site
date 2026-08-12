@@ -118,9 +118,7 @@ export default function ReconciliationTab() {
         setWeeks(data.weeks);
         setTotalApi(data.totalApi);
         setTotalExcel(data.totalExcel);
-        const firstFinal = data.weeks.find((w) => w.status === "final");
-        if (firstFinal) setSelectedWeek(firstFinal);
-        else if (data.weeks.length > 0) setSelectedWeek(data.weeks[0]);
+        if (data.weeks.length > 0) setSelectedWeek(data.weeks[0]);
         setLoading(false);
       })
       .catch(() => setLoading(false));

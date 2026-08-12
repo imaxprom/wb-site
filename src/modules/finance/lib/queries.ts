@@ -430,12 +430,16 @@ export interface DailyDbRow {
   sales_qty: number;
   returns_qty: number;
   net_qty: number;
+  retail_amount: number;
   commission: number;
   logistics: number;
   storage: number;
   penalty: number;
+  acceptance: number;
+  jam: number;
   ad_spend: number;
   cogs: number;
+  tax_total: number;
   profit: number;
 }
 
@@ -448,32 +452,66 @@ export async function getDailyPg(dateFrom: string, dateTo: string, nmId?: number
   const rrParams = [dateFrom, dateTo, ...nmParams, ...exRr.params];
 
   const salesDaily = await pgRows<Record<string, number | string>>(`
-    SELECT sale_dt as date, SUM(retail_price_withdisc_rub) as rpwd, SUM(ppvz_for_pay) as ppvz,
-      SUM(quantity) as qty, SUM(quantity * ${pgCogsCostSql("r", "sale_dt")}) as cogs_sum
+    SELECT sale_dt as date, SUM(retail_price_withdisc_rub) as rpwd, SUM(retail_amount) as retail_amount,
+      SUM(ppvz_for_pay) as ppvz, SUM(quantity) as qty,
+      SUM(quantity * ${pgCogsCostSql("r", "sale_dt")}) as cogs_sum
     FROM realization r WHERE supplier_oper_name = 'Продажа' AND sale_dt >= ? AND sale_dt <= ? ${nmWhere} ${exSale.sql}
     GROUP BY sale_dt
   `, saleParams);
 
   const returnsDaily = await pgRows<Record<string, number | string>>(`
-    SELECT sale_dt as date, SUM(retail_price_withdisc_rub) as rpwd, SUM(ppvz_for_pay) as ppvz, SUM(quantity) as qty
+    SELECT sale_dt as date, SUM(retail_price_withdisc_rub) as rpwd, SUM(retail_amount) as retail_amount,
+      SUM(ppvz_for_pay) as ppvz, SUM(quantity) as qty,
+      SUM(quantity * ${pgCogsCostSql("r", "sale_dt")}) as cogs_sum
     FROM realization r WHERE supplier_oper_name = 'Возврат' AND sale_dt >= ? AND sale_dt <= ? ${nmWhere} ${exSale.sql}
     GROUP BY sale_dt
   `, saleParams);
 
   const svcDaily = await pgRows<Record<string, number | string>>(`
     SELECT rr_dt as date, SUM(CASE WHEN supplier_oper_name IN ('Логистика', 'Коррекция логистики') THEN delivery_rub ELSE 0 END) as logistics,
-      SUM(storage_fee) as storage, SUM(penalty) as penalty
+      SUM(storage_fee) as storage, SUM(penalty) as penalty, SUM(acceptance) as acceptance
     FROM realization r WHERE rr_dt >= ? AND rr_dt <= ? ${nmWhere} ${exRr.sql}
     GROUP BY rr_dt
   `, rrParams);
 
   const commDaily = await pgRows<Record<string, number | string>>(`
-    SELECT rr_dt as date,
+    SELECT sale_dt as date,
       SUM(CASE WHEN supplier_oper_name = 'Продажа' THEN retail_price_withdisc_rub - ppvz_for_pay ELSE 0 END)
       - SUM(CASE WHEN supplier_oper_name = 'Возврат' THEN retail_price_withdisc_rub - ppvz_for_pay ELSE 0 END) as comm
-    FROM realization r WHERE supplier_oper_name IN ('Продажа','Возврат') AND rr_dt >= ? AND rr_dt <= ? ${nmWhere} ${exRr.sql}
+    FROM realization r WHERE supplier_oper_name IN ('Продажа','Возврат') AND sale_dt >= ? AND sale_dt <= ? ${nmWhere} ${exSale.sql}
+    GROUP BY sale_dt
+  `, saleParams);
+
+  const jamDaily = await pgRows<Record<string, number | string>>(`
+    WITH jam_rows AS (
+      SELECT DISTINCT
+        bonus_type_name,
+        rr_dt,
+        deduction,
+        source,
+        CASE source
+          WHEN 'weekly_final' THEN 3
+          WHEN 'weekly' THEN 2
+          WHEN 'daily' THEN 1
+          ELSE 0
+        END AS source_rank
+      FROM realization
+      WHERE bonus_type_name LIKE '%Джем%'
+        AND rr_dt >= ?
+        AND rr_dt <= ?
+    ),
+    ranked AS (
+      SELECT *,
+        MAX(source_rank) OVER (
+          PARTITION BY bonus_type_name, rr_dt, deduction
+        ) AS max_source_rank
+      FROM jam_rows
+    )
+    SELECT rr_dt as date, COALESCE(SUM(deduction), 0) as total
+    FROM ranked
+    WHERE source_rank = max_source_rank
     GROUP BY rr_dt
-  `, rrParams);
+  `, [dateFrom, dateTo]);
 
   const adsDaily = await pgRows<Record<string, number | string>>(
     `SELECT date, SUM(amount) as total FROM advertising WHERE date >= ? AND date <= ? GROUP BY date`,
@@ -493,15 +531,17 @@ export async function getDailyPg(dateFrom: string, dateTo: string, nmId?: number
   const retMap = Object.fromEntries(returnsDaily.map(r => [String(r.date), r]));
   const svcMap = Object.fromEntries(svcDaily.map(r => [String(r.date), r]));
   const commMap = Object.fromEntries(commDaily.map(r => [String(r.date), r]));
+  const jamMap = Object.fromEntries(jamDaily.map(r => [String(r.date), r]));
   const adsMap = Object.fromEntries(adsDaily.map(r => [String(r.date), r]));
   const ordMap = Object.fromEntries(ordersDaily.map(r => [String(r.date), r]));
 
   const result: DailyDbRow[] = [];
   for (const dt of Array.from(allDates).sort()) {
-    const s = salesMap[dt] || { rpwd: 0, ppvz: 0, qty: 0, cogs_sum: 0 };
-    const ret = retMap[dt] || { rpwd: 0, ppvz: 0, qty: 0 };
-    const svc = svcMap[dt] || { logistics: 0, storage: 0, penalty: 0 };
+    const s = salesMap[dt] || { rpwd: 0, retail_amount: 0, ppvz: 0, qty: 0, cogs_sum: 0 };
+    const ret = retMap[dt] || { rpwd: 0, retail_amount: 0, ppvz: 0, qty: 0, cogs_sum: 0 };
+    const svc = svcMap[dt] || { logistics: 0, storage: 0, penalty: 0, acceptance: 0 };
     const comm = commMap[dt] || { comm: 0 };
+    const jam = jamMap[dt] || { total: 0 };
     const ad = adsMap[dt] || { total: 0 };
     const ord = ordMap[dt] || { order_sum: 0, order_count: 0 };
 
@@ -510,13 +550,22 @@ export async function getDailyPg(dateFrom: string, dateTo: string, nmId?: number
     const salesQty = Number(s.qty) || 0;
     const returnsQty = Number(ret.qty) || 0;
     const realization = salesRpwd - returnsRpwd;
+    const retailAmount = (Number(s.retail_amount) || 0) - (Number(ret.retail_amount) || 0);
     const ppvz = (Number(s.ppvz) || 0) - (Number(ret.ppvz) || 0);
-    const nds = ppvz * 5 / 105;
-    const usn = (ppvz - nds) * 0.01;
-    const totalSvc = (Number(comm.comm) || 0) + (Number(svc.logistics) || 0) + (Number(ad.total) || 0) + (Number(svc.storage) || 0) + (Number(svc.penalty) || 0);
-    const cogsSum = Number(s.cogs_sum) || 0;
-    const avgCogs = salesQty > 0 ? cogsSum / salesQty : ZERO_COGS_PER_UNIT;
-    const profit = realization - totalSvc - cogsSum + returnsQty * avgCogs - usn - nds;
+    const ndsBase = retailAmount || ppvz;
+    const nds = ndsBase * 5 / 105;
+    const usn = (ndsBase - nds) * 0.01;
+    const taxTotal = usn + nds;
+    const commission = Number(comm.comm) || 0;
+    const logistics = Number(svc.logistics) || 0;
+    const storage = Number(svc.storage) || 0;
+    const penalty = Number(svc.penalty) || 0;
+    const acceptance = Number(svc.acceptance) || 0;
+    const jamTotal = Number(jam.total) || 0;
+    const adSpend = Number(ad.total) || 0;
+    const totalSvc = commission + logistics + adSpend + storage + penalty + acceptance + jamTotal;
+    const cogsSum = (Number(s.cogs_sum) || 0) - (Number(ret.cogs_sum) || 0);
+    const profit = realization - totalSvc - cogsSum - taxTotal;
 
     result.push({
       date: dt,
@@ -528,12 +577,16 @@ export async function getDailyPg(dateFrom: string, dateTo: string, nmId?: number
       sales_qty: salesQty,
       returns_qty: returnsQty,
       net_qty: salesQty - returnsQty,
-      commission: Number(comm.comm) || 0,
-      logistics: Number(svc.logistics) || 0,
-      storage: Number(svc.storage) || 0,
-      penalty: Number(svc.penalty) || 0,
-      ad_spend: Number(ad.total) || 0,
+      retail_amount: retailAmount,
+      commission,
+      logistics,
+      storage,
+      penalty,
+      acceptance,
+      jam: jamTotal,
+      ad_spend: adSpend,
       cogs: cogsSum,
+      tax_total: taxTotal,
       profit,
     });
   }

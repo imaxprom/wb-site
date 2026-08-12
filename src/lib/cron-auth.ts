@@ -2,9 +2,26 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { NextRequest } from "next/server";
+import { pgGet } from "@/lib/postgres";
+import { enterOrganizationContext } from "@/lib/organization-context";
 
 const CRON_SECRET_PATH = path.join(process.cwd(), "data", "cron-secret.txt");
 const HEADER = "x-mphub-cron-secret";
+const cronOrganizationCache = new WeakMap<NextRequest, number>();
+
+export function activateCronOrganizationContext(req: NextRequest): number {
+  const organizationId = cronOrganizationCache.get(req) || null;
+  if (!organizationId) {
+    throw new Error("Verified cron organization context is unavailable");
+  }
+  enterOrganizationContext({
+    organizationId,
+    userId: null,
+    organizationRole: "owner",
+    source: "job",
+  });
+  return organizationId;
+}
 
 function readCronSecret(): string {
   const fromEnv = process.env.MPHUB_CRON_SECRET?.trim();
@@ -46,4 +63,22 @@ function isLoopbackRequest(req: NextRequest): boolean {
 export function isCronRequest(req: NextRequest): boolean {
   if (!isLoopbackRequest(req)) return false;
   return safeEqual(req.headers.get(HEADER) || "", readCronSecret());
+}
+
+export async function enterCronOrganizationContext(req: NextRequest): Promise<number | null> {
+  if (!isCronRequest(req)) return null;
+  const organizationId = Number(req.headers.get("x-mphub-organization-id") || "");
+  if (!Number.isSafeInteger(organizationId) || organizationId <= 0) return null;
+  const organization = await pgGet<{ id: number }>(`
+    SELECT id FROM public.organizations WHERE id = ? AND status = 'active'
+  `, [organizationId]);
+  if (!organization) return null;
+  cronOrganizationCache.set(req, organizationId);
+  enterOrganizationContext({
+    organizationId,
+    userId: null,
+    organizationRole: "owner",
+    source: "job",
+  });
+  return organizationId;
 }

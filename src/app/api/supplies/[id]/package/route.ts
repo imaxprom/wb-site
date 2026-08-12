@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import {
   getAcceptedSupplyContentPg,
@@ -8,6 +8,7 @@ import {
 } from "@/lib/shipment-db";
 import { isPostgresReadonlyConnection, pgGet, pgRows } from "@/lib/postgres";
 import { getWbApiKey } from "@/lib/wb-api-key";
+import { requireActiveOrganizationId } from "@/lib/organization-context";
 
 const SUPPLIES_API = "https://supplies-api.wildberries.ru/api/v1";
 const PACKAGE_CACHE_TTL_MS = 15 * 60 * 1000;
@@ -84,6 +85,10 @@ interface StoredSupplyContentPayload {
 const packageCache = new Map<string, { ts: number; data: WbPackage[] }>();
 const goodsCache = new Map<string, { ts: number; data: WbSupplyGood[] }>();
 const detailCache = new Map<string, { ts: number; data: WbSupplyDetail }>();
+
+function organizationCacheKey(supplyID: string): string {
+  return `${requireActiveOrganizationId()}:${supplyID}`;
+}
 
 async function persistAcceptedSupplyContent(input: AcceptedSupplyContentInput): Promise<void> {
   await saveAcceptedSupplyContentPg(input);
@@ -166,35 +171,38 @@ async function wbFetch<T>(path: string): Promise<T> {
 }
 
 async function wbFetchDetail(supplyID: string): Promise<WbSupplyDetail> {
-  const cached = detailCache.get(supplyID);
+  const cacheKey = organizationCacheKey(supplyID);
+  const cached = detailCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < PACKAGE_CACHE_TTL_MS) {
     return cached.data;
   }
 
   const data = await wbFetch<WbSupplyDetail>(`/supplies/${encodeURIComponent(supplyID)}`);
-  detailCache.set(supplyID, { ts: Date.now(), data });
+  detailCache.set(cacheKey, { ts: Date.now(), data });
   return data;
 }
 
 async function wbFetchPackage(supplyID: string): Promise<WbPackage[]> {
-  const cached = packageCache.get(supplyID);
+  const cacheKey = organizationCacheKey(supplyID);
+  const cached = packageCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < PACKAGE_CACHE_TTL_MS) {
     return cached.data;
   }
 
   const data = await wbFetch<WbPackage[]>(`/supplies/${encodeURIComponent(supplyID)}/package`);
-  packageCache.set(supplyID, { ts: Date.now(), data });
+  packageCache.set(cacheKey, { ts: Date.now(), data });
   return data;
 }
 
 async function wbFetchGoods(supplyID: string): Promise<WbSupplyGood[]> {
-  const cached = goodsCache.get(supplyID);
+  const cacheKey = organizationCacheKey(supplyID);
+  const cached = goodsCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < PACKAGE_CACHE_TTL_MS) {
     return cached.data;
   }
 
   const data = await wbFetch<WbSupplyGood[]>(`/supplies/${encodeURIComponent(supplyID)}/goods?limit=1000&offset=0`);
-  goodsCache.set(supplyID, { ts: Date.now(), data });
+  goodsCache.set(cacheKey, { ts: Date.now(), data });
   return data;
 }
 
@@ -433,6 +441,7 @@ function buildStoredPayload(supplyID: string, stored: StoredSupplyContentPayload
 export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const authError = await requireAdmin(request);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(request);
 
   try {
     const { id } = await context.params;

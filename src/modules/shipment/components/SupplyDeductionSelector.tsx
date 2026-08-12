@@ -167,6 +167,55 @@ function normalizeWarehouseName(value: string | null | undefined) {
     .replace(/[^a-zа-я0-9]+/gi, "");
 }
 
+function warehouseAliasKeys(normalized: string) {
+  const keys = new Set<string>();
+  if (!normalized) return keys;
+
+  keys.add(normalized);
+
+  if (normalized.includes("новосемейкино") || normalized === "самара") {
+    keys.add("самара");
+    keys.add("новосемейкино");
+    keys.add("самарановосемейкино");
+  }
+
+  if (normalized.includes("шушар")) {
+    keys.add("шушары");
+    keys.add("спбшушары");
+    keys.add("сцшушары");
+  }
+
+  return keys;
+}
+
+function warehouseNamesMatch(left: string | null | undefined, right: string | null | undefined) {
+  const leftNormalized = normalizeWarehouseName(left);
+  const rightNormalized = normalizeWarehouseName(right);
+  if (!leftNormalized || !rightNormalized) return false;
+  if (leftNormalized === rightNormalized) return true;
+
+  const leftKeys = warehouseAliasKeys(leftNormalized);
+  const rightKeys = warehouseAliasKeys(rightNormalized);
+  for (const key of leftKeys) {
+    if (rightKeys.has(key)) return true;
+  }
+
+  return (
+    (leftNormalized.length >= 6 && rightNormalized.includes(leftNormalized)) ||
+    (rightNormalized.length >= 6 && leftNormalized.includes(rightNormalized))
+  );
+}
+
+function fallbackRegionIdsForWarehouse(warehouseName: string | null | undefined) {
+  const normalized = normalizeWarehouseName(warehouseName);
+  if (!normalized) return [];
+
+  if (normalized.includes("новосемейкино") || normalized === "самара") return ["volga"];
+  if (normalized.includes("шушар")) return ["central-nw", "central"];
+
+  return [];
+}
+
 function findRegionIdForWarehouse(warehouseName: string | null | undefined, regionConfigs: RegionConfig[]) {
   return findRegionForWarehouse(warehouseName, regionConfigs)?.id || "";
 }
@@ -190,10 +239,16 @@ function findRegionForWarehouse(warehouseName: string | null | undefined, region
 
   for (const region of regionConfigs) {
     for (const warehouse of region.warehouses) {
-      if (normalizeWarehouseName(warehouse) === target) {
+      if (warehouseNamesMatch(warehouseName, warehouse)) {
         return region;
       }
     }
+  }
+
+  const fallbackIds = fallbackRegionIdsForWarehouse(warehouseName);
+  if (fallbackIds.length) {
+    const fallbackRegion = regionConfigs.find((region) => fallbackIds.includes(region.id));
+    if (fallbackRegion) return fallbackRegion;
   }
 
   return null;

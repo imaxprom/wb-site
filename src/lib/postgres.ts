@@ -1,4 +1,5 @@
 import pg, { Pool, type PoolClient, type QueryResult, type QueryResultRow } from "pg";
+import { getActiveOrganizationId, getOrganizationSchemaName } from "@/lib/organization-context";
 
 const { types } = pg;
 
@@ -41,7 +42,24 @@ export async function pgQuery<T extends QueryResultRow = QueryResultRow>(
   sql: string,
   params: unknown[] = []
 ): Promise<QueryResult<T>> {
-  return getPostgresPool().query<T>(sql, params);
+  const organizationId = getActiveOrganizationId();
+  if (!organizationId) {
+    return getPostgresPool().query<T>(sql, params);
+  }
+
+  const client = await getPostgresPool().connect();
+  try {
+    await client.query("BEGIN");
+    await setClientOrganizationContext(client, organizationId);
+    const result = await client.query<T>(sql, params);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export function positionalParamsToPg(sql: string): string {
@@ -78,6 +96,8 @@ export async function withPgTransaction<T>(fn: (client: PoolClient) => Promise<T
   return withPgClient(async (client) => {
     await client.query("BEGIN");
     try {
+      const organizationId = getActiveOrganizationId();
+      if (organizationId) await setClientOrganizationContext(client, organizationId);
       const result = await fn(client);
       await client.query("COMMIT");
       return result;
@@ -86,4 +106,10 @@ export async function withPgTransaction<T>(fn: (client: PoolClient) => Promise<T
       throw error;
     }
   });
+}
+
+async function setClientOrganizationContext(client: PoolClient, organizationId: number): Promise<void> {
+  const schemaName = getOrganizationSchemaName(organizationId);
+  await client.query("SELECT set_config('app.current_organization_id', $1, true)", [String(organizationId)]);
+  await client.query("SELECT set_config('search_path', $1, true)", [`${schemaName},pg_catalog`]);
 }

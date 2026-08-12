@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { getReviewAccountsPg, createReviewAccountPg, toPublicReviewAccount } from "@/lib/reviews-db";
 import { isPostgresReadonlyConnection } from "@/lib/postgres";
 
 export async function GET(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
 
   try {
     const accounts = (await getReviewAccountsPg()).map(toPublicReviewAccount);
@@ -18,6 +19,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
 
   try {
     if (isPostgresReadonlyConnection()) {

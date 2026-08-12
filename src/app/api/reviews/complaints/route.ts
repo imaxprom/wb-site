@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import fs from "fs";
 import path from "path";
 import {
@@ -471,6 +471,7 @@ function reasonErrorMessage(
 export async function POST(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
 
   try {
     if (isPostgresReadonlyConnection()) {
@@ -833,6 +834,7 @@ async function syncComplaintStatuses(): Promise<number> {
 export async function GET(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
 
   try {
     const sp = req.nextUrl.searchParams;
@@ -880,6 +882,7 @@ export async function GET(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
 
   try {
     if (isPostgresReadonlyConnection()) {

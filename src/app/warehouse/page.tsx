@@ -21,6 +21,8 @@ interface WarehouseSizeRow {
   target_sales_qty: number;
   target_sales_45d: number;
   wb_stock_qty: number;
+  wb_stock_total_qty?: number;
+  wb_stock_excluded_qty?: number;
   supply_packed_qty: number;
   supply_accepted_qty: number;
   supply_unloading_qty: number;
@@ -102,7 +104,9 @@ function packingPlanTitle(row: WarehouseSizeRow) {
     `Коэффициент отгрузки: x${formatNumber(row.trend_multiplier ?? 1, 2)}`,
     `Коэффициент упаковки: x${formatNumber(row.packing_multiplier ?? 1, 2)}`,
     `Цель с коэффициентом: ${formatNumber(row.target_sales_qty ?? row.target_sales_45d)}`,
-    `Остаток WB: ${formatNumber(row.wb_stock_qty)}`,
+    `Остаток WB всего: ${formatNumber(row.wb_stock_total_qty ?? row.wb_stock_qty)}`,
+    `Исключено по настройке: ${formatNumber(row.wb_stock_excluded_qty ?? 0)}`,
+    `Остаток WB в расчёте: ${formatNumber(row.wb_stock_qty)}`,
     `Потребность после WB: ${formatNumber(row.warehouse_required_units)}`,
     `Готово на складе: ${formatNumber(row.units_qty)}`,
     `Расчёт: ${formatNumber(row.warehouse_required_units)} - ${formatNumber(row.units_qty)} = ${formatNumber(rawPlan)} шт`,

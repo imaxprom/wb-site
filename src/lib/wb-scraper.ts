@@ -3,14 +3,17 @@ import path from "path";
 import fs from "fs";
 import { saveTokens, refreshSellerToken, checkApiSession as checkApi, type WbTokens } from "./wb-seller-api";
 import { ensurePrivateDir, writeSecretFileSync } from "./secure-file";
+import { getOrganizationDataDir, getOrganizationDataPath } from "./organization-paths";
 
 // --- Constants ---
 const SELLER_AUTH_URL = "https://seller-auth.wildberries.ru";
 const SELLER_URL = "https://seller.wildberries.ru";
 const REPORT_URL = "https://seller.wildberries.ru/suppliers-mutual-settlements/reports-implementations/reports-weekly-new";
-const COOKIES_PATH = path.join(process.cwd(), "data", "wb-cookies.json");
-const DOWNLOADS_DIR = path.join(process.cwd(), "data", "reports");
 const BROWSER_IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+
+function cookiesPath() { return getOrganizationDataPath("wb-cookies.json"); }
+function cookiesMetaPath() { return getOrganizationDataPath("wb-cookies-meta.json"); }
+function downloadsDir() { return path.join(getOrganizationDataDir(), "reports"); }
 
 // --- Singleton browser (survives Next.js hot-reload via globalThis) ---
 const g = globalThis as unknown as {
@@ -39,9 +42,10 @@ function scheduleBrowserIdleClose() {
 }
 
 function ensureDirs() {
-  const dataDir = path.join(process.cwd(), "data");
+  const dataDir = getOrganizationDataDir();
+  const reportDir = downloadsDir();
   ensurePrivateDir(dataDir);
-  if (!fs.existsSync(DOWNLOADS_DIR)) fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
+  if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
 }
 
 async function getBrowser(): Promise<Browser> {
@@ -107,30 +111,30 @@ interface CdpCookie {
   partitionKey?: string;
 }
 
-const COOKIES_META_PATH = path.join(process.cwd(), "data", "wb-cookies-meta.json");
-
 /** Save all cookies from all domains via CDP */
 async function saveAllCookies(page: Page): Promise<void> {
   ensureDirs();
   const client = await page.createCDPSession();
   const { cookies } = await client.send("Network.getAllCookies") as { cookies: CdpCookie[] };
-  writeSecretFileSync(COOKIES_PATH, JSON.stringify(cookies, null, 2));
-  writeSecretFileSync(COOKIES_META_PATH, JSON.stringify({ savedAt: new Date().toISOString() }));
+  writeSecretFileSync(cookiesPath(), JSON.stringify(cookies, null, 2));
+  writeSecretFileSync(cookiesMetaPath(), JSON.stringify({ savedAt: new Date().toISOString() }));
   await client.detach();
 }
 
 function loadCookiesRaw(): CdpCookie[] | null {
-  if (!fs.existsSync(COOKIES_PATH)) return null;
+  const filePath = cookiesPath();
+  if (!fs.existsSync(filePath)) return null;
   try {
-    return JSON.parse(fs.readFileSync(COOKIES_PATH, "utf-8")) as CdpCookie[];
+    return JSON.parse(fs.readFileSync(filePath, "utf-8")) as CdpCookie[];
   } catch {
     return null;
   }
 }
 
 export function clearCookies(): void {
-  if (fs.existsSync(COOKIES_PATH)) fs.unlinkSync(COOKIES_PATH);
-  const tokensPath = path.join(process.cwd(), "data", "wb-tokens.json");
+  const cookieFile = cookiesPath();
+  if (fs.existsSync(cookieFile)) fs.unlinkSync(cookieFile);
+  const tokensPath = getOrganizationDataPath("wb-tokens.json");
   if (fs.existsSync(tokensPath)) fs.unlinkSync(tokensPath);
 }
 
@@ -255,7 +259,7 @@ async function captureAuthTokens(page: Page): Promise<void> {
     if (!authToken) {
       console.warn("[wb-scraper] Could not capture authorizev3 token via CDP or localStorage");
       // Save debug screenshot
-      await page.screenshot({ path: path.join(process.cwd(), "data", "debug-token-capture.png"), fullPage: true }).catch(() => {});
+      await page.screenshot({ path: getOrganizationDataPath("debug-token-capture.png"), fullPage: true }).catch(() => {});
       console.warn("[wb-scraper] Debug screenshot saved to data/debug-token-capture.png");
       console.warn("[wb-scraper] Current URL:", page.url());
       return;
@@ -383,7 +387,7 @@ async function detectCurrentStep(page: Page): Promise<AuthStepResult> {
   // Timed out — save debug screenshot
   const debugShot = await page.screenshot({ encoding: "binary", fullPage: false }) as Buffer;
   ensureDirs();
-  fs.writeFileSync(path.join(process.cwd(), "data", "debug-auth.png"), debugShot);
+  fs.writeFileSync(getOrganizationDataPath("debug-auth.png"), debugShot);
 
   return {
     ok: false,
@@ -707,7 +711,7 @@ export async function navigateAndInspect(targetUrl: string): Promise<{
     // Save localStorage
     ensureDirs();
     fs.writeFileSync(
-      path.join(process.cwd(), "data", "wb-localstorage.json"),
+      getOrganizationDataPath("wb-localstorage.json"),
       JSON.stringify(info.localStorage, null, 2)
     );
 
@@ -738,6 +742,7 @@ export interface ReportResult {
 }
 
 export async function downloadReport(req: ReportRequest): Promise<ReportResult> {
+  const reportDir = downloadsDir();
   try {
     const page = await getPage();
     ensureDirs();
@@ -750,7 +755,7 @@ export async function downloadReport(req: ReportRequest): Promise<ReportResult> 
     const client = await page.createCDPSession();
     await client.send("Page.setDownloadBehavior", {
       behavior: "allow",
-      downloadPath: DOWNLOADS_DIR,
+      downloadPath: reportDir,
     });
 
     await page.goto(REPORT_URL, { waitUntil: "networkidle2", timeout: 30000 });
@@ -782,7 +787,7 @@ export async function downloadReport(req: ReportRequest): Promise<ReportResult> 
       return { ok: false, error: "Не найдена кнопка скачивания отчёта" };
     }
 
-    const filesBefore = new Set(fs.readdirSync(DOWNLOADS_DIR));
+    const filesBefore = new Set(fs.readdirSync(reportDir));
     await downloadBtn.click();
 
     const filePath = await waitForDownload(filesBefore, 60000);
@@ -838,12 +843,13 @@ async function findDownloadButton(page: Page): Promise<ReturnType<Page["$"]>> {
 }
 
 async function waitForDownload(filesBefore: Set<string>, timeoutMs: number): Promise<string | null> {
+  const reportDir = downloadsDir();
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     await new Promise((r) => setTimeout(r, 1000));
-    for (const file of fs.readdirSync(DOWNLOADS_DIR)) {
+    for (const file of fs.readdirSync(reportDir)) {
       if (!filesBefore.has(file) && !file.endsWith(".crdownload") && !file.endsWith(".tmp")) {
-        return path.join(DOWNLOADS_DIR, file);
+        return path.join(reportDir, file);
       }
     }
   }
@@ -852,11 +858,12 @@ async function waitForDownload(filesBefore: Set<string>, timeoutMs: number): Pro
 
 export function listReports() {
   ensureDirs();
+  const reportDir = downloadsDir();
   return fs
-    .readdirSync(DOWNLOADS_DIR)
+    .readdirSync(reportDir)
     .filter((f) => f.endsWith(".xls") || f.endsWith(".xlsx") || f.endsWith(".csv"))
     .map((f) => {
-      const p = path.join(DOWNLOADS_DIR, f);
+      const p = path.join(reportDir, f);
       const s = fs.statSync(p);
       return { name: f, path: p, size: s.size, date: s.mtime };
     })

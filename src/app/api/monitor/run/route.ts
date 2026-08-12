@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireMonitorAdmin } from "@/lib/monitor-auth";
+import { activateMonitorOrganizationContext, requireMonitorAdmin } from "@/lib/monitor-auth";
 
 export async function POST(req: NextRequest) {
   const authError = await requireMonitorAdmin(req);
   if (authError) return authError;
+  activateMonitorOrganizationContext(req);
 
   return NextResponse.json({
     ok: false,

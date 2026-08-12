@@ -23,6 +23,10 @@ LOCK_PATH = Path("/tmp/vps-watchdog.lock")
 DEPLOY_LOCK_PATH = DATA_DIR / "deploy.lock"
 LOG_PATH = DATA_DIR / "watchdog.log"
 NOTIFY_SH = PROJECT_DIR / "scripts" / "notify.sh"
+CART_STOCK_WORKER_ID = "wb-parser-primary"
+CART_STOCK_STALE_SECONDS = 180
+CART_STOCK_RESTART_KEY = Path.home() / ".ssh" / "wb_cart_stock_watchdog"
+CART_STOCK_RESTART_HOST = "makson@192.168.55.102"
 
 # Cron tasks and their expected intervals (minutes)
 CRON_TASKS = {
@@ -187,6 +191,90 @@ def check_disk():
         return {"ok": True, "percent": 0}
 
 
+def read_env_value(name):
+    """Read one deployment variable without importing the application runtime."""
+    for path in (PROJECT_DIR / ".env.production.local", PROJECT_DIR / ".env.local"):
+        if not path.exists():
+            continue
+        try:
+            for raw_line in path.read_text().splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                if key.strip() == name:
+                    value = value.strip()
+                    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                        value = value[1:-1]
+                    return value
+        except Exception:
+            continue
+    return os.getenv(name)
+
+
+def check_cart_stock_worker():
+    """Check the worker heartbeat stored by MpHub in PostgreSQL."""
+    database_url = read_env_value("DATABASE_URL")
+    if not database_url:
+        return {"ok": False, "kind": "config", "reason": "DATABASE_URL is unavailable"}
+    query = (
+        "SELECT COALESCE(EXTRACT(EPOCH FROM (NOW() - last_seen_at))::bigint, 999999), "
+        "COALESCE(auth_state, 'unknown'), COALESCE(last_error, ''), COALESCE(outbox_count, 0) "
+        "FROM wb_cart_stock_worker_state "
+        f"WHERE worker_id = '{CART_STOCK_WORKER_ID}' LIMIT 1"
+    )
+    try:
+        result = subprocess.run(
+            ["psql", database_url, "-X", "-A", "-t", "-F", "\x1f", "-c", query],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode != 0:
+            return {"ok": False, "kind": "database", "reason": result.stderr.strip()[:200]}
+        line = result.stdout.strip()
+        if not line:
+            return {"ok": False, "kind": "missing", "reason": "worker heartbeat row is missing"}
+        age_raw, auth_state, last_error, outbox_raw = line.split("\x1f", 3)
+        age_seconds = int(age_raw)
+        return {
+            "ok": age_seconds <= CART_STOCK_STALE_SECONDS,
+            "kind": "healthy" if age_seconds <= CART_STOCK_STALE_SECONDS else "stale",
+            "age_seconds": age_seconds,
+            "auth_state": auth_state,
+            "last_error": last_error.replace("\n", " ")[:200],
+            "outbox_count": int(outbox_raw),
+        }
+    except Exception as error:
+        return {"ok": False, "kind": "database", "reason": str(error)[:200]}
+
+
+def restart_cart_stock_worker():
+    """Use a restricted SSH key that can only restart this exact service."""
+    if not CART_STOCK_RESTART_KEY.exists():
+        log("  Cart-stock restart key is missing")
+        return False
+    try:
+        log("  Restarting wb-cart-stock-worker through restricted SSH...")
+        result = subprocess.run(
+            [
+                "ssh", "-i", str(CART_STOCK_RESTART_KEY), "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=8", "-o", "StrictHostKeyChecking=yes",
+                CART_STOCK_RESTART_HOST, "restart",
+            ],
+            capture_output=True, text=True, timeout=20,
+        )
+        if result.returncode != 0:
+            log(f"  Cart-stock restart failed: rc={result.returncode}, {result.stderr[:200]}")
+            return False
+        time.sleep(15)
+        recovered = check_cart_stock_worker()
+        ok = recovered.get("ok", False)
+        log(f"  Cart-stock restart {'OK' if ok else 'did not restore heartbeat'}")
+        return ok
+    except Exception as error:
+        log(f"  Cart-stock restart error: {error}")
+        return False
+
+
 def restart_pm2():
     """Restart PM2 mphub process."""
     try:
@@ -267,13 +355,84 @@ def main():
             if state.get(alert_key):
                 del state[alert_key]
 
-    # 4. Check disk
+    # 4. Check authorized WB cart-stock worker end to end
+    cart_worker = check_cart_stock_worker()
+    if cart_worker.get("kind") in ("healthy", "stale"):
+        log(
+            "Cart-stock worker: %s (heartbeat=%ss, auth=%s, outbox=%s)"
+            % (
+                "OK" if cart_worker["ok"] else "STALE",
+                cart_worker.get("age_seconds", "?"),
+                cart_worker.get("auth_state", "unknown"),
+                cart_worker.get("outbox_count", "?"),
+            )
+        )
+    else:
+        log(f"Cart-stock worker check failed: {cart_worker.get('reason', 'unknown error')}")
+
+    if not cart_worker.get("ok") and cart_worker.get("kind") in ("stale", "missing"):
+        recovered = restart_cart_stock_worker()
+        if recovered:
+            state.pop("cart_stock_worker_alerted", None)
+            state["cart_stock_worker_restart_count"] = 0
+            log("Cart-stock worker recovered automatically")
+        else:
+            restart_count = state.get("cart_stock_worker_restart_count", 0) + 1
+            state["cart_stock_worker_restart_count"] = restart_count
+            if not state.get("cart_stock_worker_alerted"):
+                alerts.append(("CRITICAL", "*Остатки в карточке* — воркер не передаёт heartbeat и не восстановился автоматически."))
+                state["cart_stock_worker_alerted"] = datetime.now().isoformat()
+    elif cart_worker.get("ok"):
+        state.pop("cart_stock_worker_alerted", None)
+        state["cart_stock_worker_restart_count"] = 0
+
+    if cart_worker.get("kind") in ("config", "database"):
+        if not state.get("cart_stock_monitor_alerted"):
+            alerts.append(("WARNING", "*Остатки в карточке* — внешний watchdog не смог проверить heartbeat воркера."))
+            state["cart_stock_monitor_alerted"] = datetime.now().isoformat()
+    else:
+        state.pop("cart_stock_monitor_alerted", None)
+
+    if cart_worker.get("ok") and cart_worker.get("auth_state") == "error":
+        if not state.get("cart_stock_auth_alerted"):
+            detail = cart_worker.get("last_error") or "покупательская сессия требует обновления"
+            alerts.append(("WARNING", f"*Остатки в карточке* — ошибка авторизации WB: {detail}"))
+            state["cart_stock_auth_alerted"] = datetime.now().isoformat()
+    else:
+        state.pop("cart_stock_auth_alerted", None)
+
+    # A fresh heartbeat does not guarantee that the queue is moving. The
+    # worker reports HTTP/database failures through last_error while remaining
+    # authenticated and online; alert after two consecutive watchdog runs so
+    # a server-side claim failure cannot stay hidden behind a healthy heartbeat.
+    worker_error = str(cart_worker.get("last_error") or "").strip()
+    if cart_worker.get("ok") and worker_error and cart_worker.get("auth_state") != "error":
+        error_runs = state.get("cart_stock_server_error_runs", 0) + 1
+        state["cart_stock_server_error_runs"] = error_runs
+        if error_runs >= 2 and not state.get("cart_stock_server_error_alerted"):
+            alerts.append(("WARNING", f"*Остатки в карточке* — воркер не может обработать очередь: {worker_error}"))
+            state["cart_stock_server_error_alerted"] = datetime.now().isoformat()
+    else:
+        state["cart_stock_server_error_runs"] = 0
+        state.pop("cart_stock_server_error_alerted", None)
+
+    if cart_worker.get("ok") and cart_worker.get("outbox_count", 0) > 0:
+        pending_runs = state.get("cart_stock_outbox_pending_runs", 0) + 1
+        state["cart_stock_outbox_pending_runs"] = pending_runs
+        if pending_runs >= 3 and not state.get("cart_stock_outbox_alerted"):
+            alerts.append(("WARNING", "*Остатки в карточке* — результат остаётся в локальной очереди воркера более 10 минут."))
+            state["cart_stock_outbox_alerted"] = datetime.now().isoformat()
+    else:
+        state["cart_stock_outbox_pending_runs"] = 0
+        state.pop("cart_stock_outbox_alerted", None)
+
+    # 5. Check disk
     disk = check_disk()
     log(f"Disk: {disk['percent']}%")
     if not disk["ok"]:
         alerts.append(("WARNING", f"*Диск* — заполнен на {disk['percent']}%."))
 
-    # 5. Send alerts
+    # 6. Send alerts
     for level, msg in alerts:
         send_telegram(level, msg)
 

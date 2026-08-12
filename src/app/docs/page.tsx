@@ -168,7 +168,7 @@ export default function DocsPage() {
   };
 
   useEffect(() => {
-    fetch("/data/docs.json")
+    fetch("/api/admin/docs", { cache: "no-store" })
       .then((r) => r.json())
       .then((d: DocsData) => {
         setData(d);

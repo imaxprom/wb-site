@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { getLastWeekCorrectionPg } from "@/lib/shipment-db";
 import { apiError } from "@/lib/api-utils";
 import type { OrderAggregates } from "@/types";
@@ -60,6 +60,7 @@ function getMoscowToday(): Date {
 export async function GET(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
 
   try {
     const days = Number(req.nextUrl.searchParams.get("days") || "28");

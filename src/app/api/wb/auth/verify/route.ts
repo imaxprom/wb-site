@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireOrganizationAdmin } from "@/lib/api-auth";
 import { playwrightSubmitCode } from "@/lib/wb-auth-playwright";
 import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 
@@ -8,8 +8,9 @@ import { localReadonlyGuard } from "@/lib/local-readonly-guard";
  */
 
 export async function POST(req: NextRequest) {
-  const authError = await requireAdmin(req);
+  const authError = await requireOrganizationAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
   const readonlyError = localReadonlyGuard("WB cabinet SMS verification");
   if (readonlyError) return readonlyError;
 

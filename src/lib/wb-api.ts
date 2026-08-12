@@ -139,6 +139,22 @@ export interface WBStockItem {
   SCCode: string;
 }
 
+export interface WBWarehouseRemainsWarehouse {
+  warehouseName: string;
+  quantity: number;
+}
+
+export interface WBWarehouseRemainsItem {
+  brand?: string;
+  subjectName?: string;
+  vendorCode?: string;
+  nmId: number;
+  barcode: string;
+  techSize: string;
+  volume?: number;
+  warehouses?: WBWarehouseRemainsWarehouse[];
+}
+
 export interface WBOrder {
   date: string;
   lastChangeDate: string;

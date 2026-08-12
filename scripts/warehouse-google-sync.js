@@ -9,10 +9,29 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { ensureOrganizationDataDir, organizationDataPath, organizationPoolOptions, requireOrganizationId } = require("./lib/organization-runtime");
 
 const ROOT = process.cwd();
-const KEY_PATH = process.env.GOOGLE_SERVICE_ACCOUNT_KEY || path.join(ROOT, "data", "google-service-account.json");
-const SPREADSHEET_ID = process.env.WAREHOUSE_SPREADSHEET_ID || "1BXtl8hX_mp2sbde9lzkF_uS43WCnnSn_wNNxcse9daM";
+const ORGANIZATION_ID = requireOrganizationId();
+ensureOrganizationDataDir(ROOT, ORGANIZATION_ID);
+
+function loadRuntimeEnv(filePath) {
+  if (!fs.existsSync(filePath)) return;
+  for (const line of fs.readFileSync(filePath, "utf8").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+    const index = trimmed.indexOf("=");
+    const key = trimmed.slice(0, index).trim();
+    const value = trimmed.slice(index + 1).trim().replace(/^[\"']|[\"']$/g, "");
+    if (/^[A-Z][A-Z0-9_]*$/.test(key) && process.env[key] === undefined) process.env[key] = value;
+  }
+}
+
+loadRuntimeEnv(organizationDataPath(ROOT, "runtime.env", ORGANIZATION_ID));
+const KEY_PATH = process.env.GOOGLE_SERVICE_ACCOUNT_KEY || organizationDataPath(ROOT, "google-service-account.json", ORGANIZATION_ID);
+const LEGACY_MAIN_SPREADSHEET_ID = "1BXtl8hX_mp2sbde9lzkF_uS43WCnnSn_wNNxcse9daM";
+const SPREADSHEET_ID = process.env.WAREHOUSE_SPREADSHEET_ID || (ORGANIZATION_ID === 1 ? LEGACY_MAIN_SPREADSHEET_ID : "");
+if (!SPREADSHEET_ID) throw new Error("WAREHOUSE_SPREADSHEET_ID is required for this organization");
 const RANGE = "A1:N120";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
 
@@ -24,6 +43,7 @@ function getPgPool() {
     if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required when MPHUB_DB_ENGINE=postgres");
     pgPool = new Pool({
       connectionString: process.env.DATABASE_URL,
+      options: organizationPoolOptions(ORGANIZATION_ID),
       max: Number(process.env.PGPOOL_MAX || 5),
       application_name: process.env.PGAPPNAME || "mphub-warehouse-google-sync",
     });

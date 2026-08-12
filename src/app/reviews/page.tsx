@@ -19,7 +19,7 @@ function fmt(n: number) {
   return n.toLocaleString("ru-RU");
 }
 
-function SyncProgress({ syncing, onRefresh, onFullSync }: { syncing: boolean; onRefresh: () => void; onFullSync: () => void }) {
+function SyncProgress({ syncing }: { syncing: boolean }) {
   const [status, setStatus] = useState<SyncStatus>({ total: 0, loaded: 0, status: "idle", message: "" });
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -65,7 +65,7 @@ function SyncProgress({ syncing, onRefresh, onFullSync }: { syncing: boolean; on
             <span className="text-[var(--text-muted)]">
               {status.loaded > 0
                 ? `В базе: ${fmt(status.loaded)}`
-                : "Нажмите «Обновить» для загрузки отзывов"}
+                : "Отзывы обновляются серверной синхронизацией"}
             </span>
           )}
         </div>
@@ -74,16 +74,6 @@ function SyncProgress({ syncing, onRefresh, onFullSync }: { syncing: boolean; on
             <span className={`text-xs animate-pulse ${syncing ? "text-[var(--text-muted)]" : "text-[var(--accent)]"}`}>
               {syncing ? "Синхронизация..." : "Обогащение..."}
             </span>
-          )}
-          {!syncing && (
-            <>
-              <button
-                onClick={onFullSync}
-                className="text-xs px-3 py-1.5 rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--bg-card-hover)] transition-colors"
-              >
-                Полная загрузка
-              </button>
-            </>
           )}
         </div>
       </div>

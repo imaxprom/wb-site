@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 import { getWbApiKeyFromRequest } from "@/lib/wb-api-key";
@@ -50,6 +50,7 @@ async function fetchCards(apiKey: string, cursor: CardsCursor = {}) {
 async function validate(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
   const readonlyError = localReadonlyGuard("WB cards proxy");
   if (readonlyError) return readonlyError;
 

@@ -17,35 +17,61 @@ import {
   BookOpen,
   Settings as SettingsIcon,
   Pin,
+  Boxes,
+  ClipboardCheck,
+  Printer,
+  type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getFbsPrinterIndicator, type FbsPrintAgent } from "@/lib/fbs-printer-status";
 
-const NAV_GROUPS = [
+type NavItem = {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  external?: boolean;
+  systemAdmin?: boolean;
+};
+
+const NAV_GROUPS: NavItem[][] = [
   [
     { href: "/analytics", label: "Аналитика", icon: BarChart3 },
     { href: "/reviews", label: "Отзывы", icon: MessageSquare },
     { href: "/finance", label: "Финансы", icon: DollarSign },
     { href: "/shipment", label: "Расчёт отгрузки", icon: Package },
     { href: "/logistics", label: "Расчёт логистики", icon: Truck },
-    { href: "https://ads.imaxprom.site", label: "Реклама", icon: Megaphone, external: true },
+    { href: "/api/advertising/open", label: "Реклама", icon: Megaphone, external: true },
     { href: "/warehouse", label: "Склад", icon: Warehouse },
+    { href: "/fbs-stock", label: "FBS Управление остатками", icon: Boxes },
+    { href: "/fbs", label: "FBS Сборка", icon: ClipboardCheck },
+    { href: "/printer", label: "Принтер", icon: Printer },
     { href: "/supplies", label: "Поставки", icon: Package },
+    { href: "/supply-reports", label: "Отчёты поставок", icon: FileText },
     { href: "/purchases", label: "Закупки", icon: ShoppingCart },
   ],
   [
-    { href: "/monitor", label: "Мониторинг", icon: Activity },
-    { href: "/changelog", label: "Журнал", icon: FileText },
-    { href: "/docs", label: "База знаний", icon: BookOpen },
+    { href: "/monitor", label: "Мониторинг", icon: Activity, systemAdmin: true },
+    { href: "/changelog", label: "Журнал", icon: FileText, systemAdmin: true },
+    { href: "/docs", label: "База знаний", icon: BookOpen, systemAdmin: true },
     { href: "/settings", label: "Настройки", icon: SettingsIcon },
   ],
 ];
 
-export function Sidebar({ pinned, onTogglePinned }: { pinned: boolean; onTogglePinned: () => void }) {
+export function Sidebar({
+  pinned,
+  onTogglePinned,
+  isSystemAdmin,
+}: {
+  pinned: boolean;
+  onTogglePinned: () => void;
+  isSystemAdmin: boolean;
+}) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [suppressHoverUntilLeave, setSuppressHoverUntilLeave] = useState(false);
   const [logisticsAlerts, setLogisticsAlerts] = useState(0);
+  const [printAgents, setPrintAgents] = useState<FbsPrintAgent[] | null>(null);
   const expanded = pinned || hovered || open;
 
   useEffect(() => {
@@ -65,6 +91,32 @@ export function Sidebar({ pinned, onTogglePinned }: { pinned: boolean; onToggleP
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => fetch("/api/fbs?printerStatus=1", { cache: "no-store" })
+      .then((response) => response.ok ? response.json() : null)
+      .then((result) => {
+        if (!cancelled && result) setPrintAgents(Array.isArray(result.printAgents) ? result.printAgents : []);
+      })
+      .catch(() => undefined);
+    const statusChanged = (event: Event) => {
+      const agents = (event as CustomEvent<FbsPrintAgent[]>).detail;
+      if (Array.isArray(agents)) setPrintAgents(agents);
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 15_000);
+    window.addEventListener("fbs-printer-status-changed", statusChanged);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("fbs-printer-status-changed", statusChanged);
+    };
+  }, []);
+
+  const printerIndicator = getFbsPrinterIndicator(printAgents);
+  const printerColor = printerIndicator.tone === "ready" ? "text-emerald-500" : printerIndicator.tone === "warning" ? "text-amber-500" : printerIndicator.tone === "error" ? "text-red-500" : "text-[var(--text-muted)]";
+  const printerDot = printerIndicator.tone === "ready" ? "bg-emerald-500" : printerIndicator.tone === "warning" ? "bg-amber-500" : printerIndicator.tone === "error" ? "bg-red-500" : "bg-slate-400";
 
   return (
     <>
@@ -161,7 +213,7 @@ export function Sidebar({ pinned, onTogglePinned }: { pinned: boolean; onToggleP
                   )}
                 />
               )}
-              {group.map((item) => {
+              {group.filter((item) => !item.systemAdmin || isSystemAdmin).map((item) => {
                 const isActive = !item.external && (pathname === item.href || pathname.startsWith(item.href + "/"));
                 const className = cn(
                   "flex items-center text-base transition-colors",
@@ -173,7 +225,8 @@ export function Sidebar({ pinned, onTogglePinned }: { pinned: boolean; onToggleP
                 const content = (
                   <>
                     <span className={cn("relative shrink-0", expanded && "mr-2")}>
-                      <item.icon size={18} className="shrink-0" />
+                      <item.icon size={18} className={cn("shrink-0", item.href === "/printer" && printerColor)} />
+                      {item.href === "/printer" && <span className={cn("absolute -right-1.5 -top-1.5 h-2.5 w-2.5 rounded-full border-2 border-[var(--bg-card)]", printerDot)} title={printerIndicator.label} />}
                       {item.href === "/logistics" && logisticsAlerts > 0 && !expanded && (
                         <span
                           className="absolute -right-2 -top-2 flex h-4 w-4 items-center justify-center bg-[var(--danger)] text-[9px] font-bold leading-none text-white"

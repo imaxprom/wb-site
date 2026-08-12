@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import {
   getAcceptedSupplyContentPg,
@@ -12,6 +12,7 @@ import {
 } from "@/lib/shipment-db";
 import { isPostgresReadonlyConnection, pgGet } from "@/lib/postgres";
 import { getWbApiKey } from "@/lib/wb-api-key";
+import { requireActiveOrganizationId } from "@/lib/organization-context";
 
 const SUPPLIES_API = "https://supplies-api.wildberries.ru/api/v1";
 const SUPPLIES_CACHE_TTL_MS = 15 * 60 * 1000;
@@ -88,8 +89,8 @@ interface SupplyContentPayload {
   goods?: WbSupplyGood[];
 }
 
-let listCache: { key: string; ts: number; data: SupplyRow[] } | null = null;
-const detailCache = new Map<number, { ts: number; data: WbSupplyDetail }>();
+const listCache = new Map<string, { ts: number; data: SupplyRow[] }>();
+const detailCache = new Map<string, { ts: number; data: WbSupplyDetail }>();
 
 function isDraftSupply(row: WbSupplyListRow, detail?: WbSupplyDetail | null): boolean {
   return (detail?.statusID ?? row.statusID) === 1;
@@ -150,13 +151,14 @@ async function wbFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 async function getSupplyDetail(supplyID: number): Promise<WbSupplyDetail> {
-  const cached = detailCache.get(supplyID);
+  const cacheKey = `${requireActiveOrganizationId()}:${supplyID}`;
+  const cached = detailCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < SUPPLIES_CACHE_TTL_MS) {
     return cached.data;
   }
 
   const detail = await wbFetch<WbSupplyDetail>(`/supplies/${encodeURIComponent(String(supplyID))}`);
-  detailCache.set(supplyID, { ts: Date.now(), data: detail });
+  detailCache.set(cacheKey, { ts: Date.now(), data: detail });
   return detail;
 }
 
@@ -209,28 +211,47 @@ async function enrichDetailWithPackedQuantity(supplyID: number, detail: WbSupply
   return { ...detail, packedQuantity: packed.quantity, packedQuantitySource: packed.source };
 }
 
+async function readStoredSupplies(limit: number, offset: number): Promise<SupplyRow[]> {
+  const stored = await getSupplySnapshotsPg(limit, offset);
+  const supplies = await Promise.all(stored.map(async (item) => {
+    const row = item.row as unknown as WbSupplyListRow;
+    const detail = item.detail
+      ? await enrichDetailWithPackedQuantity(item.supplyID, item.detail as WbSupplyDetail)
+      : null;
+    return {
+      ...row,
+      supplyID: item.supplyID,
+      detail,
+    };
+  }));
+  return supplies.filter((supply) => !isDraftSupply(supply, supply.detail));
+}
+
 export async function GET(request: NextRequest) {
   const authError = await requireAdmin(request);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(request);
 
   const { searchParams } = new URL(request.url);
   const limit = Math.min(Math.max(Number(searchParams.get("limit") || 20), 1), MAX_LIMIT);
   const offset = Math.max(Number(searchParams.get("offset") || 0), 0);
-  const cacheKey = `${limit}:${offset}`;
+  const source = searchParams.get("source");
+  const forceRefresh = searchParams.get("refresh") === "1" || source === "api";
+  const dbOnly = source === "db";
+  const cacheKey = `${requireActiveOrganizationId()}:${limit}:${offset}`;
 
   try {
-    if (listCache?.key === cacheKey && Date.now() - listCache.ts < SUPPLIES_CACHE_TTL_MS) {
-      return NextResponse.json({ supplies: listCache.data, meta: { limit, offset, source: "cache" } });
+    const cachedList = listCache.get(cacheKey);
+    if (!forceRefresh && cachedList && Date.now() - cachedList.ts < SUPPLIES_CACHE_TTL_MS) {
+      return NextResponse.json({ supplies: cachedList.data, meta: { limit, offset, source: "cache" } });
     }
 
-    if (isPostgresReadonlyConnection()) {
-      const stored = await getSupplySnapshotsPg(limit, offset);
-      const supplies = await Promise.all(stored.map(async (item) => ({
-        ...item.row,
-        supplyID: item.supplyID,
-        detail: item.detail ? await enrichDetailWithPackedQuantity(item.supplyID, item.detail as WbSupplyDetail) : item.detail,
-      })));
-      return NextResponse.json({ supplies, meta: { limit, offset, source: "db" } });
+    if (!forceRefresh || isPostgresReadonlyConnection() || dbOnly) {
+      const supplies = await readStoredSupplies(limit, offset);
+      if (supplies.length > 0 || isPostgresReadonlyConnection() || dbOnly) {
+        listCache.set(cacheKey, { ts: Date.now(), data: supplies });
+        return NextResponse.json({ supplies, meta: { limit, offset, source: "db" } });
+      }
     }
 
     const rows = await wbFetch<WbSupplyListRow[]>(`/supplies?limit=${limit}&offset=${offset}`, {
@@ -282,7 +303,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    listCache = { key: cacheKey, ts: Date.now(), data: supplies };
+    listCache.set(cacheKey, { ts: Date.now(), data: supplies });
     return NextResponse.json({ supplies, meta: { limit, offset, source: "api" } });
   } catch (error) {
     return apiError(error, error instanceof WbApiError ? error.status : 500);

@@ -26,12 +26,40 @@ data/telegram.env
 data/api-snapshots/
 data/reports/
 data/adv-nm-cache.json
+data/cart-stock-local.json
 data/daily-sync-status.json
 
 # Build artifacts
 tsconfig.tsbuildinfo
 next-env.d.ts
 e2e/test-results/
+
+# Repository-local tooling
+.codex/
+0
+
+# Android scanner: keep source, ignore generated/signing artifacts
+android-scanner/.gradle/
+android-scanner/build/
+android-scanner/app/build/
+android-scanner/*.apk
+android-scanner/*.apk.idsig
+android-scanner/debug.keystore
+
+# Generated one-off reports and exports
+reports/
+/commission-*.pdf
+/fbs-pvz-dispute-report-*.html
+/fbs-pvz-dispute-report-*.pdf
+/finance-*-analysis-*.html
+/finance-*-analysis-*.json
+/finance-*-analysis-*.pdf
+/wb-loss-warehouses-report-*.html
+/wb-loss-warehouses-report-*.json
+/wb-loss-warehouses-report-*.pdf
+/wb-support-appeal-*.html
+/wb-support-appeal-*.pdf
+/upload-tab-dates.png
 
 # Monitor state (dynamic, per-environment — не коммитим и не деплоим)
 public/data/monitor/status.json

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { pgRows, withPgTransaction } from "@/lib/postgres";
 import { localReadonlyGuard } from "@/lib/local-readonly-guard";
@@ -159,6 +159,7 @@ function isValidDateString(value: string | undefined): value is string {
 export async function GET(request: NextRequest) {
   const authError = await requireAdmin(request);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(request);
 
   try {
     const { searchParams } = new URL(request.url);
@@ -192,6 +193,7 @@ export async function GET(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   const authError = await requireAdmin(request);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(request);
   const readonlyError = localReadonlyGuard("COGS updates");
   if (readonlyError) return readonlyError;
 
@@ -248,6 +250,7 @@ export async function PUT(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   const authError = await requireAdmin(request);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(request);
   const readonlyError = localReadonlyGuard("COGS history updates");
   if (readonlyError) return readonlyError;
 

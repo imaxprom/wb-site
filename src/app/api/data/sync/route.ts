@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
-import { isCronRequest } from "@/lib/cron-auth";
+import { activateCronOrganizationContext, enterCronOrganizationContext, isCronRequest } from "@/lib/cron-auth";
 import {
   saveOrdersPg,
   saveProductsPg,
   saveStockPg,
   setUploadDatePg,
 } from "@/lib/shipment-db";
-import { transformCards, transformStocks, transformOrders } from "@/lib/wb-transformers";
-import type { WBCard, WBStockItem, WBOrder, WBCardsResponse } from "@/lib/wb-api";
+import { transformCards, transformWarehouseRemains, transformOrders } from "@/lib/wb-transformers";
+import type { WBCard, WBWarehouseRemainsItem, WBOrder, WBCardsResponse } from "@/lib/wb-api";
 import { getWbApiKey } from "@/lib/wb-api-key";
 import { isPostgresReadonlyConnection } from "@/lib/postgres";
 
@@ -103,15 +103,58 @@ async function fetchAllCards(apiKey: string): Promise<WBCard[]> {
   return allCards;
 }
 
-async function fetchAllStocks(apiKey: string): Promise<WBStockItem[]> {
-  // Use old dateFrom to get ALL stock (WB filters by lastChangeDate)
-  const dateFrom = "2019-01-01T00:00:00";
-  const res = await fetchWithRateLimitRetry(
-    `https://statistics-api.wildberries.ru/api/v1/supplier/stocks?dateFrom=${encodeURIComponent(dateFrom)}`,
+async function fetchWarehouseRemains(apiKey: string): Promise<WBWarehouseRemainsItem[]> {
+  const url = new URL("https://seller-analytics-api.wildberries.ru/api/v1/warehouse_remains");
+  url.searchParams.set("locale", "ru");
+  url.searchParams.set("groupByNm", "true");
+  url.searchParams.set("groupByBarcode", "true");
+  url.searchParams.set("groupBySize", "true");
+  url.searchParams.set("filterPics", "0");
+  url.searchParams.set("filterVolume", "0");
+
+  const createRes = await fetchWithRateLimitRetry(
+    url.toString(),
     { headers: { Authorization: apiKey } },
-    "WB stocks API"
+    "WB warehouse remains create"
   );
-  return res.json() as Promise<WBStockItem[]>;
+  const createData = await createRes.json().catch(() => ({}));
+  const taskId = createData?.data?.taskId || createData?.data?.id || createData?.taskId || createData?.id;
+  if (!taskId) {
+    throw new Error("WB warehouse remains create: task id missing");
+  }
+
+  let status = "";
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    await sleep(3_000);
+    const statusRes = await fetchWithRateLimitRetry(
+      `https://seller-analytics-api.wildberries.ru/api/v1/warehouse_remains/tasks/${taskId}/status`,
+      { headers: { Authorization: apiKey } },
+      "WB warehouse remains status",
+      1
+    );
+    const statusData = await statusRes.json().catch(() => ({}));
+    status = statusData?.data?.status || statusData?.status || "";
+    if (status === "done") break;
+    if (status === "canceled" || status === "purged") {
+      throw new Error(`WB warehouse remains task ${status}`);
+    }
+  }
+
+  if (status !== "done") {
+    throw new Error(`WB warehouse remains poll timeout, last status=${status || "unknown"}`);
+  }
+
+  const downloadRes = await fetchWithRateLimitRetry(
+    `https://seller-analytics-api.wildberries.ru/api/v1/warehouse_remains/tasks/${taskId}/download`,
+    { headers: { Authorization: apiKey } },
+    "WB warehouse remains download"
+  );
+  const payload = await downloadRes.json();
+  if (Array.isArray(payload)) return payload as WBWarehouseRemainsItem[];
+  if (Array.isArray(payload?.data)) return payload.data as WBWarehouseRemainsItem[];
+  if (Array.isArray(payload?.data?.report)) return payload.data.report as WBWarehouseRemainsItem[];
+  if (Array.isArray(payload?.report)) return payload.report as WBWarehouseRemainsItem[];
+  return [];
 }
 
 async function fetchAllOrders(apiKey: string, days: number): Promise<WBOrder[]> {
@@ -126,9 +169,16 @@ async function fetchAllOrders(apiKey: string, days: number): Promise<WBOrder[]> 
 }
 
 export async function POST(req: NextRequest) {
-  if (!isCronRequest(req)) {
+  const cronRequest = isCronRequest(req);
+  if (cronRequest) {
+    if (!await enterCronOrganizationContext(req)) {
+      return NextResponse.json({ error: "Active organization is required for cron" }, { status: 400 });
+    }
+    activateCronOrganizationContext(req);
+  } else {
     const authError = await requireAdmin(req);
     if (authError) return authError;
+    activateAuthenticatedRequestContext(req);
   }
 
   try {
@@ -149,19 +199,14 @@ export async function POST(req: NextRequest) {
 
     const warnings: string[] = [];
 
-    // Cards use a separate WB service, but stocks/orders share the strict
-    // Statistics limiter. Keep Statistics calls sequential to avoid 429.
+    // Cards, warehouse remains and orders use separate WB services/limiters.
     const rawCardsPromise = fetchAllCards(apiKey);
 
-    let rawStocks: WBStockItem[] | null = null;
+    let rawStocks: WBWarehouseRemainsItem[] | null = null;
     try {
-      rawStocks = await fetchAllStocks(apiKey);
+      rawStocks = await fetchWarehouseRemains(apiKey);
     } catch (err) {
       warnings.push(err instanceof Error ? err.message : String(err));
-    }
-
-    if (rawStocks) {
-      await sleep(65_000);
     }
 
     const rawOrders = await fetchAllOrders(apiKey, days);
@@ -169,7 +214,7 @@ export async function POST(req: NextRequest) {
 
     // Transform
     const products = transformCards(rawCards);
-    const stock = rawStocks ? transformStocks(rawStocks) : null;
+    const stock = rawStocks?.length ? transformWarehouseRemains(rawStocks, products) : null;
     const allOrders = transformOrders(rawOrders);
 
     // Save ALL orders (accumulate, no trimming). Duplicates are handled by

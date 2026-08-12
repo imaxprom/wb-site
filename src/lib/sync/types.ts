@@ -1,9 +1,14 @@
 import fs from "fs";
-import path from "path";
 import { getWbApiKey } from "../wb-api-key";
+import { getOrganizationDataDir, getOrganizationDataPath } from "../organization-paths";
 
-export const STATUS_PATH = path.join(process.cwd(), "data", "daily-sync-status.json");
-export const TOKENS_PATH = path.join(process.cwd(), "data", "wb-tokens.json");
+export function getSyncStatusPath(): string {
+  return getOrganizationDataPath("daily-sync-status.json");
+}
+
+export function getSyncTokensPath(): string {
+  return getOrganizationDataPath("wb-tokens.json");
+}
 
 export interface SourceStatus {
   ok: boolean;
@@ -95,15 +100,16 @@ function validateStatus(s: unknown): s is SyncStatus {
 
 export function loadStatus(): SyncStatus {
   const emptyStatus: SyncStatus = { today: null, lastRun: null, nextRun: null, running: false, history: [] };
+  const statusPath = getSyncStatusPath();
 
-  if (fs.existsSync(STATUS_PATH)) {
+  if (fs.existsSync(statusPath)) {
     try {
-      const parsed = JSON.parse(fs.readFileSync(STATUS_PATH, "utf-8"));
+      const parsed = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
       if (validateStatus(parsed)) return parsed;
     } catch { /* try backup */ }
   }
 
-  const bakPath = STATUS_PATH + ".bak";
+  const bakPath = statusPath + ".bak";
   if (fs.existsSync(bakPath)) {
     try {
       const parsed = JSON.parse(fs.readFileSync(bakPath, "utf-8"));
@@ -119,17 +125,18 @@ export function loadStatus(): SyncStatus {
 }
 
 export function saveStatus(status: SyncStatus): void {
-  const dir = path.dirname(STATUS_PATH);
+  const statusPath = getSyncStatusPath();
+  const dir = getOrganizationDataDir();
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
   // Слой 1: бэкап
-  if (fs.existsSync(STATUS_PATH)) {
-    try { fs.copyFileSync(STATUS_PATH, STATUS_PATH + ".bak"); } catch { /* не критично */ }
+  if (fs.existsSync(statusPath)) {
+    try { fs.copyFileSync(statusPath, statusPath + ".bak"); } catch { /* не критично */ }
   }
   // Слой 2: атомарная запись
-  const tmpPath = STATUS_PATH + ".tmp";
+  const tmpPath = statusPath + ".tmp";
   fs.writeFileSync(tmpPath, JSON.stringify(status, null, 2));
-  fs.renameSync(tmpPath, STATUS_PATH);
+  fs.renameSync(tmpPath, statusPath);
 }
 
 export function yesterday(): string {

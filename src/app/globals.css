@@ -14,10 +14,169 @@
   --danger: #ef4444;
 }
 
+html {
+  font-size: 17px;
+}
+
+/* Accessible default typography for warehouse and office workstations. */
+.text-\[10px\],
+.text-\[11px\] {
+  font-size: 0.78rem !important;
+  line-height: 1.35 !important;
+}
+
+.text-\[12px\],
+.text-xs {
+  font-size: 0.84rem !important;
+  line-height: 1.45 !important;
+}
+
+.text-sm {
+  font-size: 0.96rem !important;
+  line-height: 1.5 !important;
+}
+
+.text-base {
+  font-size: 1.04rem !important;
+  line-height: 1.5 !important;
+}
+
+/* Larger warehouse typography, enabled only while an FBS workspace is open. */
+html.fbs-readable-ui body {
+  font-size: 21px;
+  line-height: 1.55;
+}
+
+html.fbs-readable-ui .text-\[10px\],
+html.fbs-readable-ui .text-\[11px\] {
+  font-size: 17px !important;
+  line-height: 1.45 !important;
+}
+
+html.fbs-readable-ui .text-\[12px\],
+html.fbs-readable-ui .text-xs {
+  font-size: 18px !important;
+  line-height: 1.5 !important;
+}
+
+html.fbs-readable-ui .text-sm {
+  font-size: 20px !important;
+  line-height: 1.55 !important;
+}
+
+html.fbs-readable-ui .text-base {
+  font-size: 22px !important;
+  line-height: 1.55 !important;
+}
+
+html.fbs-readable-ui .text-lg {
+  font-size: 23px !important;
+  line-height: 1.45 !important;
+}
+
+html.fbs-readable-ui .text-xl {
+  font-size: 25px !important;
+  line-height: 1.4 !important;
+}
+
+html.fbs-readable-ui .text-2xl {
+  font-size: 30px !important;
+  line-height: 1.3 !important;
+}
+
+/* One stable workspace width for every standalone FBS portal section. */
+.fbs-portal-content {
+  width: 100%;
+  max-width: 1500px;
+  margin-inline: auto;
+  padding: 1rem;
+}
+
+@media (min-width: 768px) {
+  .fbs-portal-content {
+    padding: 1.5rem;
+  }
+}
+
 body {
   background: var(--bg);
   color: var(--text);
   font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+/*
+ * Unified feedback for every interactive control. Individual components keep
+ * their semantic colours (primary, warning, danger), while hover, keyboard
+ * focus and press behaviour stay identical throughout MpHub.
+ */
+:where(
+  button,
+  [role="button"],
+  a[class*="rounded"][class*="px-"]
+) {
+  transition:
+    transform 150ms ease,
+    filter 150ms ease,
+    box-shadow 150ms ease,
+    border-color 150ms ease,
+    background-color 150ms ease,
+    color 150ms ease,
+    opacity 150ms ease !important;
+  -webkit-tap-highlight-color: transparent;
+}
+
+:where(
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  a[class*="rounded"][class*="px-"]:not([aria-disabled="true"])
+) {
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  :where(
+    button:not(:disabled),
+    [role="button"]:not([aria-disabled="true"]),
+    a[class*="rounded"][class*="px-"]:not([aria-disabled="true"])
+  ):hover {
+    filter: brightness(1.12);
+    transform: translateY(-1px);
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--accent) 42%, transparent),
+      0 7px 18px rgb(0 0 0 / 24%);
+  }
+}
+
+:where(
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  a[class*="rounded"][class*="px-"]:not([aria-disabled="true"])
+):active {
+  filter: brightness(0.96);
+  transform: translateY(0) scale(0.98);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+:where(
+  button,
+  [role="button"],
+  a[class*="rounded"][class*="px-"]
+):focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 58%, transparent);
+  outline-offset: 2px;
+}
+
+:where(button:disabled, [role="button"][aria-disabled="true"], a[aria-disabled="true"]) {
+  cursor: not-allowed;
+  filter: none !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(button, [role="button"], a[class*="rounded"][class*="px-"]) {
+    transition-duration: 0.01ms;
+  }
 }
 
 /* Custom scrollbar */

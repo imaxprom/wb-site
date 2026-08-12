@@ -17,12 +17,16 @@
 const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
+const { ensureOrganizationDataDir, organizationDataPath, requireOrganizationId } = require("./lib/organization-runtime");
 
 const PROJECT_DIR = path.join(__dirname, "..");
-const API_KEY_PATH = path.join(PROJECT_DIR, "data", "wb-api-key.txt");
-const TOKENS_PATH = path.join(PROJECT_DIR, "data", "wb-tokens.json");
-const STATUS_PATH = path.join(PROJECT_DIR, "public", "data", "monitor", "auth-status.json");
-const LOG_PATH = path.join(PROJECT_DIR, "data", "auth-check.log");
+const ORGANIZATION_ID = requireOrganizationId();
+const ORGANIZATION_NAME = process.env.MPHUB_ORGANIZATION_NAME || `Организация ${ORGANIZATION_ID}`;
+ensureOrganizationDataDir(PROJECT_DIR, ORGANIZATION_ID);
+const API_KEY_PATH = organizationDataPath(PROJECT_DIR, "wb-api-key.txt", ORGANIZATION_ID);
+const TOKENS_PATH = organizationDataPath(PROJECT_DIR, "wb-tokens.json", ORGANIZATION_ID);
+const STATUS_PATH = organizationDataPath(PROJECT_DIR, "auth-status.json", ORGANIZATION_ID);
+const LOG_PATH = organizationDataPath(PROJECT_DIR, "auth-check.log", ORGANIZATION_ID);
 const TELEGRAM_ENV_PATH = path.join(PROJECT_DIR, "data", "telegram.env");
 
 function loadEnvFile(filePath) {
@@ -171,6 +175,8 @@ async function main() {
   const allOk = api.ok && lk.ok;
 
   const status = {
+    organizationId: ORGANIZATION_ID,
+    organizationName: ORGANIZATION_NAME,
     api: api.ok ? "ok" : "dead",
     apiReason: api.ok ? null : api.reason,
     lk: lk.ok ? "ok" : "dead",
@@ -189,6 +195,7 @@ async function main() {
       const lkLine = lk.ok ? "✅ ok" : `❌ ${lk.reason}`;
       const msg = [
         "⚠️ <b>MpHub: проблема с доступом к WB</b>",
+        `<b>Профиль:</b> ${ORGANIZATION_NAME}`,
         "",
         `<b>API-ключ:</b> ${apiLine}`,
         `<b>ЛК:</b> ${lkLine}`,

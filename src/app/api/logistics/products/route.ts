@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { initShipmentTablesPg } from "@/lib/shipment-db";
 import { pgGet, pgRows } from "@/lib/postgres";
@@ -508,6 +508,7 @@ async function calculateLocalizationMetricsPg() {
 export async function GET(request: NextRequest) {
   const authError = await requireAdmin(request);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(request);
 
   try {
     await initShipmentTablesPg();

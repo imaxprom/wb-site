@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
-import { requireMonitorAdmin } from "@/lib/monitor-auth";
+import { activateMonitorOrganizationContext, requireMonitorAdmin } from "@/lib/monitor-auth";
 
 const REGISTRY_PATH = join(process.cwd(), "public/data/monitor/monitor-registry.json");
 
 export async function GET(req: NextRequest) {
   const authError = await requireMonitorAdmin(req);
   if (authError) return authError;
+  activateMonitorOrganizationContext(req);
 
   const { searchParams } = req.nextUrl;
   const id = searchParams.get("id");

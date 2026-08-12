@@ -4,19 +4,16 @@
  */
 import fs from "fs";
 import path from "path";
-import { SourceStatus, emptySource, TOKENS_PATH } from "./types";
+import { SourceStatus, emptySource, getSyncTokensPath } from "./types";
 import { readFirstSheetRows } from "@/lib/server/excel-rows";
-import { withPgClient, withPgTransaction } from "@/lib/postgres";
+import { withPgTransaction } from "@/lib/postgres";
 import type { PoolClient } from "pg";
+import { getOrganizationDataDir } from "@/lib/organization-paths";
 
 async function withReportLock<T>(reportId: number, fn: (client: PoolClient) => Promise<T>): Promise<T> {
-  return withPgClient(async (client) => {
-    await client.query("SELECT pg_advisory_lock($1::bigint)", [reportId]);
-    try {
-      return await fn(client);
-    } finally {
-      await client.query("SELECT pg_advisory_unlock($1::bigint)", [reportId]);
-    }
+  return withPgTransaction(async (client) => {
+    await client.query("SELECT pg_advisory_xact_lock($1::bigint)", [reportId]);
+    return fn(client);
   });
 }
 
@@ -24,11 +21,12 @@ export async function syncReport(date: string): Promise<SourceStatus> {
   const s: SourceStatus = { ...emptySource(), lastAttempt: new Date().toISOString() };
 
   try {
-    if (!fs.existsSync(TOKENS_PATH)) {
+    const tokensPath = getSyncTokensPath();
+    if (!fs.existsSync(tokensPath)) {
       s.error = "Нет токенов авторизации (authorizev3)";
       return s;
     }
-    const tokens = JSON.parse(fs.readFileSync(TOKENS_PATH, "utf-8"));
+    const tokens = JSON.parse(fs.readFileSync(tokensPath, "utf-8"));
     if (!tokens.authorizev3 || !tokens.cookies) {
       s.error = "Неполные токены авторизации";
       return s;
@@ -87,7 +85,7 @@ export async function syncReport(date: string): Promise<SourceStatus> {
     });
     let totalRows = 0;
 
-    const reportsDir = path.join(process.cwd(), "data", "reports");
+    const reportsDir = path.join(getOrganizationDataDir(), "reports");
     const extractDir = path.join(reportsDir, "extracted");
     fs.mkdirSync(extractDir, { recursive: true });
 

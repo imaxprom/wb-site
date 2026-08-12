@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { readFileSync, writeFileSync } from "fs";
 import { execFileSync } from "child_process";
 import { join } from "path";
-import { requireMonitorAdmin } from "@/lib/monitor-auth";
+import { activateMonitorOrganizationContext, requireMonitorAdmin } from "@/lib/monitor-auth";
 import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 
 const REGISTRY_PATH = join(process.cwd(), "public/data/monitor/monitor-registry.json");
@@ -66,6 +66,7 @@ function startService(label: string): string {
 export async function POST(req: NextRequest) {
   const authError = await requireMonitorAdmin(req);
   if (authError) return authError;
+  activateMonitorOrganizationContext(req);
   const readonlyError = localReadonlyGuard("Monitor service actions");
   if (readonlyError) return readonlyError;
   if (process.env.NODE_ENV === "production") {

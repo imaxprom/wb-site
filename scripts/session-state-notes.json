@@ -1,31 +1,23 @@
 {
   "currentFocus": [
-    "Production runtime is PostgreSQL-only (`MPHUB_DB_ENGINE=postgres`); production PostgreSQL on VM 107 is the data source of truth. File-DB fallback is removed.",
-    "Production deploy is release-based: active app path is `/home/makson/current -> /home/makson/releases/20260608-163549`; shared runtime state is `/home/makson/shared` (`data`, env files, `node_modules`, `.next/cache`).",
-    "Use `SOURCE_MODE=local bash scripts/release-deploy.sh` for normal deploys after inspecting dirty worktree; use `SOURCE_MODE=remote-current bash scripts/release-deploy.sh` for rebuild/bootstrap from current production code without local dirty files. Old `scripts/deploy.sh` is fallback/clean rebuild only.",
-    "Release PM2/preflight startup must source `.env.local` first and `.env.production.local` second. Production env must override local tunnel values; otherwise login/DB can try `127.0.0.1:55432` and return internal error.",
-    "Local MpHub development must use `127.0.0.1:3000`; do not use the literal `localhost` hostname for this project.",
-    "Local current-data dev requires the PostgreSQL SSH tunnel before Next/API checks: verify `nc -zv 127.0.0.1 55432`; if closed, run `ssh -N -L 55432:127.0.0.1:5432 -J proxmox-jump -i ~/.ssh/id_ed25519_backup makson@192.168.55.107`, then restart `npm run dev -- -H 127.0.0.1 -p 3000`.",
-    "`/supplies` is deployed: fetches up to 20 latest WB supplies, hides draft rows, keeps accepted-supply DB cache, expands rows where WB exposes detail, and shows `Допринято` as supply type.",
-    "`/purchases` is deployed: purchase calculator reads Google Sheets stock/configs, uses 30-day orders times coefficient `1/1.5/2/2.5/3`, subtracts WB stock and warehouse stock, merges `40-42` into `42-44` only for purchase planning, and shows summary cards in one nowrap row.",
-    "`/shipment` → `Товары` uses the left/right `ProductsSplitView`; cost/table version 1.1 UI changes are deployed.",
-    "`/warehouse` stores Google Sheets ready-stock imports in PostgreSQL; current production `warehouse_ready_stock=127`.",
-    "`/warehouse` plan now subtracts active supplies as `packed - readyForSale`, so items already in WB stock are not deducted twice.",
-    "`/logistics` critical measurement highlight now requires latest WB measurement > card volume and no correcting warehouse-remains volume; article `178439058` is not critical with remains `0.99 л` vs card `2.5 л`.",
-    "`/finance` and forecast use `orders_funnel`; daily sync now refreshes the last 7 closed days from WB Sales Funnel every run, regardless of `stable`, and records `ordersRefresh` in `daily-sync-status.json`.",
-    "`/shipment` summary/export now supports manual supply deduction selection and per-region columns `Коробов / План / Факт / Нужно`; `Факт` is base WB stock, `Нужно` is after selected in-transit supplies.",
-    "`shipment_orders` uses `order_uid` as the only uniqueness key. On 2026-06-01 the migrated old file-DB-style `(barcode,date,warehouse)` index was removed, and sync now deletes old fallback-identity rows when real WB identity arrives; production has 187687 distinct orders through `2026-06-08T17:38:58`.",
-    "Reviews sync runs every 15 minutes as a slow archive tick: one WB archive request per run, with DB state/retry handling for `429`; watchdog threshold is `max_age_min=45`."
+    "2026-08-12 23:47 МСК: production `/home/makson/current` указывает на `/home/makson/releases/20260812-184908`, marker `fbs-pvz-main-supply-qr-20260812`; PM2 `mphub` online, cwd совпадает с active release, неожиданных рестартов нет.",
+    "Складской портал работает отдельно на `https://fbs.imaxprom.site` со своей авторизацией. Организация 1 (ИП Беликова) использует PostgreSQL schema `public`, организация 2 (ИП Made in China) — `organization_2`; FBS поставки, заказы, события, очереди, агенты и токены изолированы.",
+    "FBS workflow на production: новые заказы → сборка/печать → контроль маркировки → отгрузка. Пачечная печать является рабочим режимом; обязательные коды маркировки проверяются WB в фоновой durable queue; preflight блокирует неподтверждённую маркировку.",
+    "Исправлен частичный create/add поставки: после каждого запроса приложение перечитывает фактический состав поставки из WB, сохраняет только прикреплённые заказы, оставляет отклонённые в «Новых» и сверяет открытые поставки при sync. Проверено на ИП Беликовой: supply `WB-GI-264192275`, Екатеринбург, order `5472246019`, count=1, status `confirm/waiting`.",
+    "Для ПВЗ теперь печатаются и QR грузомест, и основной QR поставки. После передачи в доставку цикл не завершается, пока print-agent не подтвердит основной QR. Изменение задеплоено release `20260812-184908`.",
+    "Второе юрлицо: PVZ supply `WB-GI-264053929`, 36 заказов, cargo place `WB-MP-48974219`; QR грузоместа напечатан, supply доставлен, основной QR ещё не печатался на последней read-only проверке. При входе поставка должна открыться на шаге 4 и предложить печать основного QR.",
+    "Production DB snapshot 2026-08-12 23:44 МСК: shipment_products=69, shipment_stock=922, shipment_orders=263364 (max 2026-08-12T23:12:27), reviews=159734, review_complaints=612; reviews sync status done.",
+    "Android scanner in `android-scanner/` is an independent local application: mandatory marketplace/direction selection, product barcode → manual quantity → box barcode, local archive and XLSX email export. It is not part of MpHub runtime or website deploy.",
+    "Удалённый доступ для технического обслуживания складского Windows-компьютера пока не установлен. Предложена схема Tailscale + Windows OpenSSH + отдельный key-only admin account; выполнять только после явного разрешения и первичной настройки на месте.",
+    "Local worktree is heavily dirty and diverges from production. Never bulk-deploy it. For point changes deploy only approved files through a release build and verify marker, PM2 cwd, health and the affected endpoint.",
+    "Local current-data development requires PostgreSQL tunnel `127.0.0.1:55432`, `PGPOOL_MAX=2`, and Next on `127.0.0.1:3000`; do not use literal `localhost`."
   ],
   "continueFromHere": [
-    "Keep monitoring production `data/reviews-sync.log`; reviews archive sync should make at most one WB archive request per 15-minute cron tick and continue after WB `429` retry windows.",
-    "Watch `daily-sync-status.json.ordersRefresh`: expected hourly behavior is `ok=true`, `checked=7`, and `updated` only when WB changes recent Sales Funnel values.",
-    "Consider cleaning production crontab comments so the Reviews Sync heading says every 15 minutes instead of hourly.",
-    "If data/status questions arise, verify production PostgreSQL and runtime through `ssh wb-site` before answering.",
-    "When local pages show empty data, infinite loading, API `500`, or `Unexpected end of JSON input`, check the `127.0.0.1:55432` PostgreSQL tunnel before debugging frontend. Keep local PG pool small (`PGPOOL_MAX=2`) for SSH-tunnel stability.",
-    "Before any deploy, inspect dirty worktree scope and deploy only the user-approved files.",
-    "For rollback use `bash scripts/release-rollback.sh`; with only one release it falls back to legacy `/home/makson/website`. Ensure `data/deploy.lock` is absent after deploy/rollback.",
-    "For `/purchases`, if layout/color appears different between local and prod, first verify static chunk cache headers and compare prod/local SHA for `src/app/purchases/test/page.tsx`; latest intended UI has six stretching summary cards in one horizontal `grid-cols-6` row and orange `tone=need` purchase totals.",
-    "Visually recheck `/warehouse` plan tooltip and `/logistics` critical measurement badge after login; production code and DB checks already confirm the new formulas."
+    "На втором юрлице открыть PVZ supply `WB-GI-264053929` и вручную нажать «Печать QR поставки». Не запускать эту печать удалённо без пользователя. После подтверждения print-agent проверить `qr_printed_at` и доступность «Завершить цикл».",
+    "Если пользователь одобрит удалённое администрирование склада, на месте настроить Tailscale, Windows OpenSSH, отдельную административную учётную запись и вход только по SSH-ключу; затем проверить доступ и автозапуск после перезагрузки.",
+    "При новых расхождениях FBS сначала сравнивать live WB supply membership/status с organization-scoped PostgreSQL; не править DB вручную, пока sync reconciliation может восстановить состояние.",
+    "При проблемах печати сначала проверить physical output, print-agent log/status, PostgreSQL print job и Windows spooler. Сбрасывать очередь только когда понятно, какая этикетка физически вышла.",
+    "Перед следующим deploy смотреть `git status` и `SESSION_STATE.md` parity dry-run; не включать Android APK, отчёты, тестовые страницы и другие unrelated untracked files.",
+    "Для любых текущих цифр и статусов использовать новый `npm run save-session-state` и production `ssh wb-site`, а не сохранённые числа из памяти."
   ]
 }

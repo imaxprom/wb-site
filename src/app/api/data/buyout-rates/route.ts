@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { getPgExcludeDailyFilter } from "@/modules/analytics/lib/db";
 import { pgRows } from "@/lib/postgres";
 
@@ -15,6 +15,7 @@ import { pgRows } from "@/lib/postgres";
 export async function GET(request: NextRequest) {
   const authError = await requireAdmin(request);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(request);
 
   try {
     const dedup = await getPgExcludeDailyFilter("rr_dt", "r");

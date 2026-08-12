@@ -16,9 +16,13 @@ const fs = require("fs");
 const AdmZip = require("adm-zip");
 const { Pool } = require("pg");
 const { readFirstSheetRows } = require("./lib/excel-rows");
+const { ensureOrganizationDataDir, organizationDataPath, organizationPoolOptions, requireOrganizationId } = require("./lib/organization-runtime");
 
-const TOKENS_PATH = path.join(__dirname, "..", "data", "wb-tokens.json");
-const LOG_PATH = path.join(__dirname, "..", "data", "weekly-sync.log");
+const PROJECT_DIR = path.join(__dirname, "..");
+const ORGANIZATION_ID = requireOrganizationId();
+ensureOrganizationDataDir(PROJECT_DIR, ORGANIZATION_ID);
+const TOKENS_PATH = organizationDataPath(PROJECT_DIR, "wb-tokens.json", ORGANIZATION_ID);
+const LOG_PATH = organizationDataPath(PROJECT_DIR, "weekly-sync.log", ORGANIZATION_ID);
 
 function appendLog(level, args) {
   const line = args.map((arg) => {
@@ -66,6 +70,7 @@ function getPgPool() {
     if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required when MPHUB_DB_ENGINE=postgres");
     pgPool = new Pool({
       connectionString: process.env.DATABASE_URL,
+      options: organizationPoolOptions(ORGANIZATION_ID),
       max: Number(process.env.PGPOOL_MAX || 5),
       application_name: process.env.PGAPPNAME || "mphub-weekly-sync",
     });

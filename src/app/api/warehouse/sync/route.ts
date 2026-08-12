@@ -1,9 +1,10 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { localReadonlyGuard } from "@/lib/local-readonly-guard";
+import { requireActiveOrganizationId } from "@/lib/organization-context";
 
 export const runtime = "nodejs";
 
@@ -12,6 +13,7 @@ const execFileAsync = promisify(execFile);
 export async function POST(request: NextRequest) {
   const authError = await requireAdmin(request);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(request);
   const readonlyError = localReadonlyGuard("Warehouse Google sync");
   if (readonlyError) return readonlyError;
 
@@ -22,6 +24,7 @@ export async function POST(request: NextRequest) {
       ["scripts/warehouse-google-sync.js"],
       {
         cwd: process.cwd(),
+        env: { ...process.env, MPHUB_ORGANIZATION_ID: String(requireActiveOrganizationId()) },
         timeout: 120_000,
         maxBuffer: 1024 * 1024,
       },

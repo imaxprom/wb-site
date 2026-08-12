@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
-import { requireMonitorAdmin } from "@/lib/monitor-auth";
+import { activateMonitorOrganizationContext, requireMonitorAdmin } from "@/lib/monitor-auth";
 import { isPostgresReadonlyConnection } from "@/lib/postgres";
 
 /**
@@ -62,6 +62,7 @@ function tailLog(logPath: string, lines: number, grepRegex?: RegExp): string[] {
 export async function GET(req: NextRequest) {
   const authError = await requireMonitorAdmin(req);
   if (authError) return authError;
+  activateMonitorOrganizationContext(req);
 
   if (isPostgresReadonlyConnection()) {
     return NextResponse.json({

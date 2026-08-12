@@ -9,10 +9,12 @@
 const fs = require("fs");
 const path = require("path");
 const { Pool } = require("pg");
+const { ensureOrganizationDataDir, organizationDataPath, organizationPoolOptions, requireOrganizationId } = require("./lib/organization-runtime");
 
 const PROJECT_DIR = path.join(__dirname, "..");
-const DATA_DIR = path.join(PROJECT_DIR, "data");
-const API_KEY_PATH = path.join(DATA_DIR, "wb-api-key.txt");
+const ORGANIZATION_ID = requireOrganizationId();
+const DATA_DIR = ensureOrganizationDataDir(PROJECT_DIR, ORGANIZATION_ID);
+const API_KEY_PATH = organizationDataPath(PROJECT_DIR, "wb-api-key.txt", ORGANIZATION_ID);
 
 function loadEnvFile(filePath) {
   try {
@@ -37,6 +39,7 @@ function getPgPool() {
     if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required when MPHUB_DB_ENGINE=postgres");
     pgPool = new Pool({
       connectionString: process.env.DATABASE_URL,
+      options: organizationPoolOptions(ORGANIZATION_ID),
       max: Number(process.env.PGPOOL_MAX || 5),
       application_name: process.env.PGAPPNAME || "mphub-data-health",
     });
@@ -143,6 +146,17 @@ function checkLogFreshness(checks, { id, name, logPath, okPattern, errorPattern,
     return;
   }
   addCheck(checks, id, name, "ok", `OK ${formatAge(lastOkAge)}`, state.lastOk.line);
+}
+
+function checkShipmentSyncLog(checks) {
+  checkLogFreshness(checks, {
+    id: "cron_shipment_sync",
+    name: "Cron shipment-sync",
+    logPath: path.join(DATA_DIR, "shipment-sync.log"),
+    okPattern: /Sync OK: .*"stockSkipped"\s*:\s*false/i,
+    errorPattern: /"stockSkipped"\s*:\s*true|ERROR: sync failed|ERROR: API key|ERROR: MpHub app/i,
+    maxOkAgeMin: 130,
+  });
 }
 
 async function pgGet(sql, params = []) {
@@ -350,13 +364,15 @@ function checkCronLogs(checks) {
     maxOkAgeMin: 96 * 60,
   });
 
+  checkShipmentSyncLog(checks);
+
   checkLogFreshness(checks, {
-    id: "cron_shipment_sync",
-    name: "Cron shipment-sync",
-    logPath: path.join(DATA_DIR, "shipment-sync.log"),
-    okPattern: /Sync OK/i,
-    errorPattern: /ERROR: sync failed|ERROR: API key|ERROR: MpHub app/i,
-    maxOkAgeMin: 130,
+    id: "cron_supply_reports_sync",
+    name: "Cron supply-reports",
+    logPath: path.join(DATA_DIR, "supply-reports-sync.log"),
+    okPattern: /Supply reports sync OK/i,
+    errorPattern: /ERROR: supply reports sync failed|ERROR|CRITICAL|Traceback/i,
+    maxOkAgeMin: 36 * 60,
   });
 
   checkLogFreshness(checks, {
@@ -372,7 +388,7 @@ function checkCronLogs(checks) {
     id: "cron_reviews_complaints",
     name: "Cron автожалобы",
     logPath: path.join(DATA_DIR, "reviews-complaints.log"),
-    okPattern: /Auto-complaints finished/i,
+    okPattern: /Auto-complaints finished|No accounts with auto_complaints enabled/i,
     errorPattern: /ERROR|CRITICAL|Traceback/i,
     maxOkAgeMin: 90,
   });

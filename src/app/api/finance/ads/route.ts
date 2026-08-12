@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { pgRows } from "@/lib/postgres";
 
@@ -10,6 +10,7 @@ import { pgRows } from "@/lib/postgres";
 export async function GET(request: NextRequest) {
   const authError = await requireAdmin(request);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(request);
 
   const { searchParams } = new URL(request.url);
   const dateFrom = searchParams.get("from") || "2026-03-02";

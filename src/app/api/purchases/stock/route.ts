@@ -2,10 +2,12 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
+import { getActiveOrganizationId } from "@/lib/organization-context";
+import { getOrganizationDataPath } from "@/lib/organization-paths";
 
-const SPREADSHEET_ID = process.env.PURCHASES_STOCK_SPREADSHEET_ID || "1wJeiTYl6rRX3Ij7qcNfRFAV2DYIYj7PS-BR5L9QLyA4";
-const WAREHOUSE_SPREADSHEET_ID = process.env.WAREHOUSE_SPREADSHEET_ID || "1BXtl8hX_mp2sbde9lzkF_uS43WCnnSn_wNNxcse9daM";
+const LEGACY_SPREADSHEET_ID = "1wJeiTYl6rRX3Ij7qcNfRFAV2DYIYj7PS-BR5L9QLyA4";
+const LEGACY_WAREHOUSE_SPREADSHEET_ID = "1BXtl8hX_mp2sbde9lzkF_uS43WCnnSn_wNNxcse9daM";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
 const RANGE = "A1:Y120";
 const WAREHOUSE_RANGE = "A1:N120";
@@ -20,8 +22,44 @@ function base64Url(value: string | object) {
   return Buffer.from(typeof value === "string" ? value : JSON.stringify(value)).toString("base64url");
 }
 
-async function getAccessToken() {
-  const key = JSON.parse(fs.readFileSync(path.join(process.cwd(), "data", "google-service-account.json"), "utf8")) as { client_email: string; private_key: string };
+interface PurchasesStockConfiguration {
+  spreadsheetId: string;
+  warehouseSpreadsheetId: string;
+  serviceAccountPath: string;
+}
+
+function getPurchasesStockConfiguration(): PurchasesStockConfiguration | null {
+  const organizationId = getActiveOrganizationId();
+  if (!organizationId) throw new Error("Organization context is required for purchases stock");
+
+  const serviceAccountPath = getOrganizationDataPath("google-service-account.json", organizationId);
+  const configPath = getOrganizationDataPath("purchases-stock-config.json", organizationId);
+  if (organizationId !== 1) {
+    if (!fs.existsSync(serviceAccountPath) || !fs.existsSync(configPath)) return null;
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
+      purchasesStockSpreadsheetId?: unknown;
+      warehouseSpreadsheetId?: unknown;
+    };
+    const spreadsheetId = String(config.purchasesStockSpreadsheetId || "").trim();
+    const warehouseSpreadsheetId = String(config.warehouseSpreadsheetId || "").trim();
+    if (!spreadsheetId || !warehouseSpreadsheetId) return null;
+    return { spreadsheetId, warehouseSpreadsheetId, serviceAccountPath };
+  }
+
+  const legacyServiceAccountPath = path.join(process.cwd(), "data", "google-service-account.json");
+  const resolvedServiceAccountPath = fs.existsSync(serviceAccountPath)
+    ? serviceAccountPath
+    : legacyServiceAccountPath;
+  if (!fs.existsSync(resolvedServiceAccountPath)) return null;
+  return {
+    spreadsheetId: process.env.PURCHASES_STOCK_SPREADSHEET_ID || LEGACY_SPREADSHEET_ID,
+    warehouseSpreadsheetId: process.env.WAREHOUSE_SPREADSHEET_ID || LEGACY_WAREHOUSE_SPREADSHEET_ID,
+    serviceAccountPath: resolvedServiceAccountPath,
+  };
+}
+
+async function getAccessToken(serviceAccountPath: string) {
+  const key = JSON.parse(fs.readFileSync(serviceAccountPath, "utf8")) as { client_email: string; private_key: string };
   const now = Math.floor(Date.now() / 1000);
   const unsigned = `${base64Url({ alg: "RS256", typ: "JWT" })}.${base64Url({
     iss: key.client_email,
@@ -388,13 +426,13 @@ function parseWarehouseArticleConfig(sheetName: string, rows: unknown[][]) {
   };
 }
 
-async function fetchWarehouseArticleConfigs(accessToken: string) {
+async function fetchWarehouseArticleConfigs(accessToken: string, spreadsheetId: string) {
   const metaParams = new URLSearchParams({
     fields: "properties.title,sheets.properties(title)",
     includeGridData: "false",
   });
   const metaResponse = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${WAREHOUSE_SPREADSHEET_ID}?${metaParams}`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?${metaParams}`,
     { headers: { authorization: `Bearer ${accessToken}` } }
   );
   const meta = await metaResponse.json();
@@ -410,7 +448,7 @@ async function fetchWarehouseArticleConfigs(accessToken: string) {
   sheetTitles.forEach((title) => params.append("ranges", quoteSheetRange(title, WAREHOUSE_RANGE)));
 
   const valuesResponse = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${WAREHOUSE_SPREADSHEET_ID}/values:batchGet?${params}`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?${params}`,
     { headers: { authorization: `Bearer ${accessToken}` } }
   );
   const values = await valuesResponse.json();
@@ -425,16 +463,29 @@ async function fetchWarehouseArticleConfigs(accessToken: string) {
 export async function GET(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
 
   try {
-    const accessToken = await getAccessToken();
+    const config = getPurchasesStockConfiguration();
+    if (!config) {
+      return NextResponse.json({
+        ok: true,
+        configured: false,
+        spreadsheetId: null,
+        sheets: [],
+        warehouseArticleConfigs: [],
+        warehouseConfigError: "",
+        updatedAt: null,
+      });
+    }
+    const accessToken = await getAccessToken(config.serviceAccountPath);
     const params = new URLSearchParams();
     SHEETS.forEach((sheet) => params.append("ranges", quoteSheetRange(sheet.title)));
     params.set("valueRenderOption", "UNFORMATTED_VALUE");
     params.set("dateTimeRenderOption", "FORMATTED_STRING");
 
     const response = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchGet?${params}`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}/values:batchGet?${params}`,
       { headers: { authorization: `Bearer ${accessToken}` } }
     );
     const data = await response.json();
@@ -447,14 +498,15 @@ export async function GET(req: NextRequest) {
     let warehouseArticleConfigs: Awaited<ReturnType<typeof fetchWarehouseArticleConfigs>> = [];
     let warehouseConfigError = "";
     try {
-      warehouseArticleConfigs = await fetchWarehouseArticleConfigs(accessToken);
+      warehouseArticleConfigs = await fetchWarehouseArticleConfigs(accessToken, config.warehouseSpreadsheetId);
     } catch (error) {
       warehouseConfigError = error instanceof Error ? error.message : String(error);
     }
 
     return NextResponse.json({
       ok: true,
-      spreadsheetId: SPREADSHEET_ID,
+      configured: true,
+      spreadsheetId: config.spreadsheetId,
       sheets,
       warehouseArticleConfigs,
       warehouseConfigError,

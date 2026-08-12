@@ -75,12 +75,16 @@ export interface DailyRow {
   sales_qty: number;
   returns_qty: number;
   net_qty: number;
+  retail_amount: number;
   commission: number;
   logistics: number;
   storage: number;
   penalty: number;
+  acceptance: number;
+  jam: number;
   ad_spend: number;
   cogs: number;
+  tax_total: number;
   profit: number;
 }
 

@@ -17,6 +17,7 @@ import { PackingSummaryTable, aggregatePackingByRegion, type ArticleLogisticsMet
 import { ArticleMultiSelect } from "./ArticleMultiSelect";
 import { buildWarehouseStockByBarcode } from "@/modules/shipment/lib/warehouse-ready-stock";
 import { applyManualSupplyDeductions, type ManualSupplyDeductByBarcode } from "@/modules/shipment/lib/manual-supply-deductions";
+import { filterStockByExcludedWarehouses } from "@/modules/shipment/lib/warehouse-stock-exclusions";
 
 const V2_BOX_ROUNDING_OPTIONS = Array.from({ length: 10 }, (_, i) => Math.round((i + 1) * 10) / 100);
 
@@ -165,6 +166,10 @@ export default function ShipmentCalcV2({
   });
   const [articleMetrics, setArticleMetrics] = useState<Record<string, ArticleLogisticsMetrics>>({});
   const [articleMetricsReady, setArticleMetricsReady] = useState(false);
+  const shipmentStock = useMemo(
+    () => filterStockByExcludedWarehouses(stock, settings.shipmentExcludedWarehouseNames),
+    [stock, settings.shipmentExcludedWarehouseNames],
+  );
 
   React.useEffect(() => {
     if (settings.v2RoundTo !== undefined) setV2BoxRounding(settings.v2RoundTo);
@@ -209,7 +214,7 @@ export default function ShipmentCalcV2({
 
   const { sortedProducts, orderTotals } = useMemo(() => {
     const stockTotals = new Map<string, number>();
-    for (const s of stock) {
+    for (const s of shipmentStock) {
       stockTotals.set(s.articleWB, (stockTotals.get(s.articleWB) || 0) + s.totalOnWarehouses);
     }
     const orderTotalsMap = new Map<string, number>();
@@ -225,7 +230,7 @@ export default function ShipmentCalcV2({
       sorted = sorted.filter((p) => (stockTotals.get(p.articleWB) || 0) > 0 || (orderTotalsMap.get(p.articleWB) || 0) > 0);
     }
     return { sortedProducts: sorted, orderTotals: orderTotalsMap };
-  }, [products, stock, orderAggregates, hideInactive]);
+  }, [products, shipmentStock, orderAggregates, hideInactive]);
 
   // Auto-select all products on first load
   React.useEffect(() => {
@@ -262,11 +267,11 @@ export default function ShipmentCalcV2({
   const uploadDays = settings.uploadDays ?? 28;
 
   const allCalculations = useMemo(() => {
-    if (!activeProducts.length || !stock.length) return [];
+    if (!activeProducts.length || !shipmentStock.length) return [];
     return activeProducts.map((p) =>
-      calculateShipmentV2(p, stock, orderAggregates, getBuyout(p.articleWB), effectiveRegions, overrides[p.articleWB], uploadDays)
+      calculateShipmentV2(p, shipmentStock, orderAggregates, getBuyout(p.articleWB), effectiveRegions, overrides[p.articleWB], uploadDays)
     );
-  }, [activeProducts, stock, orderAggregates, effectiveRegions, overrides, getBuyout, uploadDays]);
+  }, [activeProducts, shipmentStock, orderAggregates, effectiveRegions, overrides, getBuyout, uploadDays]);
 
   const articleMultipliers = useMemo(() => {
     const next: Record<string, number> = {};
@@ -277,9 +282,9 @@ export default function ShipmentCalcV2({
   }, [allCalculations]);
 
   const singleCalc: ShipmentCalculationV2 | null = useMemo(() => {
-    if (isAllMode || !product || stock.length === 0) return null;
-    return calculateShipmentV2(product, stock, orderAggregates, getBuyout(product.articleWB), effectiveRegions, overrides[product.articleWB], uploadDays);
-  }, [product, isAllMode, stock, orderAggregates, effectiveRegions, overrides, getBuyout, uploadDays]);
+    if (isAllMode || !product || shipmentStock.length === 0) return null;
+    return calculateShipmentV2(product, shipmentStock, orderAggregates, getBuyout(product.articleWB), effectiveRegions, overrides[product.articleWB], uploadDays);
+  }, [product, isAllMode, shipmentStock, orderAggregates, effectiveRegions, overrides, getBuyout, uploadDays]);
 
   // Merged rows and trend for "all" mode
   const { effectiveRows: baseEffectiveRows, effectiveRowsV1: baseEffectiveRowsV1, effectiveTrend, effectiveRegionConfigs } = useMemo(() => {

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { getComplaintByReviewIdPg } from "@/lib/reviews-db";
 
 /**
@@ -13,6 +13,7 @@ import { getComplaintByReviewIdPg } from "@/lib/reviews-db";
 export async function GET(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
 
   const reviewId = Number(req.nextUrl.searchParams.get("review_id"));
   if (!reviewId) {

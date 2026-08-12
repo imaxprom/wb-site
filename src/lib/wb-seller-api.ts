@@ -5,10 +5,19 @@
 import fs from "fs";
 import path from "path";
 import { ensurePrivateDir, writeSecretFileSync } from "./secure-file";
+import { getActiveOrganizationId } from "./organization-context";
+import { getOrganizationDataDir, getOrganizationDataPath } from "./organization-paths";
 
-const TOKEN_PATH = path.join(process.cwd(), "data", "wb-tokens.json");
-const DATA_DIR = path.join(process.cwd(), "data");
-const REPORTS_DIR = path.join(DATA_DIR, "reports");
+const LEGACY_TOKEN_PATH = path.join(process.cwd(), "data", "wb-tokens.json");
+
+function tokenPath(): string {
+  const organizationId = getActiveOrganizationId();
+  return organizationId ? getOrganizationDataPath("wb-tokens.json", organizationId) : LEGACY_TOKEN_PATH;
+}
+
+function reportsDir(): string {
+  return path.join(getOrganizationDataDir(), "reports");
+}
 
 // --- Token storage ---
 
@@ -24,13 +33,17 @@ export interface WbTokens {
 }
 
 function ensureDirs() {
-  ensurePrivateDir(DATA_DIR);
-  if (!fs.existsSync(REPORTS_DIR)) fs.mkdirSync(REPORTS_DIR, { recursive: true });
+  ensurePrivateDir(getOrganizationDataDir());
+  ensurePrivateDir(reportsDir());
 }
 
 export function saveTokens(tokens: WbTokens): void {
   ensureDirs();
-  writeSecretFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
+  const scopedPath = tokenPath();
+  writeSecretFileSync(scopedPath, JSON.stringify(tokens, null, 2));
+  if (getActiveOrganizationId() === 1) {
+    writeSecretFileSync(LEGACY_TOKEN_PATH, JSON.stringify(tokens, null, 2));
+  }
 }
 
 /**
@@ -65,16 +78,26 @@ export async function saveAuthTokensCommon(authToken: string, cookieString: stri
 }
 
 export function loadTokens(): WbTokens | null {
-  if (!fs.existsSync(TOKEN_PATH)) return null;
+  const organizationId = getActiveOrganizationId();
+  const scopedPath = tokenPath();
+  const candidatePaths = [scopedPath];
+  if (organizationId === 1 && scopedPath !== LEGACY_TOKEN_PATH) candidatePaths.push(LEGACY_TOKEN_PATH);
   try {
-    return JSON.parse(fs.readFileSync(TOKEN_PATH, "utf-8")) as WbTokens;
+    for (const candidatePath of candidatePaths) {
+      if (!fs.existsSync(candidatePath)) continue;
+      return JSON.parse(fs.readFileSync(candidatePath, "utf-8")) as WbTokens;
+    }
+    return null;
   } catch {
     return null;
   }
 }
 
 export function clearTokens(): void {
-  if (fs.existsSync(TOKEN_PATH)) fs.unlinkSync(TOKEN_PATH);
+  const organizationId = getActiveOrganizationId();
+  const scopedPath = tokenPath();
+  if (fs.existsSync(scopedPath)) fs.unlinkSync(scopedPath);
+  if (organizationId === 1 && fs.existsSync(LEGACY_TOKEN_PATH)) fs.unlinkSync(LEGACY_TOKEN_PATH);
 }
 
 // --- JWT decode (no verification — just parse payload) ---
@@ -267,8 +290,9 @@ async function saveReportResponse(
   if (!/\.xlsx$/i.test(fileName)) fileName = `report-${reportId}.xlsx`;
 
   const buffer = Buffer.from(await res.arrayBuffer());
-  const filePath = path.resolve(REPORTS_DIR, fileName);
-  const reportsRoot = path.resolve(REPORTS_DIR);
+  const activeReportsDir = reportsDir();
+  const filePath = path.resolve(activeReportsDir, fileName);
+  const reportsRoot = path.resolve(activeReportsDir);
   if (!filePath.startsWith(reportsRoot + path.sep)) {
     return { ok: false, error: "Unsafe report filename" };
   }

@@ -66,6 +66,8 @@ export interface WarehouseReadyStockRow {
   barcode_match_reason?: string;
   target_sales_45d?: number;
   wb_stock_qty?: number;
+  wb_stock_total_qty?: number;
+  wb_stock_excluded_qty?: number;
   warehouse_required_units?: number;
   plan_pack_units?: number;
   plan_pack_boxes?: number | null;
@@ -208,6 +210,7 @@ export interface AppSettings {
   uploadDays?: number;
   warehousePackingDays?: number;
   warehousePackingMultiplier?: number;
+  shipmentExcludedWarehouseNames?: string[];
   logisticsSelectedWarehouseNames?: string[];
   logisticsWarehouseLimit?: number;
   maxArticlesPerBox?: number;

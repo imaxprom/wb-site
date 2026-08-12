@@ -578,12 +578,25 @@ export async function saveSupplySnapshotPg(input: SupplySnapshotInput): Promise<
 export function getSupplySnapshots(limit = 20, offset = 0): StoredSupplySnapshot[] {
   initShipmentTables();
   const d = getDb();
+  const endOffset = offset + limit;
   const rows = d.prepare(`
     SELECT supply_id, row_json, detail_json
-    FROM wb_supply_snapshots
-    ORDER BY list_position ASC, COALESCE(updated_date, supply_date, create_date) DESC, supply_id DESC
-    LIMIT ? OFFSET ?
-  `).all(limit, offset) as { supply_id: number; row_json: string; detail_json: string | null }[];
+    FROM (
+      SELECT
+        supply_id,
+        row_json,
+        detail_json,
+        list_position,
+        ROW_NUMBER() OVER (
+          PARTITION BY list_position
+          ORDER BY refreshed_at DESC, COALESCE(updated_date, supply_date, create_date) DESC, supply_id DESC
+        ) AS rn
+      FROM wb_supply_snapshots
+      WHERE list_position >= ? AND list_position < ?
+    )
+    WHERE rn = 1
+    ORDER BY list_position ASC
+  `).all(offset, endOffset) as { supply_id: number; row_json: string; detail_json: string | null }[];
 
   return rows.flatMap((row) => {
     try {
@@ -600,14 +613,27 @@ export function getSupplySnapshots(limit = 20, offset = 0): StoredSupplySnapshot
 
 export async function getSupplySnapshotsPg(limit = 20, offset = 0): Promise<StoredSupplySnapshot[]> {
   await initShipmentTablesPg();
+  const endOffset = offset + limit;
   let rows: { supply_id: number; row_json: string; detail_json: string | null }[] = [];
   try {
     rows = await pgRows<{ supply_id: number; row_json: string; detail_json: string | null }>(`
       SELECT supply_id, row_json, detail_json
-      FROM wb_supply_snapshots
-      ORDER BY list_position ASC, COALESCE(updated_date, supply_date, create_date) DESC, supply_id DESC
-      LIMIT ? OFFSET ?
-    `, [limit, offset]);
+      FROM (
+        SELECT
+          supply_id,
+          row_json,
+          detail_json,
+          list_position,
+          ROW_NUMBER() OVER (
+            PARTITION BY list_position
+            ORDER BY refreshed_at DESC, COALESCE(updated_date, supply_date, create_date) DESC, supply_id DESC
+          ) AS rn
+        FROM wb_supply_snapshots
+        WHERE list_position >= ? AND list_position < ?
+      ) ranked
+      WHERE rn = 1
+      ORDER BY list_position ASC
+    `, [offset, endOffset]);
   } catch (error) {
     if (error instanceof Error && /relation .* does not exist/i.test(error.message)) return [];
     throw error;
@@ -1049,69 +1075,86 @@ export function saveStock(stock: StockItem[]): { total: number; written: number;
 export async function saveStockPg(stock: StockItem[]): Promise<{ total: number; written: number; skipped: number }> {
   await initShipmentTablesPg();
   assertPostgresWritable();
-  const existingRows = await pgRows<{ barcode: string; warehouse: string; quantity: number }>(
-    "SELECT barcode, warehouse, quantity FROM shipment_stock"
-  );
-  const existing = new Map(existingRows.map(r => [`${r.barcode}|${r.warehouse}`, r.quantity]));
 
   const now = new Date().toISOString();
-  let total = 0;
-  let written = 0;
-  let skipped = 0;
+  type StockRowArgs = {
+    barcode: string;
+    articleWB: string;
+    articleSeller: string;
+    brand: string;
+    size: string;
+    warehouse: string;
+    quantity: number;
+  };
 
-  await withPgTransaction(async (client) => {
-    const writeRow = async (args: { barcode: string; articleWB: string; articleSeller: string; brand: string; size: string; warehouse: string; quantity: number }) => {
-      total++;
-      const key = `${args.barcode}|${args.warehouse}`;
-      const prevQty = existing.get(key);
-      if (prevQty !== undefined && prevQty === args.quantity) {
-        skipped++;
-        return;
-      }
-      await client.query(`
-        INSERT INTO shipment_stock
-          (barcode, article_wb, article_seller, brand, size, warehouse, quantity, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        ON CONFLICT(barcode, warehouse) DO UPDATE SET
-          article_wb = EXCLUDED.article_wb,
-          article_seller = EXCLUDED.article_seller,
-          brand = EXCLUDED.brand,
-          size = EXCLUDED.size,
-          quantity = EXCLUDED.quantity,
-          updated_at = EXCLUDED.updated_at
-      `, [args.barcode, args.articleWB, args.articleSeller, args.brand, args.size, args.warehouse, args.quantity, now]);
-      written++;
-    };
+  const rowsByKey = new Map<string, StockRowArgs>();
+  const addRow = (args: StockRowArgs) => {
+    if (!args.barcode || !args.warehouse || !args.quantity) return;
+    const key = `${args.barcode}|${args.warehouse}`;
+    const existing = rowsByKey.get(key);
+    if (existing) {
+      existing.quantity += args.quantity;
+      existing.articleWB ||= args.articleWB;
+      existing.articleSeller ||= args.articleSeller;
+      existing.brand ||= args.brand;
+      existing.size ||= args.size;
+      return;
+    }
+    rowsByKey.set(key, { ...args });
+  };
 
-    for (const s of stock) {
-      const warehouses = Object.entries(s.warehouseStock);
-      if (warehouses.length > 0) {
-        for (const [warehouse, quantity] of warehouses) {
-          await writeRow({
-            barcode: s.barcode,
-            articleWB: s.articleWB,
-            articleSeller: s.articleSeller,
-            brand: s.brand,
-            size: s.size,
-            warehouse,
-            quantity,
-          });
-        }
-      } else {
-        await writeRow({
+  for (const s of stock) {
+    const warehouses = Object.entries(s.warehouseStock);
+    if (warehouses.length > 0) {
+      for (const [warehouse, quantity] of warehouses) {
+        addRow({
           barcode: s.barcode,
           articleWB: s.articleWB,
           articleSeller: s.articleSeller,
           brand: s.brand,
           size: s.size,
-          warehouse: "",
-          quantity: s.totalOnWarehouses,
+          warehouse,
+          quantity,
         });
       }
+    } else {
+      addRow({
+        barcode: s.barcode,
+        articleWB: s.articleWB,
+        articleSeller: s.articleSeller,
+        brand: s.brand,
+        size: s.size,
+        warehouse: "",
+        quantity: s.totalOnWarehouses,
+      });
+    }
+  }
+
+  const rows = Array.from(rowsByKey.values());
+  if (rows.length === 0) {
+    return { total: 0, written: 0, skipped: 0 };
+  }
+
+  let written = 0;
+
+  await withPgTransaction(async (client) => {
+    await client.query("DELETE FROM shipment_stock");
+
+    const writeRow = async (args: StockRowArgs) => {
+      await client.query(`
+        INSERT INTO shipment_stock
+          (barcode, article_wb, article_seller, brand, size, warehouse, quantity, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `, [args.barcode, args.articleWB, args.articleSeller, args.brand, args.size, args.warehouse, args.quantity, now]);
+      written++;
+    };
+
+    for (const row of rows) {
+      await writeRow(row);
     }
   });
 
-  return { total, written, skipped };
+  return { total: rows.length, written, skipped: 0 };
 }
 
 export function saveProducts(products: Product[]): { total: number; written: number; skipped: number } {

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
 import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 import { getWbApiKeyFromRequest } from "@/lib/wb-api-key";
@@ -31,6 +31,7 @@ function listDates(dateFrom: string, dateTo: string): string[] {
 export async function POST(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
   const readonlyError = localReadonlyGuard("WB advertising sync");
   if (readonlyError) return readonlyError;
 
@@ -65,6 +66,7 @@ export async function POST(req: NextRequest) {
 export async function GET(req: NextRequest) {
   const authError = await requireAdmin(req);
   if (authError) return authError;
+  activateAuthenticatedRequestContext(req);
 
   const dateFrom = req.nextUrl.searchParams.get("from") || "2026-03-01";
   const dateTo = req.nextUrl.searchParams.get("to") || "2026-12-31";

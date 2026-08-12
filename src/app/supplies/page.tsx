@@ -159,8 +159,8 @@ export default function SuppliesPage() {
   const [packageLoading, setPackageLoading] = useState<Record<string, boolean>>({});
   const [packageErrors, setPackageErrors] = useState<Record<string, string>>({});
 
-  const loadSupplies = useCallback(async () => {
-    const res = await fetch("/api/supplies?limit=20", { cache: "no-store" });
+  const loadSupplies = useCallback(async (forceRefresh = false) => {
+    const res = await fetch(`/api/supplies?limit=20${forceRefresh ? "&refresh=1" : ""}`, { cache: "no-store" });
     const payload = await res.json().catch(() => ({}));
     if (!res.ok) {
       throw new Error(payload.error || `HTTP ${res.status}`);
@@ -187,7 +187,7 @@ export default function SuppliesPage() {
     setRefreshing(true);
     setError("");
     try {
-      await loadSupplies();
+      await loadSupplies(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Не удалось обновить поставки");
     } finally {

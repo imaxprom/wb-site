@@ -1,34 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getUserByIdPg, initShipmentTablesPg } from "@/lib/shipment-db";
-import { verifyToken } from "@/lib/auth";
-import { isPostgresReadonlyConnection } from "@/lib/postgres";
-
-const DEV_READONLY_ADMIN_ID = 7218;
+import { getAuthenticatedRequestContext } from "@/lib/api-auth";
+import { getUserOrganization } from "@/lib/organization-db";
 
 export async function GET(req: NextRequest) {
-  const token = req.cookies.get("mphub-token")?.value;
-  if (!token) {
+  const context = await getAuthenticatedRequestContext(req);
+  if (!context) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const payload = verifyToken(token);
-  if (!payload) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const organization = await getUserOrganization(context.userId, context.organizationId);
 
-  if (
-    process.env.NODE_ENV !== "production" &&
-    isPostgresReadonlyConnection() &&
-    payload.userId === DEV_READONLY_ADMIN_ID
-  ) {
-    return NextResponse.json({ id: DEV_READONLY_ADMIN_ID, email: "admin", name: "Максим", role: "admin" });
-  }
-
-  await initShipmentTablesPg();
-  const user = await getUserByIdPg(payload.userId);
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  return NextResponse.json({ id: user.id, email: user.email, name: user.name, role: user.role });
+  return NextResponse.json({
+    id: context.userId,
+    email: context.userEmail,
+    name: context.userName,
+    role: context.userRole,
+    organizationRole: context.organizationRole,
+    organization: organization ? {
+      id: organization.id,
+      slug: organization.slug,
+      displayName: organization.display_name,
+      legalName: organization.legal_name,
+      inn: organization.inn,
+      supplierId: organization.supplier_id,
+      storeName: organization.store_name,
+    } : null,
+  });
 }

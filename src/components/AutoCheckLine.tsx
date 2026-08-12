@@ -14,15 +14,34 @@ interface AuthStatus {
  * Маленькая строчка "Автопроверка в 22:00 МСК: ✓/✕ ...".
  * Читает результат последнего запуска scripts/auth-check.js.
  */
-export function AutoCheckLine({ channel }: { channel: "api" | "lk" }) {
+export function AutoCheckLine({ channel, liveOk = false }: { channel: "api" | "lk"; liveOk?: boolean }) {
   const [status, setStatus] = useState<AuthStatus | null>(null);
 
   useEffect(() => {
-    fetch("/api/monitor/auth-status")
+    fetch(`/api/monitor/auth-status?ts=${Date.now()}`, { cache: "no-store" })
       .then((r) => r.json())
       .then(setStatus)
       .catch(() => {});
-  }, []);
+  }, [liveOk]);
+
+  if (channel === "lk" && liveOk) {
+    const when = status?.checkedAt
+      ? new Date(status.checkedAt).toLocaleString("ru-RU", {
+          day: "2-digit",
+          month: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          timeZone: "Europe/Moscow",
+        })
+      : null;
+
+    return (
+      <p className="text-xs text-[var(--text-muted)] mt-2">
+        Текущая сессия WB: <span className="text-[var(--success)]">✓ активна</span>
+        {when ? ` · автопроверка ${when}` : ""}
+      </p>
+    );
+  }
 
   if (!status || !status.checkedAt) {
     return (

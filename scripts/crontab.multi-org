@@ -1,0 +1,20 @@
+# MpHub multi-organization scheduler. Background business jobs are dispatched
+# sequentially for every organization with status=active.
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+3 * * * * cd /home/makson/current && /usr/bin/node scripts/run-for-organizations.js -- /bin/bash scripts/daily-sync-api.sh > /dev/null 2>&1
+12 7-20 * * 1-3 cd /home/makson/current && /usr/bin/node scripts/run-for-organizations.js -- /usr/bin/node scripts/sync-weekly-report.js > /dev/null 2>&1
+23 * * * * cd /home/makson/current && /usr/bin/node scripts/run-for-organizations.js -- /bin/bash scripts/shipment-sync.sh > /dev/null 2>&1
+*/15 * * * * cd /home/makson/current && /usr/bin/node scripts/run-for-organizations.js -- /usr/bin/node scripts/reviews-sync.js > /dev/null 2>&1
+*/30 * * * * cd /home/makson/current && /usr/bin/node scripts/run-for-organizations.js -- /usr/bin/node scripts/reviews-complaints.js > /dev/null 2>&1
+0 19 * * * cd /home/makson/current && /usr/bin/node scripts/run-for-organizations.js -- /usr/bin/node scripts/auth-check.js > /dev/null 2>&1
+0 2 * * * cd /home/makson/current && /usr/bin/node scripts/run-for-organizations.js -- /usr/bin/node scripts/paid-storage-sync.js > /dev/null 2>&1
+0 3,6,9,12,15,18 * * * cd /home/makson/current && /usr/bin/node scripts/run-for-organizations.js -- /usr/bin/node scripts/logistics-volume-sync.js --source remains > /dev/null 2>&1
+10 3,6,9,12,15,18 * * * cd /home/makson/current && /usr/bin/node scripts/run-for-organizations.js -- /usr/bin/node scripts/logistics-volume-sync.js --source measurements > /dev/null 2>&1
+0 5 * * * cd /home/makson/current && /usr/bin/node scripts/run-for-organizations.js -- /bin/bash scripts/supply-reports-sync.sh > /dev/null 2>&1
+0 3,11,19 * * * cd /home/makson/current && /bin/bash scripts/cart-stock-sync.sh > /dev/null 2>&1
+* * * * * cd /home/makson/current && /bin/bash scripts/fbs-stock-sync.sh > /dev/null 2>&1
+
+*/5 * * * * cd /home/makson/current && /usr/bin/python3 scripts/vps-watchdog.py >> data/watchdog.log 2>&1
+42 * * * * cd /home/makson/current && /bin/bash scripts/data-health-cron.sh >> data/data-health-cron.log 2>&1

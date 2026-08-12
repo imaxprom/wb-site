@@ -14,6 +14,7 @@ import type { ShipmentRowExtended } from "@/types";
 import { ArticleMultiSelect } from "./ArticleMultiSelect";
 import { buildWarehouseStockByBarcode } from "@/modules/shipment/lib/warehouse-ready-stock";
 import { applyManualSupplyDeductions, type ManualSupplyDeductByBarcode } from "@/modules/shipment/lib/manual-supply-deductions";
+import { filterStockByExcludedWarehouses } from "@/modules/shipment/lib/warehouse-stock-exclusions";
 
 // ─── Packing Visualization ──────────────────────────────────
 
@@ -472,6 +473,10 @@ export default function ShipmentCalcV3({
   const [minUnits, setMinUnits] = useState(settings.minUnits ?? 10);
   const [roundTo, setRoundTo] = useState(settings.roundTo ?? 5);
   const [stockByBarcode, setStockByBarcode] = useState<Record<string, string>>({});
+  const shipmentStock = useMemo(
+    () => filterStockByExcludedWarehouses(stock, settings.shipmentExcludedWarehouseNames),
+    [stock, settings.shipmentExcludedWarehouseNames],
+  );
 
   // Sync local state when settings load from API
   React.useEffect(() => {
@@ -491,7 +496,7 @@ export default function ShipmentCalcV3({
 
   const { sortedProducts, stockTotals, orderTotals } = useMemo(() => {
     const st = new Map<string, number>();
-    for (const s of stock) {
+    for (const s of shipmentStock) {
       st.set(s.articleWB, (st.get(s.articleWB) || 0) + s.totalOnWarehouses);
     }
     const ot = new Map<string, number>();
@@ -504,7 +509,7 @@ export default function ShipmentCalcV3({
     }
     const sorted = [...products].sort((a, b) => (ot.get(b.articleWB) || 0) - (ot.get(a.articleWB) || 0));
     return { sortedProducts: sorted, stockTotals: st, orderTotals: ot };
-  }, [products, stock, orderAggregates]);
+  }, [products, shipmentStock, orderAggregates]);
 
   const filteredProducts = useMemo(() => {
     if (!hideInactive) return sortedProducts;
@@ -532,19 +537,19 @@ export default function ShipmentCalcV3({
 
   // Calculate V2 for active products
   const allCalcs = useMemo(() => {
-    if (stock.length === 0 || activeProducts.length === 0) return [];
+    if (shipmentStock.length === 0 || activeProducts.length === 0) return [];
     return activeProducts.map((p) =>
-      calculateShipmentV2(p, stock, orderAggregates, getBuyout(p.articleWB), effectiveRegions, overrides[p.articleWB], uploadDays)
+      calculateShipmentV2(p, shipmentStock, orderAggregates, getBuyout(p.articleWB), effectiveRegions, overrides[p.articleWB], uploadDays)
     );
-  }, [activeProducts, stock, orderAggregates, effectiveRegions, overrides, getBuyout, uploadDays]);
+  }, [activeProducts, shipmentStock, orderAggregates, effectiveRegions, overrides, getBuyout, uploadDays]);
 
   // Single product calc (when exactly 1 selected)
   const singleCalc: ShipmentCalculationV2 | null = useMemo(() => {
     if (isAllMode || activeProducts.length !== 1) return null;
     const prod = activeProducts[0];
-    if (!prod || stock.length === 0) return null;
-    return calculateShipmentV2(prod, stock, orderAggregates, getBuyout(prod.articleWB), effectiveRegions, overrides[prod.articleWB], uploadDays);
-  }, [activeProducts, isAllMode, stock, orderAggregates, effectiveRegions, overrides, getBuyout, uploadDays]);
+    if (!prod || shipmentStock.length === 0) return null;
+    return calculateShipmentV2(prod, shipmentStock, orderAggregates, getBuyout(prod.articleWB), effectiveRegions, overrides[prod.articleWB], uploadDays);
+  }, [activeProducts, isAllMode, shipmentStock, orderAggregates, effectiveRegions, overrides, getBuyout, uploadDays]);
 
   // Effective rows and trend
   const { rows: baseRows, trend, regionConfigs } = useMemo<{ rows: ShipmentRowExtended[]; trend: TrendResult | null; regionConfigs: typeof effectiveRegions }>(() => {

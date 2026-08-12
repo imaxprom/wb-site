@@ -5,10 +5,14 @@ import { useData } from "@/components/DataProvider";
 import { ALL_DISTRICTS, getDefaultRegionGroups, toRegionConfigs, shortDistrict } from "@/modules/shipment/lib/engine";
 import { DistrictPicker } from "@/modules/shipment/components/DistrictPicker";
 import { useBuyoutRates } from "@/modules/shipment/lib/use-effective-buyout";
+import {
+  normalizeExcludedWarehouseNames,
+  summarizeWarehouseStock,
+} from "@/modules/shipment/lib/warehouse-stock-exclusions";
 import type { RegionGroup } from "@/types";
 
 export default function ShipmentSettings() {
-  const { settings, orderAggregates, updateSettings } = useData();
+  const { settings, stock, orderAggregates, updateSettings } = useData();
   // WB warehouse → federal district map (from /api/v1/tariffs/box)
   const [whToDistrict, setWhToDistrict] = useState<Record<string, string>>({});
 
@@ -67,6 +71,35 @@ export default function ShipmentSettings() {
   const [saved, setSaved] = useState(false);
   const [pickerGroupId, setPickerGroupId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [excludedWarehouses, setExcludedWarehouses] = useState<string[]>(
+    normalizeExcludedWarehouseNames(settings.shipmentExcludedWarehouseNames),
+  );
+  const [warehouseSearch, setWarehouseSearch] = useState("");
+
+  useEffect(() => {
+    setExcludedWarehouses(normalizeExcludedWarehouseNames(settings.shipmentExcludedWarehouseNames));
+  }, [settings.shipmentExcludedWarehouseNames]);
+
+  const warehouseStockSummary = useMemo(
+    () => summarizeWarehouseStock(stock, excludedWarehouses, Object.keys(whToDistrict)),
+    [stock, excludedWarehouses, whToDistrict],
+  );
+  const visibleWarehouseRows = useMemo(() => {
+    const query = warehouseSearch.trim().toLocaleLowerCase("ru");
+    if (!query) return warehouseStockSummary.rows;
+    return warehouseStockSummary.rows.filter((row) =>
+      row.name.toLocaleLowerCase("ru").includes(query),
+    );
+  }, [warehouseSearch, warehouseStockSummary.rows]);
+
+  const toggleWarehouseExcluded = (warehouse: string) => {
+    setExcludedWarehouses((current) => {
+      const next = new Set(current);
+      if (next.has(warehouse)) next.delete(warehouse);
+      else next.add(warehouse);
+      return normalizeExcludedWarehouseNames([...next]);
+    });
+  };
 
   const toggleExpanded = (key: string) => {
     setExpanded((prev) => {
@@ -164,7 +197,7 @@ export default function ShipmentSettings() {
   const totalPercent = groups.reduce((s, g) => s + g.manualPercentage * 100, 0);
   const pickerGroup = groups.find((g) => g.id === pickerGroupId);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     // Sync name/shortName to derived values from districts (source of truth)
     const normalized = groups.map((g) => {
       const derivedShort = g.districts.map(shortDistrict).join("+");
@@ -174,7 +207,7 @@ export default function ShipmentSettings() {
         shortName: derivedShort || g.shortName,
       };
     });
-    updateSettings({
+    await updateSettings({
       buyoutRate: buyoutRate / 100,
       regions: toRegionConfigs(normalized, regionMode, orderAggregates),
       regionGroups: normalized,
@@ -183,6 +216,7 @@ export default function ShipmentSettings() {
       boxLengthCm: boxLength,
       boxWidthCm: boxWidth,
       boxHeightCm: boxHeight,
+      shipmentExcludedWarehouseNames: normalizeExcludedWarehouseNames(excludedWarehouses),
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -263,39 +297,48 @@ export default function ShipmentSettings() {
         </button>
       </div>
 
+      {/* Primary shipment settings: one row with visually separated cards */}
+      <div className="grid grid-cols-1 items-stretch gap-3 xl:grid-cols-[220px_minmax(0,1fr)_minmax(0,1.2fr)]">
       {/* Box dimensions */}
-      <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
+      <section className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-5 xl:h-[560px]">
         <h3 className="font-medium mb-4">📦 Размер короба</h3>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <label className="text-sm text-[var(--text-muted)]">Длина</label>
-            <input type="number" value={boxLength} onChange={(e) => setBoxLength(Math.max(1, Number(e.target.value) || 60))}
-              className="w-16 bg-[var(--bg)] border border-[var(--border)] rounded px-2 py-1.5 text-center text-sm focus:outline-none focus:border-[var(--accent)]" />
-            <span className="text-sm text-[var(--text-muted)]">см</span>
-          </div>
-          <span className="text-[var(--text-muted)]">×</span>
-          <div className="flex items-center gap-2">
-            <label className="text-sm text-[var(--text-muted)]">Ширина</label>
-            <input type="number" value={boxWidth} onChange={(e) => setBoxWidth(Math.max(1, Number(e.target.value) || 40))}
-              className="w-16 bg-[var(--bg)] border border-[var(--border)] rounded px-2 py-1.5 text-center text-sm focus:outline-none focus:border-[var(--accent)]" />
-            <span className="text-sm text-[var(--text-muted)]">см</span>
-          </div>
-          <span className="text-[var(--text-muted)]">×</span>
-          <div className="flex items-center gap-2">
-            <label className="text-sm text-[var(--text-muted)]">Высота</label>
-            <input type="number" value={boxHeight} onChange={(e) => setBoxHeight(Math.max(1, Number(e.target.value) || 40))}
-              className="w-16 bg-[var(--bg)] border border-[var(--border)] rounded px-2 py-1.5 text-center text-sm focus:outline-none focus:border-[var(--accent)]" />
-            <span className="text-sm text-[var(--text-muted)]">см</span>
-          </div>
-          <div className="text-sm text-[var(--text-muted)] ml-2">
-            = {(boxLength * boxWidth * boxHeight / 1000).toFixed(1)} л
+        <div className="space-y-3">
+          <label className="block">
+            <span className="mb-1 block text-[10px] uppercase tracking-wide text-[var(--text-muted)]">Длина</span>
+            <div className="flex items-center gap-2">
+              <input type="number" value={boxLength} onChange={(e) => setBoxLength(Math.max(1, Number(e.target.value) || 60))}
+                className="min-w-0 flex-1 bg-[var(--bg)] border border-[var(--border)] rounded px-2 py-1.5 text-center text-sm focus:outline-none focus:border-[var(--accent)]" />
+              <span className="text-xs text-[var(--text-muted)]">см</span>
+            </div>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[10px] uppercase tracking-wide text-[var(--text-muted)]">Ширина</span>
+            <div className="flex items-center gap-2">
+              <input type="number" value={boxWidth} onChange={(e) => setBoxWidth(Math.max(1, Number(e.target.value) || 40))}
+                className="min-w-0 flex-1 bg-[var(--bg)] border border-[var(--border)] rounded px-2 py-1.5 text-center text-sm focus:outline-none focus:border-[var(--accent)]" />
+              <span className="text-xs text-[var(--text-muted)]">см</span>
+            </div>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[10px] uppercase tracking-wide text-[var(--text-muted)]">Высота</span>
+            <div className="flex items-center gap-2">
+              <input type="number" value={boxHeight} onChange={(e) => setBoxHeight(Math.max(1, Number(e.target.value) || 40))}
+                className="min-w-0 flex-1 bg-[var(--bg)] border border-[var(--border)] rounded px-2 py-1.5 text-center text-sm focus:outline-none focus:border-[var(--accent)]" />
+              <span className="text-xs text-[var(--text-muted)]">см</span>
+            </div>
+          </label>
+          <div>
+            <span className="mb-1 block text-[10px] uppercase tracking-wide text-[var(--text-muted)]">Общий объём</span>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-center text-sm">
+              <span className="font-semibold text-white">{(boxLength * boxWidth * boxHeight / 1000).toFixed(1)} л</span>
+            </div>
           </div>
         </div>
-      </div>
+      </section>
 
       {/* Buyout rate */}
-      <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
-        <div className="flex items-center justify-between mb-4">
+      <section className="flex min-h-0 flex-col rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-5 xl:h-[560px]">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <h3 className="font-medium">Процент выкупа</h3>
           <div className="flex rounded-lg border border-[var(--border)] overflow-hidden">
             <button
@@ -350,7 +393,7 @@ export default function ShipmentSettings() {
         )}
 
         {buyoutMode === "auto" && buyoutRates.length > 0 && (
-          <div className="mt-4 bg-[var(--bg)] border border-[var(--accent)]/20 rounded-lg p-3">
+          <div className="mt-4 flex min-h-0 flex-1 flex-col bg-[var(--bg)] border border-[var(--accent)]/20 rounded-lg p-3">
             <div className="flex items-baseline justify-between mb-2">
               <p className="text-xs text-[var(--accent)] font-medium">
                 Реальный % выкупа по артикулам
@@ -359,7 +402,7 @@ export default function ShipmentSettings() {
                 За последние 90 дней
               </p>
             </div>
-            <div className="overflow-auto max-h-48">
+            <div className="min-h-0 flex-1 overflow-auto">
               <table className="data-table text-xs">
                 <thead>
                   <tr>
@@ -397,6 +440,108 @@ export default function ShipmentSettings() {
             )}
           </div>
         )}
+      </section>
+
+      {/* Warehouses excluded from shipment stock calculations */}
+      <section className="flex min-h-0 flex-col rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-5 xl:h-[560px]">
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+          <div>
+            <h3 className="font-medium">Исключённые склады</h3>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">
+              По умолчанию учитываются все склады. Отметьте только те, остаток которых нельзя использовать в расчёте отгрузки.
+            </p>
+          </div>
+          {excludedWarehouses.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setExcludedWarehouses([])}
+              className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs text-[var(--text-muted)] transition-colors hover:border-[var(--accent)] hover:text-white"
+            >
+              Вернуть все в расчёт
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 mb-4">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2">
+            <p className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">Всего WB</p>
+            <p className="mt-1 text-lg font-semibold tabular-nums">
+              {warehouseStockSummary.totalUnits.toLocaleString("ru-RU")} шт.
+            </p>
+          </div>
+          <div className="rounded-lg border border-[var(--success)]/25 bg-[var(--success)]/5 px-3 py-2">
+            <p className="text-[10px] uppercase tracking-wide text-[var(--success)]">Учитывается</p>
+            <p className="mt-1 text-lg font-semibold tabular-nums text-[var(--success)]">
+              {warehouseStockSummary.includedUnits.toLocaleString("ru-RU")} шт.
+            </p>
+          </div>
+          <div className="rounded-lg border border-[var(--danger)]/25 bg-[var(--danger)]/5 px-3 py-2">
+            <p className="text-[10px] uppercase tracking-wide text-[var(--danger)]">
+              Исключено · {warehouseStockSummary.excludedWarehouseCount} скл.
+            </p>
+            <p className="mt-1 text-lg font-semibold tabular-nums text-[var(--danger)]">
+              {warehouseStockSummary.excludedUnits.toLocaleString("ru-RU")} шт.
+            </p>
+          </div>
+        </div>
+
+        <input
+          type="search"
+          value={warehouseSearch}
+          onChange={(event) => setWarehouseSearch(event.target.value)}
+          placeholder="Найти склад…"
+          className="mb-3 w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm focus:border-[var(--accent)] focus:outline-none"
+        />
+
+        <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-[var(--border)]">
+          {visibleWarehouseRows.map((row) => (
+            <label
+              key={row.name}
+              className={`flex cursor-pointer items-center gap-3 border-b border-[var(--border)] px-3 py-2.5 last:border-b-0 transition-colors hover:bg-[var(--bg-card-hover)] ${
+                row.excluded ? "bg-[var(--danger)]/5" : "bg-[var(--bg)]"
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={row.excluded}
+                onChange={() => toggleWarehouseExcluded(row.name)}
+                className="h-4 w-4 shrink-0 accent-[var(--danger)]"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={row.excluded ? "text-[var(--danger)]" : "text-white"}>
+                    {row.name}
+                  </span>
+                  {!row.presentInCurrentStock && (
+                    <span className="rounded bg-[var(--warning)]/10 px-1.5 py-0.5 text-[10px] text-[var(--warning)]">
+                      нет в текущей выгрузке
+                    </span>
+                  )}
+                </div>
+                <p className="text-[10px] text-[var(--text-muted)]">
+                  {row.articles.toLocaleString("ru-RU")} арт. · {row.barcodes.toLocaleString("ru-RU")} баркодов
+                </p>
+              </div>
+              <div className="shrink-0 text-right">
+                <p className="font-mono text-sm tabular-nums">{row.units.toLocaleString("ru-RU")} шт.</p>
+                <p className={`text-[10px] ${row.excluded ? "text-[var(--danger)]" : "text-[var(--success)]"}`}>
+                  {row.excluded ? "не учитывать" : "учитывать"}
+                </p>
+              </div>
+            </label>
+          ))}
+          {visibleWarehouseRows.length === 0 && (
+            <p className="px-3 py-8 text-center text-sm text-[var(--text-muted)]">
+              {stock.length === 0 ? "Нет загруженных остатков WB" : "Склады не найдены"}
+            </p>
+          )}
+        </div>
+
+        <p className="mt-3 text-[10px] leading-4 text-[var(--text-muted)]">
+          Исключение применяется только к расчёту отгрузки и плану упаковки. Полная выгрузка WB сохраняется без изменений.
+          Новые склады автоматически учитываются, пока вы их не исключите.
+        </p>
+      </section>
       </div>
 
       {/* Region Groups */}
