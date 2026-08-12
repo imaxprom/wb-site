@@ -73,7 +73,7 @@ docs/            — ТЗ и документация
 - `SOURCE_MODE=remote-current bash scripts/release-deploy.sh` — bootstrap/rebuild из уже работающего production-кода без подтягивания локальных dirty-файлов.
 - Старый `bash scripts/deploy.sh` + `scripts/prod-safe-build.sh` оставлены как fallback/clean rebuild: он останавливает PM2 до build, удаляет `.next` и поэтому медленнее/с большим простоем.
 - Старый `scripts/rebuild-server.sh` относится к локальной/macOS схеме и не является production deploy.
-- По состоянию на 2026-08-13 01:00 МСК production runtime работает в PostgreSQL mode (`MPHUB_DB_ENGINE=postgres`) и release-based deploy mode. Проверенный clean-baseline release: `/home/makson/releases/20260812-215802`, marker `production-baseline-2026-08-13-v2`; PM2 `mphub` online, cwd совпадает с active release, неожиданных рестартов нет. Размер source release снижен с 399 МБ примерно до 71 МБ.
+- По состоянию на 2026-08-13 01:05 МСК production runtime работает в PostgreSQL mode (`MPHUB_DB_ENGINE=postgres`) и release-based deploy mode. Проверенный clean-baseline release: `/home/makson/releases/20260812-220325`, marker `production-baseline-2026-08-13-final`; PM2 `mphub` online, cwd совпадает с active release, неожиданных рестартов нет. Размер source release снижен с 399 МБ примерно до 71 МБ.
 - `scripts/release-deploy.sh` валидирует обязательные файлы до build: `/api/data/products`, `/api/data/stock`, `/api/data/orders-aggregated`, `/api/data/meta`, `/api/data/sync`, `/shipment`, `DataProvider`, `public/data/docs.json`. Это защита от повторного вырезания `src/app/api/data/*` при staging/rsync.
 
 ## FBS склад

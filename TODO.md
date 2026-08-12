@@ -20,7 +20,7 @@ Last updated: 2026-08-13 00:56 MSK.
 
 ## Production Checks
 
-- Clean-baseline release `/home/makson/releases/20260812-215802` с marker `production-baseline-2026-08-13-v2` проверен; после следующего approved release PM2 должен работать из нового active cwd с нулём неожиданных рестартов.
+- Clean-baseline release `/home/makson/releases/20260812-220325` с marker `production-baseline-2026-08-13-final` проверен; после следующего approved release PM2 должен работать из нового active cwd с нулём неожиданных рестартов.
 - После baseline release проверить marker, PM2 cwd/restarts, `/login`, FBS portal login, обе организации и production 404 для debug/test URL.
 - Не возвращать в deploy runtime data/env, generated reports, Android build/APK/debug.keystore, `.codex` и локальные visual test routes.
 - Production snapshot at 23:44 MSK: shipment products 69, stock 922, orders 263364; reviews 159734; use a fresh snapshot for later factual answers.
