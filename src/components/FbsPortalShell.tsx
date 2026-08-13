@@ -130,9 +130,16 @@ export function FbsPortalShell({ children }: { children: React.ReactNode }) {
     {!mobileOpen && <button type="button" onClick={() => setMobileOpen(true)} className="fixed left-4 top-4 z-[80] flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--bg-card)] md:hidden" aria-label="Открыть меню">☰</button>}
     {mobileOpen && <button type="button" className="fixed inset-0 z-[50] bg-black/50 md:hidden" onClick={() => setMobileOpen(false)} aria-label="Закрыть меню" />}
     <aside onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} className={cn("fixed inset-y-0 left-0 z-[70] flex flex-col border-r border-[var(--border)] bg-[var(--bg-card)] transition-all duration-200", expanded ? "w-64" : "w-16", mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0")}>
-      <div className={cn("flex h-16 items-center border-b border-[var(--border)]", expanded ? "justify-between px-4" : "justify-center px-2")}>
-        {expanded ? <Link href="/fbs" className="flex items-center gap-2 text-xl font-bold"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--accent)] text-white"><Warehouse size={20} /></span><span>FBS Склад</span></Link> : <Warehouse className="text-[var(--accent)]" size={23} />}
-        {expanded && <button type="button" onClick={() => setPinned((value) => !value)} className={cn("hidden h-8 w-8 items-center justify-center rounded-lg md:flex", pinned ? "bg-[var(--accent)]/10 text-[var(--accent)]" : "text-[var(--text-muted)]")} aria-label={pinned ? "Свернуть меню" : "Закрепить меню"}>{pinned ? <Pin size={16} className="rotate-45" /> : <ChevronLeft size={18} />}</button>}
+      <div className={cn("border-b border-[var(--border)]", expanded ? "px-3 pb-3 pt-3" : "flex h-16 items-center justify-center px-2")}>
+        {expanded ? <>
+          <div className="flex min-h-10 items-center justify-between gap-2 px-1">
+            <Link href="/fbs" className="flex min-w-0 items-center gap-2 text-xl font-bold"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--accent)] text-white"><Warehouse size={20} /></span><span className="truncate">FBS Склад</span></Link>
+            <button type="button" onClick={() => setPinned((value) => !value)} className={cn("hidden h-8 w-8 shrink-0 items-center justify-center rounded-lg md:flex", pinned ? "bg-[var(--accent)]/10 text-[var(--accent)]" : "text-[var(--text-muted)]")} aria-label={pinned ? "Свернуть меню" : "Закрепить меню"}>{pinned ? <Pin size={16} className="rotate-45" /> : <ChevronLeft size={18} />}</button>
+          </div>
+          {payload && <select aria-label="Выбранное юрлицо" value={payload.activeOrganizationId} onChange={(event) => void switchOrganization(Number(event.target.value))} className="mt-2 w-full min-w-0 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3 py-2.5 font-medium">
+            {payload.organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.displayName}</option>)}
+          </select>}
+        </> : <Warehouse className="text-[var(--accent)]" size={23} />}
       </div>
       <nav className="flex-1 overflow-y-auto py-4">
         {primaryItems.map((item) => {
@@ -151,13 +158,6 @@ export function FbsPortalShell({ children }: { children: React.ReactNode }) {
         <button type="button" onClick={() => void logout()} title={expanded ? undefined : "Выйти"} className={cn("flex w-full items-center rounded-xl py-2.5 text-red-500 hover:bg-red-500/10", expanded ? "gap-3 px-3" : "justify-center")}><LogOut size={20} />{expanded && <span className="font-medium">Выйти</span>}</button>
       </div>
     </aside>
-    <header className={cn("fixed right-0 top-0 z-40 flex min-h-16 items-center justify-end gap-3 border-b border-[var(--border)] bg-[var(--bg-card)]/95 px-4 backdrop-blur transition-all md:px-6", pinned ? "left-0 md:left-64" : "left-0 md:left-16")}>
-      {payload && <>
-        <select value={payload.activeOrganizationId} onChange={(event) => void switchOrganization(Number(event.target.value))} className="max-w-[360px] rounded-xl border border-[var(--border)] bg-[var(--bg)] px-4 py-2.5 font-medium">
-          {payload.organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.displayName}</option>)}
-        </select>
-      </>}
-    </header>
-    <main className={cn("min-w-0 pt-20 transition-all", pinned ? "md:ml-64" : "md:ml-16")}>{children}</main>
+    <main className={cn("min-w-0 pt-14 transition-all md:pt-0", pinned ? "md:ml-64" : "md:ml-16")}>{children}</main>
   </div>;
 }
