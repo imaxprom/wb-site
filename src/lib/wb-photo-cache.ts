@@ -197,6 +197,9 @@ async function refreshPhoto(organizationId: number, nmId: number): Promise<Uint8
 
   const refresh = (async () => {
     let url = await resolvePhotoUrl(organizationId, nmId);
+    // A fresh authoritative catalog can legitimately contain a card without
+    // photos. Do not refetch the entire catalog on every page view in that case.
+    if (!url) return null;
     let bytes = await downloadPhoto(url);
     if (!bytes) {
       url = await resolvePhotoUrl(organizationId, nmId, true);
