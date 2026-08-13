@@ -3,7 +3,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight, RefreshCw, Search } from "lucide-react";
 import { useData } from "@/components/DataProvider";
-import { getWbImageUrlCandidates } from "@/lib/wb-image";
 import type {
   CartStockApiResponse,
   CartStockProductGroup,
@@ -23,26 +22,20 @@ function formatDate(value: string | null | undefined): string {
 }
 
 function CartProductThumb({ articleWB }: { articleWB: string }) {
-  const candidates = useMemo(
-    () => getWbImageUrlCandidates(articleWB, "small"),
-    [articleWB],
-  );
-  const [index, setIndex] = useState(0);
-
-  useEffect(() => setIndex(0), [articleWB]);
-
-  if (!candidates[index]) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [articleWB]);
+  if (failed) {
     return <div className="h-[68px] w-[52px] shrink-0 rounded-lg bg-[var(--border)]" />;
   }
 
   return (
     <img
-      src={candidates[index]}
+      src={`/api/shipment/product-photo/${encodeURIComponent(articleWB)}`}
       alt=""
       width={52}
       height={68}
       className="h-[68px] w-[52px] shrink-0 rounded-lg object-cover"
-      onError={() => setIndex((current) => current + 1)}
+      onError={() => setFailed(true)}
     />
   );
 }
