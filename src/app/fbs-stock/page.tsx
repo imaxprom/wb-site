@@ -13,6 +13,7 @@ import {
   PackageSearch,
   Play,
   RefreshCw,
+  Trash2,
   Warehouse,
   type LucideIcon,
 } from "lucide-react";
@@ -109,6 +110,8 @@ function actionLabel(action: string): string {
     paused: "Управление остановлено",
     stock_zero_started: "Обнуление запущено",
     stock_zeroed: "Остатки обнулены",
+    warehouse_removed: "Склад удалён в WB",
+    configuration_deleted: "Товар удалён",
   };
   return labels[action] || action;
 }
@@ -322,6 +325,42 @@ export default function FbsStockPage() {
     }
   }
 
+  async function deleteProduct(product: ProductRow) {
+    const confirmed = window.confirm(
+      `Удалить артикул WB ${product.nm_id} из управляемых? Сначала система безопасно обнулит его на всех действующих FBS-складах.`,
+    );
+    if (!confirmed) return;
+    setBusy(`delete-${product.id}`);
+    setError("");
+    setNotice("");
+    try {
+      const payload = await post({
+        action: "delete",
+        productId: product.id,
+        confirmationNmId: product.nm_id,
+      });
+      if (payload.snapshot) setSnapshot(payload.snapshot as Snapshot);
+      if (discovery?.card.nmId === product.nm_id) {
+        setDiscovery(null);
+        setNmId("");
+        setQuantity("");
+        setChrtId(null);
+        setSelectedWarehouses(new Set());
+      }
+      setExpandedProducts((current) => {
+        const next = new Set(current);
+        next.delete(product.id);
+        return next;
+      });
+      setNotice(`Товар WB ${product.nm_id} обнулён и удалён из управляемых.`);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Не удалось удалить товар");
+      await load(true);
+    } finally {
+      setBusy("");
+    }
+  }
+
   const totals = useMemo(() => {
     const activeProductIds = new Set(snapshot.products.filter((product) => product.enabled).map((product) => product.id));
     const uniqueWarehouseIds = new Set(
@@ -523,6 +562,9 @@ export default function FbsStockPage() {
                   )}
                   <button type="button" onClick={() => void zeroStocks(product)} disabled={Boolean(busy)} className="flex items-center gap-2 rounded-lg border border-red-500/30 px-3 py-2 text-sm text-red-300 hover:bg-red-500/10 disabled:opacity-50">
                     {busy === `zero-${product.id}` ? <Loader2 size={15} className="animate-spin" /> : <CircleX size={15} />} Обнулить
+                  </button>
+                  <button type="button" onClick={() => void deleteProduct(product)} disabled={Boolean(busy)} className="flex items-center gap-2 rounded-lg border border-red-500/30 px-3 py-2 text-sm text-red-300 hover:bg-red-500/10 disabled:opacity-50">
+                    {busy === `delete-${product.id}` ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />} Удалить
                   </button>
                 </div>
               </div>

@@ -7,6 +7,7 @@ import { apiError } from "@/lib/api-utils";
 import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 import {
   configureFbsProduct,
+  deleteFbsProduct,
   discoverFbsProduct,
   getFbsStockSnapshot,
   pauseFbsProduct,
@@ -80,6 +81,12 @@ export async function POST(request: NextRequest) {
       const productId = positiveInteger(body.productId, "productId");
       const confirmationNmId = positiveInteger(body.confirmationNmId, "confirmationNmId");
       const result = await zeroFbsProductStocks(productId, confirmationNmId);
+      return NextResponse.json({ ok: true, result, snapshot: await getFbsStockSnapshot() });
+    }
+    if (action === "delete") {
+      const productId = positiveInteger(body.productId, "productId");
+      const confirmationNmId = positiveInteger(body.confirmationNmId, "confirmationNmId");
+      const result = await deleteFbsProduct(productId, confirmationNmId);
       return NextResponse.json({ ok: true, result, snapshot: await getFbsStockSnapshot() });
     }
     return NextResponse.json({ ok: false, error: "Неизвестное действие" }, { status: 400 });

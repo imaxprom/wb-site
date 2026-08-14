@@ -99,10 +99,10 @@ export function FbsPortalShell({ children }: { children: React.ReactNode }) {
   const primaryItems = [
     ...(active?.canAssembly ? [{ href: "/fbs", label: "FBS Сборка", icon: ClipboardCheck }] : []),
     ...(active?.canAssembly ? [{ href: "/fbs/kiz-archive", label: "Архив КИЗ", icon: ScanQrCode }] : []),
-    ...(active?.canStock ? [{ href: "/fbs-stock", label: "FBS Управление остатками", icon: Boxes }] : []),
     ...(active?.canAssembly ? [{ href: "/printer", label: "Принтер", icon: Printer }] : []),
   ];
-  const adminItems = [
+  const bottomItems = [
+    ...(active?.canStock ? [{ href: "/fbs-stock", label: "FBS Управление остатками", icon: Boxes }] : []),
     ...(payload?.user.isAdmin ? [{ href: "/users", label: "Сотрудники", icon: Users }] : []),
     ...(payload?.user.isAdmin ? [{ href: "/settings", label: "Настройки", icon: Settings }] : []),
   ];
@@ -150,8 +150,8 @@ export function FbsPortalShell({ children }: { children: React.ReactNode }) {
           return <Link key={item.href} href={item.href} onClick={() => setMobileOpen(false)} title={expanded ? undefined : printerItem ? `${item.label}: ${printerIndicator.label}` : item.label} className={cn("flex items-center py-3 text-base transition-colors", expanded ? "gap-3 px-5" : "justify-center px-3", selected ? "border-r-2 border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]" : "text-[var(--text-muted)] hover:bg-[var(--bg-card-hover)] hover:text-[var(--text)]")}><span className="relative shrink-0"><item.icon size={21} className={cn("shrink-0", printerItem && printerColor)} />{printerItem && <span className={cn("absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border-2 border-[var(--bg-card)]", printerDot)} aria-hidden="true" />}</span>{expanded && <span className="flex min-w-0 flex-1 items-center justify-between gap-2"><span>{item.label}</span>{printerItem && <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", printerDot)} title={printerIndicator.label} />}</span>}</Link>;
         })}
       </nav>
-      {adminItems.length > 0 && <nav className="shrink-0 pb-2">
-        {adminItems.map((item) => {
+      {bottomItems.length > 0 && <nav className="shrink-0 pb-2">
+        {bottomItems.map((item) => {
           const selected = pathname === item.href || pathname.startsWith(`${item.href}/`);
           return <Link key={item.href} href={item.href} onClick={() => setMobileOpen(false)} title={expanded ? undefined : item.label} className={cn("flex items-center py-3 text-base transition-colors", expanded ? "gap-3 px-5" : "justify-center px-3", selected ? "border-r-2 border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]" : "text-[var(--text-muted)] hover:bg-[var(--bg-card-hover)] hover:text-[var(--text)]")}><item.icon size={21} className="shrink-0" />{expanded && <span>{item.label}</span>}</Link>;
         })}

@@ -11,6 +11,7 @@ import {
   getNewFbsOrders,
   putFbsStock,
   waitForFbsRateLimit,
+  FbsWbApiError,
   type FbsWbOrder,
   type FbsWbOrderStatus,
 } from "@/lib/fbs-wb-api";
@@ -97,6 +98,49 @@ async function audit(
     input.message || "",
     JSON.stringify(input.details || {}),
   ]);
+}
+
+function isMissingFbsWarehouse(error: unknown): boolean {
+  return error instanceof FbsWbApiError && error.status === 404;
+}
+
+async function disableWarehousesMissingFromWb(
+  liveWarehouses: Array<{ id: number; name: string }>,
+  productIds?: number[],
+): Promise<void> {
+  const liveIds = liveWarehouses.map((warehouse) => Number(warehouse.id));
+  const scopedProductIds = Array.from(new Set((productIds || []).map(Number).filter(Number.isSafeInteger)));
+  await withPgTransaction(async (client) => {
+    const result = await client.query<{ product_id: number; warehouse_id: number; warehouse_name: string }>(`
+      UPDATE fbs_stock_warehouses
+      SET enabled=FALSE,
+          target_quantity=0,
+          confirmed_quantity=0,
+          last_checked_at=CURRENT_TIMESTAMP,
+          last_error=NULL,
+          updated_at=CURRENT_TIMESTAMP
+      WHERE NOT (warehouse_id=ANY($1::bigint[]))
+        ${scopedProductIds.length ? "AND product_id=ANY($2::bigint[])" : ""}
+        AND (enabled=TRUE OR target_quantity<>0 OR confirmed_quantity IS DISTINCT FROM 0 OR last_error IS NOT NULL)
+      RETURNING product_id,warehouse_id,warehouse_name
+    `, scopedProductIds.length ? [liveIds, scopedProductIds] : [liveIds]);
+    const removedByProduct = new Map<number, Array<{ id: number; name: string }>>();
+    for (const row of result.rows) {
+      const productId = Number(row.product_id);
+      const removed = removedByProduct.get(productId) || [];
+      removed.push({ id: Number(row.warehouse_id), name: row.warehouse_name });
+      removedByProduct.set(productId, removed);
+    }
+    for (const [productId, removed] of removedByProduct) {
+      await audit(client, {
+        productId,
+        action: "warehouse_removed",
+        quantity: removed.length,
+        message: `Удалённые в WB склады исключены из управления: ${removed.map((warehouse) => warehouse.name).join(", ")}`,
+        details: { warehouses: removed },
+      });
+    }
+  });
 }
 
 export async function discoverFbsProduct(nmId: number): Promise<FbsProductDiscovery> {
@@ -396,11 +440,15 @@ async function normalizeTargets(productId: number): Promise<Array<{ from: number
 }
 
 async function readAndStoreActual(productId: number, chrtId: number): Promise<Array<WarehouseRow & { actual: number }>> {
+  const liveWarehouses = await getFbsWarehouses();
+  await disableWarehousesMissingFromWb(liveWarehouses, [productId]);
+  const liveWarehouseIds = liveWarehouses.map((warehouse) => Number(warehouse.id));
+  if (!liveWarehouseIds.length) return [];
   const rows = await pgRows<WarehouseRow>(`
     SELECT * FROM fbs_stock_warehouses
-    WHERE product_id = ?
+    WHERE product_id = ? AND warehouse_id=ANY(?::bigint[])
     ORDER BY warehouse_id
-  `, [productId]);
+  `, [productId, liveWarehouseIds]);
   const result: Array<WarehouseRow & { actual: number }> = [];
   for (const row of rows) {
     try {
@@ -435,11 +483,16 @@ async function readAndStoreOrganizationActual(products: ProductRow[]): Promise<{
 }> {
   const productIds = products.map((product) => product.id);
   if (!productIds.length) return { rowsByProduct: new Map(), errorsByProduct: new Map() };
+  const liveWarehouses = await getFbsWarehouses();
+  await disableWarehousesMissingFromWb(liveWarehouses, productIds);
+  const liveWarehouseIds = liveWarehouses.map((warehouse) => Number(warehouse.id));
+  if (!liveWarehouseIds.length) return { rowsByProduct: new Map(), errorsByProduct: new Map() };
   const rows = await pgRows<WarehouseRow>(`
     SELECT * FROM fbs_stock_warehouses
     WHERE product_id = ANY(?::bigint[])
+      AND warehouse_id = ANY(?::bigint[])
     ORDER BY warehouse_id, product_id
-  `, [productIds]);
+  `, [productIds, liveWarehouseIds]);
   const productById = new Map(products.map((product) => [product.id, product]));
   const byWarehouse = new Map<number, WarehouseRow[]>();
   for (const row of rows) {
@@ -469,6 +522,13 @@ async function readAndStoreOrganizationActual(products: ProductRow[]): Promise<{
         confirmed.push({ productId: product.id, warehouseId, actual });
       }
     } catch (error) {
+      if (isMissingFbsWarehouse(error)) {
+        await disableWarehousesMissingFromWb(
+          liveWarehouses.filter((warehouse) => Number(warehouse.id) !== warehouseId),
+          warehouseRows.map((row) => Number(row.product_id)),
+        );
+        continue;
+      }
       // A transient WB failure or one invalid variant must not take every
       // managed product down with the warehouse batch. Fall back to the old
       // isolated reads only on the exceptional path.
@@ -612,6 +672,8 @@ export async function syncFbsProduct(productId: number): Promise<Record<string, 
   try {
     let product = await loadProduct(productId);
     if (!product) throw new Error("FBS-товар не найден");
+    const liveWarehouses = await getFbsWarehouses();
+    await disableWarehousesMissingFromWb(liveWarehouses, [product.id]);
     const orders = await collectOrders(product);
     await normalizeTargets(productId);
     product = await loadProduct(productId);
@@ -645,6 +707,8 @@ export async function syncFbsOrganization(): Promise<Array<Record<string, unknow
   let recoveryOrders: FbsWbOrder[] = [];
   const statusesByProduct = new Map<number, FbsWbOrderStatus[]>();
   try {
+    const liveWarehouses = await getFbsWarehouses();
+    await disableWarehousesMissingFromWb(liveWarehouses, claimed.map((product) => product.id));
     newOrders = await getNewFbsOrders();
     const due = claimed.filter((product) => needsHistoryRecovery(product, now));
     if (due.length) {
@@ -871,25 +935,12 @@ export async function zeroFbsProductStocks(
   });
 
   try {
-    const [storedWarehouses, liveWarehouses] = await Promise.all([
-      pgRows<WarehouseRow>(`
-        SELECT * FROM fbs_stock_warehouses
-        WHERE product_id = ?
-        ORDER BY warehouse_id
-      `, [productId]),
-      getFbsWarehouses(),
-    ]);
-    const warehouseNames = new Map<number, string>();
-    for (const warehouse of storedWarehouses) {
-      warehouseNames.set(Number(warehouse.warehouse_id), warehouse.warehouse_name);
-    }
-    for (const warehouse of liveWarehouses) {
-      warehouseNames.set(Number(warehouse.id), warehouse.name);
-    }
-    const warehouses = Array.from(warehouseNames, ([id, name]) => ({ id, name }))
+    const liveWarehouses = await getFbsWarehouses();
+    await disableWarehousesMissingFromWb(liveWarehouses, [productId]);
+    const warehouses = liveWarehouses
+      .map((warehouse) => ({ id: Number(warehouse.id), name: warehouse.name }))
       .filter((warehouse) => Number.isSafeInteger(warehouse.id) && warehouse.id > 0)
       .sort((a, b) => a.id - b.id);
-    if (warehouses.length === 0) throw new Error("В кабинете WB не найдено ни одного FBS-склада");
 
     const writeErrors = new Map<number, string>();
     for (const warehouse of warehouses) {
@@ -992,6 +1043,31 @@ export async function zeroFbsProductStocks(
     }).catch(() => undefined);
     throw error;
   }
+}
+
+export async function deleteFbsProduct(
+  productId: number,
+  confirmationNmId: number,
+): Promise<{ productId: number; nmId: number; warehouseCount: number }> {
+  const zeroed = await zeroFbsProductStocks(productId, confirmationNmId);
+  return withPgTransaction(async (client) => {
+    const product = await client.query<{ nm_id: number; title: string }>(`
+      SELECT nm_id,title FROM fbs_stock_products WHERE id=$1 FOR UPDATE
+    `, [productId]);
+    const row = product.rows[0];
+    if (!row) throw new Error("FBS-товар не найден");
+    if (Number(row.nm_id) !== confirmationNmId) throw new Error("Подтверждение удаления не совпадает с артикулом WB");
+    await audit(client, {
+      productId,
+      action: "configuration_deleted",
+      message: `Товар WB ${row.nm_id} удалён из управляемых после подтверждённого обнуления действующих складов`,
+      details: { nmId: Number(row.nm_id), title: row.title, warehouseCount: zeroed.warehouseCount },
+    });
+    await client.query(`DELETE FROM fbs_stock_orders WHERE product_id=$1`, [productId]);
+    await client.query(`DELETE FROM fbs_stock_warehouses WHERE product_id=$1`, [productId]);
+    await client.query(`DELETE FROM fbs_stock_products WHERE id=$1`, [productId]);
+    return { productId, nmId: Number(row.nm_id), warehouseCount: zeroed.warehouseCount };
+  });
 }
 
 export async function getFbsStockSnapshot(): Promise<Record<string, unknown>> {
