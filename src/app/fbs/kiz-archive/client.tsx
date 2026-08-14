@@ -64,10 +64,6 @@ const STATUS_LABELS: Record<FbsKizVerificationStatus, string> = {
   error: "Ошибка",
 };
 
-function formatNumber(value: number) {
-  return new Intl.NumberFormat("ru-RU").format(value);
-}
-
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("ru-RU", {
     timeZone: "Europe/Moscow",
@@ -361,22 +357,10 @@ export function KizArchiveClient() {
       </div>
     </header>
 
-    {!snapshot.onlineVerificationConfigured && !loading && <section className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
-      <TriangleAlert className="mt-0.5 shrink-0 text-amber-400" size={24} />
-      <div><div className="font-semibold text-amber-400">Онлайн-проверка TrueAPI пока не подключена</div><div className="mt-1 text-sm text-[var(--text-muted)]">Система проверяет полный формат Data Matrix, контрольную цифру GTIN и точное соответствие артикулу и размеру. Онлайн-подтверждение будет отображаться отдельно после подключения TrueAPI.</div></div>
-    </section>}
-
-    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4"><div className="text-sm text-[var(--text-muted)]">Доступно для печати</div><div className="mt-1 text-3xl font-bold text-emerald-400">{formatNumber(snapshot.summary.available)}</div><div className="mt-1 text-xs text-[var(--text-muted)]">Всего принято: {formatNumber(snapshot.summary.total)}</div></div>
-      <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4"><div className="text-sm text-[var(--text-muted)]">Сейчас печатается</div><div className="mt-1 text-3xl font-bold text-amber-400">{formatNumber(snapshot.summary.reserved)}</div></div>
-      <div className="rounded-xl border border-[var(--accent)]/25 bg-[var(--accent)]/5 p-4"><div className="text-sm text-[var(--text-muted)]">Использовано</div><div className="mt-1 text-3xl font-bold text-[var(--accent)]">{formatNumber(snapshot.summary.printed)}</div></div>
-      <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4"><div className="text-sm text-[var(--text-muted)]">Ошибки за 24 часа</div><div className="mt-1 text-3xl font-bold text-red-400">{formatNumber(snapshot.summary.errors24h)}</div></div>
-    </section>
-
     <section className="rounded-2xl border border-[var(--accent)]/35 bg-[var(--bg-card)] p-5 shadow-[0_0_28px_rgba(124,58,237,0.08)]">
       <div className="grid items-center gap-5 lg:grid-cols-[minmax(0,1fr)_390px]">
         <div>
-          <div className="flex items-center gap-3"><span className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--accent)]/15 text-[var(--accent)]"><ScanLine size={27} /></span><div><h2 className="text-xl font-bold">Отсканируйте нанесённый Data Matrix</h2><p className="text-sm text-[var(--text-muted)]">Артикул и размер определятся автоматически по GTIN.</p></div></div>
+          <div className="flex items-center gap-3"><span className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--accent)]/15 text-[var(--accent)]"><ScanLine size={27} /></span><h2 className="text-xl font-bold">Отсканируйте нанесённый Data Matrix</h2></div>
           <form onSubmit={submit} className="mt-4 flex gap-3">
             <input ref={inputRef} value={value} onChange={(event) => setValue(event.target.value)} disabled={saving} className="min-h-14 min-w-0 flex-1 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-4 font-mono text-sm outline-none transition focus:border-[var(--accent)] disabled:opacity-60" placeholder="Поле готово к сканированию" autoComplete="off" />
             <button type="submit" disabled={!value || saving} className="min-h-14 shrink-0 rounded-xl bg-[var(--accent)] px-6 font-semibold text-white transition hover:brightness-110 disabled:opacity-45">{saving ? "Проверяем…" : "Проверить и сохранить"}</button>
@@ -406,7 +390,7 @@ export function KizArchiveClient() {
 
     <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)]">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] p-4">
-        <div><h2 className="text-xl font-bold">Артикулы и размеры</h2><p className="text-sm text-[var(--text-muted)]">Размерная сетка загружена из данных выбранного юрлица.</p></div>
+        <h2 className="text-xl font-bold">Артикулы и размеры</h2>
         <div className="flex w-full max-w-[560px] gap-2">
           <label className="flex min-h-12 min-w-0 flex-1 items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-4"><Search size={20} className="text-[var(--text-muted)]" /><input value={query} onChange={(event) => setQuery(event.target.value)} className="min-w-0 flex-1 bg-transparent outline-none" placeholder="Артикул WB или название" /></label>
           <button type="button" onClick={() => void load(true)} disabled={refreshing} className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-[var(--border)] transition hover:bg-[var(--bg-card-hover)] disabled:opacity-50" aria-label="Обновить архив"><RefreshCw size={21} className={refreshing ? "animate-spin" : ""} /></button>
