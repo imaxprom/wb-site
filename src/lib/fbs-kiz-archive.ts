@@ -541,8 +541,6 @@ export async function addFbsKizToArchive(
     ? await createGtinMapping(parsed.gtin, catalog, mappingSelection)
     : await findMappedCatalogVariant(catalog, parsed.gtin);
   if (!variant) {
-    const message = `GTIN ${parsed.gtin} ещё не связан с артикулом и размером WB`;
-    await recordError({ value: parsed.value, message, gtin: parsed.gtin, serial: parsed.serial });
     throw new FbsKizMappingRequiredError(parsed.gtin, catalog);
   }
 
@@ -868,10 +866,22 @@ export async function getFbsKizArchiveSnapshot(): Promise<FbsKizArchiveSnapshot>
       WHERE supply_id='__kiz_archive__' AND created_at>=CURRENT_TIMESTAMP-INTERVAL '7 days'
       ORDER BY created_at DESC LIMIT 40
     `),
-    pgRows<EventRow>(`SELECT * FROM fbs_kiz_archive_events ORDER BY event_id DESC LIMIT 80`),
+    pgRows<EventRow>(`
+      SELECT * FROM fbs_kiz_archive_events
+      WHERE NOT (
+        event_type='error'
+        AND archive_id IS NULL
+        AND message LIKE 'GTIN % ещё не связан с артикулом и размером WB'
+      )
+      ORDER BY event_id DESC LIMIT 80
+    `),
     pgRows<{ count: number }>(`
       SELECT COUNT(*)::int AS count FROM fbs_kiz_archive_events
       WHERE event_type='error' AND created_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours'
+        AND NOT (
+          archive_id IS NULL
+          AND message LIKE 'GTIN % ещё не связан с артикулом и размером WB'
+        )
     `),
   ]);
 
