@@ -558,6 +558,78 @@ async function refreshAttachedOrdersMetadata(supplyId: string, orderIds: number[
   }
 }
 
+type FbsSupplyAttachmentResult = {
+  actualOrderIds: number[];
+  addError: unknown;
+  addAttempts: number;
+  membershipChecks: number;
+};
+
+const FBS_SUPPLY_MEMBERSHIP_DELAYS_MS = [500, 1_000, 2_000, 4_000] as const;
+const FBS_SUPPLY_ADD_ATTEMPTS = 3;
+
+function isRetryableSupplyAddError(error: unknown): boolean {
+  return !(error instanceof FbsWbApiError) || error.status === 429 || error.status >= 500;
+}
+
+/**
+ * WB can return an empty membership immediately after accepting PATCH /orders.
+ * Re-read the live supply and safely re-send only orders that WB still has not
+ * attached. Adding the same order to the same open supply is idempotent in the
+ * live FBS workflow and prevents an empty first supply from reaching the UI.
+ */
+async function attachFbsOrdersAndConfirm(
+  supplyId: string,
+  requestedOrderIds: number[],
+): Promise<FbsSupplyAttachmentResult> {
+  let actualOrderIds: number[] = [];
+  let addError: unknown = null;
+  let lastMembershipError: unknown = null;
+  let addAttempts = 0;
+  let membershipChecks = 0;
+  let membershipWasRead = false;
+
+  for (let attempt = 0; attempt < FBS_SUPPLY_ADD_ATTEMPTS; attempt += 1) {
+    const attached = new Set(actualOrderIds);
+    const missingOrderIds = requestedOrderIds.filter((orderId) => !attached.has(orderId));
+    if (!missingOrderIds.length) break;
+
+    addAttempts += 1;
+    let canRepeatAdd = true;
+    try {
+      await addFbsOrdersToSupply(supplyId, missingOrderIds);
+      addError = null;
+    } catch (error) {
+      addError = error;
+      canRepeatAdd = isRetryableSupplyAddError(error);
+    }
+
+    for (const delayMs of FBS_SUPPLY_MEMBERSHIP_DELAYS_MS) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      membershipChecks += 1;
+      try {
+        actualOrderIds = await getFbsSupplyOrderIds(supplyId);
+        membershipWasRead = true;
+        lastMembershipError = null;
+      } catch (error) {
+        lastMembershipError = error;
+        continue;
+      }
+      const confirmed = new Set(actualOrderIds);
+      if (requestedOrderIds.every((orderId) => confirmed.has(orderId))) {
+        return { actualOrderIds, addError, addAttempts, membershipChecks };
+      }
+    }
+
+    if (!canRepeatAdd) break;
+  }
+
+  if (!membershipWasRead) {
+    throw new Error(`WB не дал проверить фактический состав поставки: ${lastMembershipError instanceof Error ? lastMembershipError.message : String(lastMembershipError || "нет ответа")}`);
+  }
+  return { actualOrderIds, addError, addAttempts, membershipChecks };
+}
+
 export async function createFbsFulfillmentSupply(input: {
   name: string;
   deliveryMode: "warehouse" | "pvz";
@@ -583,30 +655,26 @@ export async function createFbsFulfillmentSupply(input: {
     `, [supply.id, name, input.deliveryMode]);
   });
 
-  let addError: unknown = null;
+  let attachment: FbsSupplyAttachmentResult;
   try {
-    await addFbsOrdersToSupply(supply.id, orderIds);
-  } catch (error) {
-    addError = error;
-  }
-
-  let actualIds: number[];
-  try {
-    actualIds = await getFbsSupplyOrderIds(supply.id);
+    attachment = await attachFbsOrdersAndConfirm(supply.id, orderIds);
   } catch (membershipError) {
     await withPgTransaction(async (client) => event(client, "supply_membership_check_failed", {
       supplyId: supply.id,
       status: "error",
       message: membershipError instanceof Error ? membershipError.message : String(membershipError),
-      details: { requestedOrderIds: orderIds, addError: addError instanceof Error ? addError.message : String(addError || "") },
+      details: { requestedOrderIds: orderIds },
     }));
     throw new Error(`Поставка ${supply.id} создана, но WB не дал проверить её состав. Нажмите «Получить новые заказы» перед повторным действием`);
   }
 
+  const actualIds = attachment.actualOrderIds;
   const attached = orderIds.filter((orderId) => actualIds.includes(orderId));
   const failed = orderIds.filter((orderId) => !actualIds.includes(orderId));
   const partial = attached.length !== orderIds.length;
-  const wbMessage = addError instanceof Error ? addError.message : addError ? String(addError) : "";
+  const wbMessage = attachment.addError instanceof Error
+    ? attachment.addError.message
+    : attachment.addError ? String(attachment.addError) : "";
   await persistVerifiedSupplyMembership(
     supply.id,
     actualIds,
@@ -614,7 +682,15 @@ export async function createFbsFulfillmentSupply(input: {
     partial
       ? `WB добавил ${attached.length} из ${orderIds.length} заказов`
       : `${attached.length} заказов добавлено`,
-    { requestedOrderIds: orderIds, attachedOrderIds: attached, failedOrderIds: failed, deliveryMode: input.deliveryMode, wbMessage },
+    {
+      requestedOrderIds: orderIds,
+      attachedOrderIds: attached,
+      failedOrderIds: failed,
+      deliveryMode: input.deliveryMode,
+      wbMessage,
+      addAttempts: attachment.addAttempts,
+      membershipChecks: attachment.membershipChecks,
+    },
   );
   await refreshAttachedOrdersMetadata(supply.id, attached);
 
@@ -660,23 +736,19 @@ export async function addFbsFulfillmentOrdersToSupply(input: { supplyId: string;
     }
   }
 
-  let addError: unknown = null;
+  let attachment: FbsSupplyAttachmentResult;
   try {
-    await addFbsOrdersToSupply(supplyId, orderIds);
-  } catch (error) {
-    addError = error;
-  }
-
-  let actualIds: number[];
-  try {
-    actualIds = await getFbsSupplyOrderIds(supplyId);
+    attachment = await attachFbsOrdersAndConfirm(supplyId, orderIds);
   } catch (membershipError) {
     throw new Error(`WB не дал проверить фактический состав поставки. Состояние не изменено локально: ${membershipError instanceof Error ? membershipError.message : membershipError}`);
   }
+  const actualIds = attachment.actualOrderIds;
   const attached = orderIds.filter((id) => actualIds.includes(id));
   const failed = orderIds.filter((id) => !actualIds.includes(id));
   const partial = attached.length !== orderIds.length;
-  const wbMessage = addError instanceof Error ? addError.message : addError ? String(addError) : "";
+  const wbMessage = attachment.addError instanceof Error
+    ? attachment.addError.message
+    : attachment.addError ? String(attachment.addError) : "";
   await persistVerifiedSupplyMembership(
     supplyId,
     actualIds,
@@ -684,7 +756,14 @@ export async function addFbsFulfillmentOrdersToSupply(input: { supplyId: string;
     partial
       ? `WB добавил ${attached.length} из ${orderIds.length} заказов`
       : `${attached.length} заказов добавлено в существующую поставку`,
-    { requestedOrderIds: orderIds, attachedOrderIds: attached, failedOrderIds: failed, wbMessage },
+    {
+      requestedOrderIds: orderIds,
+      attachedOrderIds: attached,
+      failedOrderIds: failed,
+      wbMessage,
+      addAttempts: attachment.addAttempts,
+      membershipChecks: attachment.membershipChecks,
+    },
   );
   await refreshAttachedOrdersMetadata(supplyId, attached);
   if (!attached.length) {
