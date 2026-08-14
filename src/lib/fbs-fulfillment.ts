@@ -94,6 +94,7 @@ type MarkingQueueRow = {
   value_payload: string;
   status: "queued" | "sending" | "sent" | "retry" | "verified" | "error";
   attempts: number;
+  available_at: string;
   last_error: string;
   updated_at: string;
 };
@@ -107,6 +108,9 @@ export type FbsMarkingQueueStatus = {
 };
 
 const markingQueueRuns = new Map<number, Promise<void>>();
+const MAX_FBS_SGTIN_VERIFICATION_ATTEMPTS = 3;
+const FBS_SGTIN_REUPLOAD_DELAY_SECONDS = 2;
+const FBS_SGTIN_RESET_RETRY_SECONDS = 15;
 
 function text(value: unknown): string {
   return typeof value === "string" ? value : "";
@@ -758,6 +762,7 @@ function safeMetadataError(error: unknown, secret: string): string {
 
 function wbMetadataDecisionMessage(decision: string): string {
   const messages: Record<string, string> = {
+    deadlineexceeded: `Не проверено WB после ${MAX_FBS_SGTIN_VERIFICATION_ATTEMPTS} попыток`,
     sgtinnotfound: "WB не нашёл этот код маркировки в системе «Честный знак»",
     sgtininvalidformat: "WB отклонил формат кода маркировки",
     sgtinnogs: "в коде маркировки отсутствует обязательный GS-разделитель",
@@ -800,7 +805,7 @@ async function waitForAcceptedFbsDataMatrix(
       continue;
     }
     lastMetadata = live;
-    await persistLiveMetadata(metadata);
+    await reconcileFbsLiveMetadata(metadata);
     const state = getFbsLiveMetaState(live, "sgtin");
     lastState = state.decision || state.state;
     if (state.state === "rejected") throw new Error(wbMetadataDecisionMessage(state.decision));
@@ -1105,6 +1110,159 @@ async function sendFbsMarkingQueueRow(row: MarkingQueueRow) {
   }
 }
 
+function matchingDeadlineExceededValue(row: MarkingQueueRow, values: string[]): string {
+  for (const candidate of values) {
+    try {
+      const normalized = normalizeFbsDataMatrix(candidate);
+      const hash = crypto.createHash("sha256").update(normalized).digest("hex");
+      if (hash === row.value_hash) return normalized;
+    } catch {
+      // A value that cannot be parsed or does not match the original scan must
+      // never be silently attached to the order again.
+    }
+  }
+  return "";
+}
+
+async function markDeadlineRetryError(row: MarkingQueueRow, message: string) {
+  await withPgTransaction(async (client) => {
+    const updated = await client.query(`
+      UPDATE fbs_marking_queue
+      SET status='error',value_payload='',lease_until=NULL,last_error=$2,updated_at=CURRENT_TIMESTAMP
+      WHERE queue_id=$1 AND status='sent'
+      RETURNING queue_id
+    `, [row.queue_id, message]);
+    if (!updated.rowCount) return;
+    await client.query(`
+      UPDATE fbs_fulfillment_scans SET result='error',message=$2
+      WHERE id=$1 AND result='pending'
+    `, [row.scan_id, message]);
+    await event(client, "metadata_retry_failed", {
+      orderId: row.order_id,
+      supplyId: row.supply_id || undefined,
+      status: "error",
+      message,
+      details: { scanId: row.scan_id, attempts: row.attempts },
+    });
+  });
+}
+
+async function prepareDeadlineExceededRetries(
+  metadata: Awaited<ReturnType<typeof getFbsOrderMeta>>,
+): Promise<Set<number>> {
+  const preservePending = new Set<number>();
+  const candidates = metadata.map((item) => ({
+    orderId: metadataOrderId(item),
+    liveState: getFbsLiveMetaState(item, "sgtin"),
+  })).filter(({ orderId, liveState }) =>
+    Number.isSafeInteger(orderId)
+    && (liveState.decision === "deadlineexceeded" || liveState.state === "missing")
+  );
+  if (!candidates.length) return preservePending;
+  const queueRows = await pgRows<MarkingQueueRow>(`
+    SELECT DISTINCT ON (order_id) * FROM fbs_marking_queue
+    WHERE order_id=ANY(?::bigint[]) AND status='sent'
+    ORDER BY order_id,queue_id DESC
+  `, [candidates.map(({ orderId }) => orderId)]);
+  const queueByOrderId = new Map(queueRows.map((row) => [Number(row.order_id), row]));
+
+  for (const { orderId, liveState } of candidates) {
+    const row = queueByOrderId.get(orderId);
+    if (!row) continue;
+
+    // If WB already forgot the value after DELETE but the process stopped
+    // before the row was re-queued, the durable payload completes recovery.
+    if (liveState.state === "missing" && row.value_payload) {
+      preservePending.add(orderId);
+      const availableAt = new Date(row.available_at).getTime();
+      if (Number.isFinite(availableAt) && availableAt > Date.now()) continue;
+      await withPgTransaction(async (client) => {
+        await client.query(`
+          UPDATE fbs_marking_queue
+          SET status='retry',available_at=CURRENT_TIMESTAMP+($2::text || ' seconds')::interval,
+            lease_until=NULL,last_error='WB-код удалён, повторная загрузка возобновлена',updated_at=CURRENT_TIMESTAMP
+          WHERE queue_id=$1 AND status='sent' AND value_payload<>''
+        `, [row.queue_id, FBS_SGTIN_REUPLOAD_DELAY_SECONDS]);
+      });
+      continue;
+    }
+
+    if (liveState.decision !== "deadlineexceeded") continue;
+    if (row.attempts >= MAX_FBS_SGTIN_VERIFICATION_ATTEMPTS) continue;
+
+    preservePending.add(orderId);
+    const availableAt = new Date(row.available_at).getTime();
+    if (Number.isFinite(availableAt) && availableAt > Date.now()) continue;
+
+    const value = row.value_payload || matchingDeadlineExceededValue(row, liveState.values);
+    if (!value) {
+      preservePending.delete(orderId);
+      await markDeadlineRetryError(row, "Не проверено WB: не удалось безопасно восстановить исходный код для повторной отправки");
+      continue;
+    }
+
+    const nextAttempt = row.attempts + 1;
+    const retryMessage = `WB не завершил проверку. Автоматическая попытка ${nextAttempt} из ${MAX_FBS_SGTIN_VERIFICATION_ATTEMPTS}`;
+    const claimed = await withPgTransaction(async (client) => {
+      const updated = await client.query<MarkingQueueRow>(`
+        UPDATE fbs_marking_queue
+        SET value_payload=$2,available_at=CURRENT_TIMESTAMP+INTERVAL '2 minutes',last_error=$3,updated_at=CURRENT_TIMESTAMP
+        WHERE queue_id=$1 AND status='sent' AND attempts=$4 AND available_at<=CURRENT_TIMESTAMP
+        RETURNING *
+      `, [row.queue_id, value, retryMessage, row.attempts]);
+      if (!updated.rows[0]) return false;
+      await client.query(`
+        UPDATE fbs_fulfillment_scans SET message=$2
+        WHERE id=$1 AND result='pending'
+      `, [row.scan_id, retryMessage]);
+      return true;
+    });
+    if (!claimed) continue;
+
+    try {
+      await deleteFbsOrderMeta(orderId, "sgtin");
+      await withPgTransaction(async (client) => {
+        const updated = await client.query(`
+          UPDATE fbs_marking_queue
+          SET status='retry',available_at=CURRENT_TIMESTAMP+($2::text || ' seconds')::interval,
+            lease_until=NULL,last_error=$3,updated_at=CURRENT_TIMESTAMP
+          WHERE queue_id=$1 AND status='sent' AND attempts<$4
+          RETURNING queue_id
+        `, [row.queue_id, FBS_SGTIN_REUPLOAD_DELAY_SECONDS, retryMessage, MAX_FBS_SGTIN_VERIFICATION_ATTEMPTS]);
+        if (!updated.rowCount) return;
+        await event(client, "metadata_retry_scheduled", {
+          orderId,
+          supplyId: row.supply_id || undefined,
+          status: "warning",
+          message: retryMessage,
+          details: { scanId: row.scan_id, nextAttempt, maxAttempts: MAX_FBS_SGTIN_VERIFICATION_ATTEMPTS },
+        });
+      });
+    } catch (error) {
+      const message = `Не удалось автоматически перезапустить проверку WB: ${safeMetadataError(error, value)}`;
+      const permanent = error instanceof FbsWbApiError && [400, 404, 409].includes(error.status);
+      if (permanent) {
+        preservePending.delete(orderId);
+        await markDeadlineRetryError(row, message);
+      } else {
+        await withPgTransaction(async (client) => {
+          await client.query(`
+            UPDATE fbs_marking_queue
+            SET available_at=CURRENT_TIMESTAMP+($2::text || ' seconds')::interval,last_error=$3,updated_at=CURRENT_TIMESTAMP
+            WHERE queue_id=$1 AND status='sent'
+          `, [row.queue_id, FBS_SGTIN_RESET_RETRY_SECONDS, message]);
+          await client.query(`
+            UPDATE fbs_fulfillment_scans SET message=$2
+            WHERE id=$1 AND result='pending'
+          `, [row.scan_id, `${message}. Повторим автоматически`]);
+        });
+      }
+    }
+  }
+
+  return preservePending;
+}
+
 async function verifySentFbsMarkingQueue() {
   const pending = await pgRows<{ order_id: number }>(`
     SELECT DISTINCT s.order_id
@@ -1176,7 +1334,7 @@ export async function attachFbsMetadata(
   const liveMetadata = await getFbsOrderMeta([orderId]);
   const live = liveMetadata.find((item) => Number(item.orderId || item.id) === orderId);
   if (!live) throw new Error(`${fbsLabelText(order)}: WB не вернул состояние маркировки. Повторите проверку позже`);
-  await persistLiveMetadata(liveMetadata);
+  await reconcileFbsLiveMetadata(liveMetadata);
   const liveAvailable = getFbsLiveAvailableMeta(live);
   const allowed = new Set([
     ...jsonArray(order.required_meta),
@@ -1256,7 +1414,7 @@ export async function attachFbsMetadata(
       try {
         await deleteFbsOrderMeta(orderId, "sgtin");
         const cleared = await getFbsOrderMeta([orderId]);
-        if (cleared.length) await persistLiveMetadata(cleared);
+        if (cleared.length) await reconcileFbsLiveMetadata(cleared);
         cleanupMessage = " Код удалён из этикетки WB.";
       } catch (cleanupError) {
         cleanupMessage = ` Автоудаление не подтверждено: ${safeMetadataError(cleanupError, value)}. Удалите код кнопкой вручную.`;
@@ -1302,7 +1460,10 @@ function metadataOrderId(item: { orderId?: number; id?: number }): number {
   return Number(item.orderId || item.id);
 }
 
-async function persistLiveMetadata(metadata: Awaited<ReturnType<typeof getFbsOrderMeta>>) {
+async function persistLiveMetadata(
+  metadata: Awaited<ReturnType<typeof getFbsOrderMeta>>,
+  preservePendingOrderIds: ReadonlySet<number> = new Set<number>(),
+) {
   const ids = metadata.map(metadataOrderId).filter(Number.isSafeInteger);
   if (!ids.length) return;
   const orders = await pgRows<OrderRow>(`SELECT * FROM fbs_fulfillment_orders WHERE order_id = ANY(?::bigint[])`, [ids]);
@@ -1325,6 +1486,11 @@ async function persistLiveMetadata(metadata: Awaited<ReturnType<typeof getFbsOrd
       ]));
       const liveSgtin = getFbsLiveMetaState(item, "sgtin");
       const decisions = getFbsSafeMetaDecisions(item);
+      if (preservePendingOrderIds.has(id)) {
+        const withoutSgtin = decisions.filter((decision) => decision.type !== "sgtin");
+        withoutSgtin.push({ type: "sgtin", decision: "pending" });
+        decisions.splice(0, decisions.length, ...withoutSgtin);
+      }
       // WB can temporarily answer `missing` for a DataMatrix it has already
       // accepted for asynchronous processing. Keep the durable scan ledger as
       // `pending` across reloads so the UI continues polling instead of asking
@@ -1349,7 +1515,7 @@ async function persistLiveMetadata(metadata: Awaited<ReturnType<typeof getFbsOrd
             verified_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
           WHERE order_id=$1 AND status IN ('queued','sending','sent','retry')
         `, [id]);
-      } else if (liveSgtin.state === "rejected") {
+      } else if (liveSgtin.state === "rejected" && !preservePendingOrderIds.has(id)) {
         const message = wbMetadataDecisionMessage(liveSgtin.decision);
         await client.query(`UPDATE fbs_fulfillment_scans SET result='error',message=$2 WHERE order_id=$1 AND scan_type='sgtin' AND result='pending'`, [id, message]);
         await client.query(`
@@ -1359,6 +1525,11 @@ async function persistLiveMetadata(metadata: Awaited<ReturnType<typeof getFbsOrd
       }
     }
   });
+}
+
+async function reconcileFbsLiveMetadata(metadata: Awaited<ReturnType<typeof getFbsOrderMeta>>) {
+  const preservePendingOrderIds = await prepareDeadlineExceededRetries(metadata);
+  await persistLiveMetadata(metadata, preservePendingOrderIds);
 }
 
 function liveMarkingErrors(
@@ -1396,7 +1567,7 @@ export async function verifyFbsMetadata(orderIds: number[]) {
   const returned = new Set(metadata.map(metadataOrderId).filter(Number.isSafeInteger));
   const missing = ids.filter((id) => !returned.has(id));
   if (missing.length) throw new Error(`WB не вернул состояние маркировки для ${missing.length} этикеток`);
-  await persistLiveMetadata(metadata);
+  await reconcileFbsLiveMetadata(metadata);
   return metadata;
 }
 
@@ -1446,7 +1617,7 @@ export async function markFbsPacked(orderIds: number[]) {
     }
   }
 
-  await persistLiveMetadata(metadata);
+  await reconcileFbsLiveMetadata(metadata);
   await withPgTransaction(async (client) => {
     await client.query(`UPDATE fbs_fulfillment_orders SET packed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE order_id = ANY($1::bigint[])`, [ids]);
     await event(client, "orders_ready_for_shipping", { message: `${ids.length} этикеток готовы к отгрузке`, details: { orderIds: ids } });
@@ -1523,7 +1694,7 @@ export async function preflightFbsSupply(supplyId: string) {
     }
     if (!supply.pvz_rules_confirmed_at) errors.push("Не подтверждены требования WB к коробам и зоне ПВЗ");
   }
-  await persistLiveMetadata(metadata);
+  await reconcileFbsLiveMetadata(metadata);
   await withPgTransaction(async (client) => {
     await event(client, "preflight", { supplyId, status: errors.length ? "error" : "ok", message: errors.length ? `${errors.length} этикеток требуют внимания` : "Все проверки пройдены" });
   });

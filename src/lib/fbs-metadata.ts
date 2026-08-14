@@ -111,7 +111,6 @@ const SUCCESSFUL_META_DECISIONS = new Set([
 
 const PENDING_META_DECISIONS = new Set([
   "pending",
-  "deadlineexceeded",
 ]);
 
 export function getFbsLiveAvailableMeta(meta: FbsLiveMeta | null | undefined): string[] {
