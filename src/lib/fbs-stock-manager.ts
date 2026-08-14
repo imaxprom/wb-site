@@ -708,7 +708,7 @@ export async function syncFbsOrganization(): Promise<Array<Record<string, unknow
   const statusesByProduct = new Map<number, FbsWbOrderStatus[]>();
   try {
     const liveWarehouses = await getFbsWarehouses();
-    await disableWarehousesMissingFromWb(liveWarehouses, claimed.map((product) => product.id));
+    await disableWarehousesMissingFromWb(liveWarehouses);
     newOrders = await getNewFbsOrders();
     const due = claimed.filter((product) => needsHistoryRecovery(product, now));
     if (due.length) {
