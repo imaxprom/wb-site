@@ -17,9 +17,11 @@ Required order for multi-organization work:
    upload and batch verification of FBS Honest Sign codes.
 6. `20260812-fbs-pvz-hardening.sql` — live WB cargo-box state and confirmed
    print state for supplies delivered through a pickup point.
-7. Tenant-aware application and background jobs select the organization schema
+7. `20260814-fbs-kiz-archive.sql` — encrypted, organization-isolated archive
+   of already applied Honest Sign codes and its immutable scan journal.
+8. Tenant-aware application and background jobs select the organization schema
    through a server-controlled PostgreSQL `search_path`.
-8. The existing legal entity remains in `public`; each additional legal entity
+9. The existing legal entity remains in `public`; each additional legal entity
    receives an empty `organization_<id>` structural clone. This keeps identical
    WB identifiers independent without rewriting the current 3.2 GB dataset.
 
