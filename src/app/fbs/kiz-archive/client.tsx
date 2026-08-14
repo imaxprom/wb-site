@@ -24,6 +24,7 @@ import type {
   FbsKizArchiveProduct,
   FbsKizArchiveSize,
   FbsKizArchiveSnapshot,
+  FbsKizMappingCandidate,
   FbsKizPrintBatch,
   FbsKizVerificationStatus,
 } from "@/lib/fbs-kiz-archive";
@@ -55,6 +56,7 @@ const EMPTY: FbsKizArchiveSnapshot = {
 };
 
 type PrintSelection = { product: FbsKizArchiveProduct; size: FbsKizArchiveSize };
+type MappingRequest = { gtin: string; candidates: FbsKizMappingCandidate[] };
 
 const STATUS_LABELS: Record<FbsKizVerificationStatus, string> = {
   online_verified: "Подтверждён TrueAPI",
@@ -108,6 +110,10 @@ export function KizArchiveClient() {
   const [printError, setPrintError] = useState("");
   const [recoveryBatch, setRecoveryBatch] = useState<FbsKizPrintBatch | null>(null);
   const [lastPrintedPosition, setLastPrintedPosition] = useState(0);
+  const [mappingRequest, setMappingRequest] = useState<MappingRequest | null>(null);
+  const [mappingQuery, setMappingQuery] = useState("");
+  const [selectedMappingKey, setSelectedMappingKey] = useState("");
+  const [mappingError, setMappingError] = useState("");
 
   useEffect(() => {
     const existed = document.documentElement.classList.contains("fbs-readable-ui");
@@ -141,7 +147,9 @@ export function KizArchiveClient() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { if (!loading && !printSelection && !recoveryBatch) inputRef.current?.focus(); }, [loading, printSelection, recoveryBatch]);
+  useEffect(() => {
+    if (!loading && !printSelection && !recoveryBatch && !mappingRequest) inputRef.current?.focus();
+  }, [loading, printSelection, recoveryBatch, mappingRequest]);
 
   const activePrintBatches = useMemo(
     () => snapshot.printBatches.filter((batch) => ["queued", "printing", "paused"].includes(batch.status)),
@@ -161,6 +169,21 @@ export function KizArchiveClient() {
       [String(product.nmId), product.vendorCode, product.productName].some((field) => field.toLowerCase().includes(normalized)),
     );
   }, [query, snapshot.products]);
+
+  const filteredMappingCandidates = useMemo(() => {
+    if (!mappingRequest) return [];
+    const normalized = mappingQuery.trim().toLowerCase();
+    if (!normalized) return mappingRequest.candidates;
+    return mappingRequest.candidates.filter((candidate) => [
+      String(candidate.nmId),
+      candidate.vendorCode,
+      candidate.productName,
+      candidate.sizeName,
+      candidate.wbSize,
+      candidate.russianSize,
+      candidate.barcode,
+    ].some((field) => field.toLowerCase().includes(normalized)));
+  }, [mappingQuery, mappingRequest]);
 
   function toggleProduct(nmId: number) {
     setExpanded((current) => {
@@ -243,6 +266,22 @@ export function KizArchiveClient() {
         body: JSON.stringify({ value }),
       });
       const payload = await response.json().catch(() => ({}));
+      if (
+        response.status === 409
+        && payload
+        && typeof payload === "object"
+        && (payload as { code?: unknown }).code === "kiz_gtin_mapping_required"
+      ) {
+        const typed = payload as { gtin?: unknown; candidates?: unknown };
+        setMappingRequest({
+          gtin: String(typed.gtin || ""),
+          candidates: Array.isArray(typed.candidates) ? typed.candidates as FbsKizMappingCandidate[] : [],
+        });
+        setMappingQuery("");
+        setSelectedMappingKey("");
+        setMappingError("");
+        return;
+      }
       if (!response.ok) throw new Error(errorText(payload, "КИЗ не удалось сохранить"));
       const typed = payload as { result: ScanResult; snapshot: FbsKizArchiveSnapshot };
       setResult(typed.result);
@@ -255,6 +294,49 @@ export function KizArchiveClient() {
       setSaving(false);
       window.setTimeout(() => inputRef.current?.focus(), 0);
     }
+  }
+
+  async function mapAndSave() {
+    if (!mappingRequest || !selectedMappingKey || saving) return;
+    const selected = mappingRequest.candidates.find((candidate) => `${candidate.nmId}:${candidate.barcode}` === selectedMappingKey);
+    if (!selected) return setMappingError("Выберите товар и размер из списка");
+    setSaving(true);
+    setMappingError("");
+    try {
+      const response = await fetch("/api/fbs/kiz-archive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "map_and_scan",
+          value,
+          nmId: selected.nmId,
+          barcode: selected.barcode,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(errorText(payload, "Не удалось сохранить сопоставление GTIN"));
+      const typed = payload as { result: ScanResult; snapshot: FbsKizArchiveSnapshot };
+      setResult(typed.result);
+      setSnapshot(typed.snapshot);
+      setExpanded((current) => new Set([...current, typed.result.item.nmId]));
+      setValue("");
+      setMappingRequest(null);
+      setSelectedMappingKey("");
+      setMappingQuery("");
+    } catch (mappingFailure) {
+      setMappingError(mappingFailure instanceof Error ? mappingFailure.message : String(mappingFailure));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function closeMapping() {
+    if (saving) return;
+    setMappingRequest(null);
+    setSelectedMappingKey("");
+    setMappingQuery("");
+    setMappingError("");
+    setValue("");
   }
 
   return <main className="mx-auto max-w-[1540px] space-y-5 pb-14">
@@ -333,6 +415,17 @@ export function KizArchiveClient() {
         {snapshot.events.map((event) => <div key={event.id} className="grid grid-cols-[160px_minmax(320px,1fr)_135px_160px_210px_140px_70px] items-center gap-3 border-t border-[var(--border)] px-4 py-3 text-center"><span className="font-mono text-sm">{event.codeTail}</span><span className="text-left">{event.nmId ? <strong className="block">WB {event.nmId}</strong> : <strong className="block text-red-400">Не определён</strong>}<span className="block text-sm text-[var(--text-muted)]">{event.productName || event.message}</span></span><strong>{event.wbSize || "—"}</strong><span>{event.russianSize || "—"}</span><span><StatusPill status={event.verificationStatus} /></span><span>{formatDate(event.createdAt)}</span><button type="button" onClick={() => setDetails(event)} className="flex h-10 w-10 items-center justify-center justify-self-center rounded-lg border border-[var(--border)] transition hover:border-[var(--accent)] hover:bg-[var(--accent)]/10" aria-label="Открыть запись журнала"><Eye size={20} /></button></div>)}
       </div></div>}
     </section>
+
+    {mappingRequest && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={closeMapping}><div className="flex max-h-[88vh] w-full max-w-[860px] flex-col overflow-hidden rounded-2xl border border-amber-500/35 bg-[var(--bg-card)] shadow-2xl" onClick={(event) => event.stopPropagation()}>
+      <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] p-5"><div><div className="text-sm font-semibold text-amber-400">ПЕРВОЕ СОПОСТАВЛЕНИЕ GTIN</div><h3 className="mt-1 text-xl font-bold">Выберите товар и размер</h3><p className="mt-1 text-sm text-[var(--text-muted)]">GTIN {mappingRequest.gtin} будет запомнен для всех следующих КИЗ этого вида.</p></div><button type="button" disabled={saving} onClick={closeMapping} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[var(--border)] transition hover:bg-[var(--bg-card-hover)] disabled:opacity-40"><X size={22} /></button></div>
+      <div className="p-5 pb-3"><div className="rounded-xl border border-amber-500/25 bg-amber-500/10 p-4 text-sm"><strong className="text-amber-400">Проверьте выбор внимательно.</strong><span className="ml-1 text-[var(--text-muted)]">Сопоставление создаётся один раз и применяется автоматически к следующим кодам с таким GTIN.</span></div><label className="mt-4 flex min-h-12 items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-4"><Search size={20} className="text-[var(--text-muted)]" /><input value={mappingQuery} onChange={(event) => setMappingQuery(event.target.value)} autoFocus className="min-w-0 flex-1 bg-transparent outline-none" placeholder="Артикул WB, название или размер" /></label></div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4"><div className="overflow-hidden rounded-xl border border-[var(--border)]">{filteredMappingCandidates.length === 0 ? <div className="p-8 text-center text-[var(--text-muted)]">Подходящий товар не найден</div> : filteredMappingCandidates.map((candidate) => {
+        const key = `${candidate.nmId}:${candidate.barcode}`;
+        const selected = key === selectedMappingKey;
+        return <button type="button" key={key} onClick={() => setSelectedMappingKey(key)} className={`grid w-full items-center gap-3 border-b border-[var(--border)] p-4 text-left transition last:border-0 md:grid-cols-[minmax(260px,1fr)_140px_150px] ${selected ? "bg-[var(--accent)]/15 ring-1 ring-inset ring-[var(--accent)]" : "hover:bg-[var(--bg-card-hover)]"}`}><span><strong className="block">WB {candidate.nmId}</strong><span className="block text-sm text-[var(--text-muted)]">{candidate.productName} · {candidate.vendorCode}</span></span><span><strong className="block">{candidate.wbSize || "—"}</strong><span className="text-sm text-[var(--text-muted)]">Размер WB</span></span><span><strong className="block">{candidate.russianSize || candidate.sizeName || "—"}</strong><span className="text-sm text-[var(--text-muted)]">Размер</span></span></button>;
+      })}</div></div>
+      <div className="border-t border-[var(--border)] p-5">{mappingError && <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">{mappingError}</div>}<div className="flex gap-3"><button type="button" disabled={saving} onClick={closeMapping} className="min-h-12 flex-1 rounded-xl border border-[var(--border)] font-semibold transition hover:bg-[var(--bg-card-hover)] disabled:opacity-40">Отмена</button><button type="button" disabled={saving || !selectedMappingKey} onClick={() => void mapAndSave()} className="flex min-h-12 flex-[1.6] items-center justify-center gap-2 rounded-xl bg-[var(--accent)] px-5 font-semibold text-white transition hover:brightness-110 disabled:opacity-40">{saving ? <RefreshCw className="animate-spin" size={20} /> : <CheckCircle2 size={20} />} Связать и сохранить КИЗ</button></div></div>
+    </div></div>}
 
     {printSelection && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4" onClick={() => !printBusy && setPrintSelection(null)}><div className="w-full max-w-[560px] rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
       <div className="flex items-start justify-between gap-4"><div><div className="text-sm font-semibold text-[var(--accent)]">ПЕЧАТЬ КИЗ</div><h3 className="mt-1 text-xl font-bold">WB {printSelection.product.nmId} · {printSelection.size.russianSize}</h3><div className="mt-1 text-sm text-[var(--text-muted)]">Доступно: {printSelection.size.available}</div></div><button type="button" disabled={printBusy} onClick={() => setPrintSelection(null)} className="flex h-11 w-11 items-center justify-center rounded-full border border-[var(--border)] transition hover:bg-[var(--bg-card-hover)] disabled:opacity-40"><X size={22} /></button></div>

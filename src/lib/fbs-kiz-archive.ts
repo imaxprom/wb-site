@@ -22,6 +22,16 @@ type OrderVariantRow = {
   skus: unknown;
 };
 
+type GtinMappingRow = {
+  gtin: string;
+  nm_id: number;
+  chrt_id: number;
+  barcode: string;
+  vendor_code: string;
+  product_name: string;
+  size_name: string;
+};
+
 type ArchiveRow = {
   archive_id: number;
   code_hash: string;
@@ -75,7 +85,7 @@ type PrintJobRow = {
   updated_at: string;
 };
 
-type CatalogVariant = {
+export type FbsKizMappingCandidate = {
   nmId: number;
   chrtId: number;
   vendorCode: string;
@@ -85,6 +95,20 @@ type CatalogVariant = {
   russianSize: string;
   barcode: string;
 };
+
+type CatalogVariant = FbsKizMappingCandidate;
+
+export class FbsKizMappingRequiredError extends Error {
+  readonly code = "kiz_gtin_mapping_required";
+
+  constructor(
+    readonly gtin: string,
+    readonly candidates: FbsKizMappingCandidate[],
+  ) {
+    super(`GTIN ${gtin} ещё не связан с артикулом и размером WB`);
+    this.name = "FbsKizMappingRequiredError";
+  }
+}
 
 export type FbsKizArchiveSize = CatalogVariant & {
   total: number;
@@ -369,6 +393,71 @@ function findCatalogVariant(catalog: CatalogVariant[], gtin: string): CatalogVar
   return null;
 }
 
+async function findMappedCatalogVariant(catalog: CatalogVariant[], gtin: string): Promise<CatalogVariant | null> {
+  const rows = await pgRows<GtinMappingRow>(`
+    SELECT gtin,nm_id,chrt_id,barcode,vendor_code,product_name,size_name
+    FROM fbs_kiz_gtin_mappings
+    WHERE gtin=?
+  `, [gtin]);
+  const mapping = rows[0];
+  if (!mapping) return findCatalogVariant(catalog, gtin);
+
+  const variant = catalog.find((candidate) =>
+    Number(candidate.nmId) === Number(mapping.nm_id)
+    && candidate.barcode === mapping.barcode
+  );
+  if (!variant) {
+    throw new Error(`Сопоставление GTIN ${gtin} устарело: товар или размер отсутствует в текущем каталоге FBS`);
+  }
+  return variant;
+}
+
+async function createGtinMapping(
+  gtin: string,
+  catalog: CatalogVariant[],
+  selection: { nmId: number; barcode: string },
+): Promise<CatalogVariant> {
+  const selected = catalog.find((candidate) =>
+    Number(candidate.nmId) === Number(selection.nmId)
+    && candidate.barcode === selection.barcode
+  );
+  if (!selected) throw new Error("Выбранный артикул или размер отсутствует в каталоге FBS");
+
+  const context = getOrganizationContext();
+  return withPgTransaction(async (client) => {
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`fbs-kiz-gtin:${gtin}`]);
+    const existing = await client.query<GtinMappingRow>(`
+      SELECT gtin,nm_id,chrt_id,barcode,vendor_code,product_name,size_name
+      FROM fbs_kiz_gtin_mappings
+      WHERE gtin=$1
+      FOR UPDATE
+    `, [gtin]);
+    if (existing.rows[0]) {
+      const current = existing.rows[0];
+      if (Number(current.nm_id) !== selected.nmId || current.barcode !== selected.barcode) {
+        throw new Error(`GTIN ${gtin} уже связан с другим артикулом или размером`);
+      }
+      return selected;
+    }
+
+    await client.query(`
+      INSERT INTO fbs_kiz_gtin_mappings (
+        gtin,nm_id,chrt_id,barcode,vendor_code,product_name,size_name,created_by_user_id
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    `, [
+      gtin,
+      selected.nmId,
+      selected.chrtId,
+      selected.barcode,
+      selected.vendorCode,
+      selected.productName,
+      selected.sizeName,
+      context?.userId || null,
+    ]);
+    return selected;
+  });
+}
+
 function onlineVerificationConfigured(): boolean {
   return Boolean(process.env.FBS_KIZ_TRUEAPI_URL?.trim() && process.env.FBS_KIZ_TRUEAPI_TOKEN?.trim());
 }
@@ -419,7 +508,7 @@ async function recordError(input: { value: string; message: string; gtin?: strin
     INSERT INTO fbs_kiz_archive_events (
       archive_id,event_type,code_hash,code_tail,nm_id,product_name,size_name,
       verification_status,message,created_by_user_id
-    ) VALUES (NULL,'error',?,?,?,?,?,'','error',?,?)
+    ) VALUES (NULL,'error',?,?,?,?,?,'error',?,?)
   `, [
     hash(normalizeFbsDataMatrix(input.value || "")),
     input.serial ? codeTail(input.serial) : "—",
@@ -431,7 +520,10 @@ async function recordError(input: { value: string; message: string; gtin?: strin
   ]).catch(() => undefined);
 }
 
-export async function addFbsKizToArchive(rawValue: string) {
+export async function addFbsKizToArchive(
+  rawValue: string,
+  mappingSelection?: { nmId: number; barcode: string },
+) {
   let parsed;
   try {
     parsed = parseFbsDataMatrix(rawValue);
@@ -445,11 +537,13 @@ export async function addFbsKizToArchive(rawValue: string) {
   }
 
   const catalog = await loadCatalog();
-  const variant = findCatalogVariant(catalog, parsed.gtin);
+  let variant = mappingSelection
+    ? await createGtinMapping(parsed.gtin, catalog, mappingSelection)
+    : await findMappedCatalogVariant(catalog, parsed.gtin);
   if (!variant) {
-    const message = `GTIN ${parsed.gtin} не сопоставлен ни с одним товаром и размером выбранного юрлица`;
+    const message = `GTIN ${parsed.gtin} ещё не связан с артикулом и размером WB`;
     await recordError({ value: parsed.value, message, gtin: parsed.gtin, serial: parsed.serial });
-    throw new Error(message);
+    throw new FbsKizMappingRequiredError(parsed.gtin, catalog);
   }
 
   let verification;

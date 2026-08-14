@@ -4,6 +4,7 @@ import { apiError } from "@/lib/api-utils";
 import {
   addFbsKizToArchive,
   createFbsKizPrintBatch,
+  FbsKizMappingRequiredError,
   getFbsKizArchiveSnapshot,
   resumeFbsKizPrintBatch,
 } from "@/lib/fbs-kiz-archive";
@@ -44,10 +45,26 @@ export async function POST(request: NextRequest) {
       const result = await resumeFbsKizPrintBatch(String(body.jobId || ""), Number(body.lastPrintedPosition));
       return NextResponse.json({ ok: true, result, snapshot: await getFbsKizArchiveSnapshot() });
     }
-    if (action !== "scan") return NextResponse.json({ error: "Неизвестное действие" }, { status: 400 });
-    const result = await addFbsKizToArchive(String(body.value || ""));
+    if (!["scan", "map_and_scan"].includes(action)) {
+      return NextResponse.json({ error: "Неизвестное действие" }, { status: 400 });
+    }
+    const result = await addFbsKizToArchive(
+      String(body.value || ""),
+      action === "map_and_scan"
+        ? { nmId: Number(body.nmId || 0), barcode: String(body.barcode || "") }
+        : undefined,
+    );
     return NextResponse.json({ ok: true, result, snapshot: await getFbsKizArchiveSnapshot() });
   } catch (error) {
+    if (error instanceof FbsKizMappingRequiredError) {
+      return NextResponse.json({
+        ok: false,
+        error: error.message,
+        code: error.code,
+        gtin: error.gtin,
+        candidates: error.candidates,
+      }, { status: 409 });
+    }
     return apiError(error);
   }
 }
