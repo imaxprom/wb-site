@@ -94,6 +94,7 @@ function StatusPill({ status }: { status: FbsKizVerificationStatus }) {
 
 export function KizArchiveClient() {
   const inputRef = useRef<HTMLInputElement>(null);
+  const selectScanValueOnFocusRef = useRef(false);
   const [snapshot, setSnapshot] = useState<FbsKizArchiveSnapshot>(EMPTY);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -148,8 +149,16 @@ export function KizArchiveClient() {
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    if (!loading && !printSelection && !recoveryBatch && !mappingRequest) inputRef.current?.focus();
-  }, [loading, printSelection, recoveryBatch, mappingRequest]);
+    if (loading || saving || printSelection || recoveryBatch || mappingRequest) return;
+    const frame = window.requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (!input || input.disabled) return;
+      input.focus({ preventScroll: true });
+      if (selectScanValueOnFocusRef.current && input.value) input.select();
+      selectScanValueOnFocusRef.current = false;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [loading, saving, printSelection, recoveryBatch, mappingRequest]);
 
   const activePrintBatches = useMemo(
     () => snapshot.printBatches.filter((batch) => ["queued", "printing", "paused"].includes(batch.status)),
@@ -256,6 +265,7 @@ export function KizArchiveClient() {
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!value || saving) return;
+    selectScanValueOnFocusRef.current = false;
     setSaving(true);
     setError("");
     setResult(null);
@@ -290,9 +300,9 @@ export function KizArchiveClient() {
       setValue("");
     } catch (scanError) {
       setError(scanError instanceof Error ? scanError.message : String(scanError));
+      selectScanValueOnFocusRef.current = true;
     } finally {
       setSaving(false);
-      window.setTimeout(() => inputRef.current?.focus(), 0);
     }
   }
 
