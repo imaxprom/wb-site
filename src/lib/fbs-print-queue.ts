@@ -528,6 +528,7 @@ export async function completeFbsPrintItem(agentId: string, jobId: string, posit
     const supplyQr = item.group_key.startsWith("supply-qr:");
     const boxQr = item.group_key.startsWith("box-qr:") || item.group_key.startsWith("box-qr-reprint:");
     const testPrint = item.group_key.startsWith("test:");
+    const kizArchive = item.group_key.startsWith("kiz-archive:");
     if (item.item_status === "printed") {
       const progress = await client.query<{ printed: number; total: number }>(`
         SELECT COUNT(*) FILTER (WHERE i.status='printed')::int AS printed,MAX(j.total_count)::int AS total
@@ -537,8 +538,42 @@ export async function completeFbsPrintItem(agentId: string, jobId: string, posit
       const printed = Number(progress.rows[0]?.printed || 0);
       return { printed, complete: printed === Number(progress.rows[0]?.total || 0) };
     }
-    await client.query(`UPDATE fbs_print_job_items SET status='printed',printed_at=CURRENT_TIMESTAMP,lease_until=NULL WHERE job_id=$1 AND position=$2`, [jobId, position]);
-    if (!supplyQr && !boxQr && !testPrint) {
+    await client.query(`
+      UPDATE fbs_print_job_items
+      SET status='printed',printed_at=CURRENT_TIMESTAMP,lease_until=NULL,
+          sticker_file=CASE WHEN $3 THEN '' ELSE sticker_file END
+      WHERE job_id=$1 AND position=$2
+    `, [jobId, position, kizArchive]);
+    if (kizArchive) {
+      const archived = await client.query<{
+        archive_id: number;
+        code_hash: string;
+        serial_tail: string;
+        nm_id: number;
+        product_name: string;
+        size_name: string;
+        verification_status: string;
+        printed_by_user_id: number | null;
+      }>(`
+        UPDATE fbs_kiz_archive
+        SET print_state='printed',value_ciphertext='',printed_at=COALESCE(printed_at,CURRENT_TIMESTAMP),updated_at=CURRENT_TIMESTAMP
+        WHERE archive_id=$1 AND print_job_id=$2 AND print_position=$3 AND print_state='reserved'
+        RETURNING archive_id,code_hash,serial_tail,nm_id,product_name,size_name,verification_status,printed_by_user_id
+      `, [item.order_id, jobId, position]);
+      const row = archived.rows[0];
+      if (!row) {
+        const state = await client.query<{ print_state: string }>(`SELECT print_state FROM fbs_kiz_archive WHERE archive_id=$1 AND print_job_id=$2`, [item.order_id, jobId]);
+        if (state.rows[0]?.print_state !== "printed") throw new Error("Зарезервированный КИЗ для печати не найден");
+      } else {
+        const tail = row.serial_tail.length <= 8 ? row.serial_tail : `…${row.serial_tail.slice(-8)}`;
+        await client.query(`
+          INSERT INTO fbs_kiz_archive_events (
+            archive_id,event_type,code_hash,code_tail,nm_id,product_name,size_name,
+            verification_status,message,created_by_user_id
+          ) VALUES ($1,'printed',$2,$3,$4,$5,$6,$7,$8,$9)
+        `, [row.archive_id, row.code_hash, tail, row.nm_id, row.product_name, row.size_name, row.verification_status, `КИЗ напечатан: позиция ${position}`, row.printed_by_user_id]);
+      }
+    } else if (!supplyQr && !boxQr && !testPrint) {
       await client.query(`UPDATE fbs_fulfillment_orders SET picked_at=COALESCE(picked_at,CURRENT_TIMESTAMP),sticker_printed_at=COALESCE(sticker_printed_at,CURRENT_TIMESTAMP),sticker_barcode=$2,updated_at=CURRENT_TIMESTAMP WHERE order_id=$1`, [item.order_id, item.sticker_barcode]);
     }
     const count = await client.query<{ count: number }>(`SELECT COUNT(*)::int AS count FROM fbs_print_job_items WHERE job_id=$1 AND status='printed'`, [jobId]);
@@ -565,6 +600,8 @@ export async function completeFbsPrintItem(agentId: string, jobId: string, posit
         await recordEvent(client, item.supply_id, item.group_key.startsWith("box-qr-reprint:") ? "box_qr_reprint_completed" : "box_qr_print_completed", item.group_key.startsWith("box-qr-reprint:") ? `QR ${item.reference_id} повторно напечатан` : `Напечатано QR грузомест: ${printed}`, { jobId, boxId: item.reference_id });
       } else if (testPrint) {
         await recordEvent(client, "__test__", "test_print_completed", "Тестовая этикетка напечатана", { jobId });
+      } else if (kizArchive) {
+        await recordEvent(client, "__kiz_archive__", "kiz_print_completed", `Напечатано КИЗ: ${printed}`, { jobId });
       } else {
         const single = item.group_key.startsWith("single:");
         const batchReprint = item.group_key.startsWith("batch-reprint:");

@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { activateAuthenticatedRequestContext, requireFbsAccess } from "@/lib/api-auth";
 import { apiError } from "@/lib/api-utils";
-import { addFbsKizToArchive, getFbsKizArchiveSnapshot } from "@/lib/fbs-kiz-archive";
+import {
+  addFbsKizToArchive,
+  createFbsKizPrintBatch,
+  getFbsKizArchiveSnapshot,
+  resumeFbsKizPrintBatch,
+} from "@/lib/fbs-kiz-archive";
 import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 
 export const runtime = "nodejs";
@@ -26,8 +31,21 @@ export async function POST(request: NextRequest) {
   if (readonlyError) return readonlyError;
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
   try {
-    const value = String(body.value || "");
-    const result = await addFbsKizToArchive(value);
+    const action = String(body.action || "scan");
+    if (action === "create_print_batch") {
+      const result = await createFbsKizPrintBatch({
+        nmId: Number(body.nmId || 0),
+        barcode: String(body.barcode || ""),
+        quantity: Number(body.quantity || 0),
+      });
+      return NextResponse.json({ ok: true, result, snapshot: await getFbsKizArchiveSnapshot() });
+    }
+    if (action === "resume_print_batch") {
+      const result = await resumeFbsKizPrintBatch(String(body.jobId || ""), Number(body.lastPrintedPosition));
+      return NextResponse.json({ ok: true, result, snapshot: await getFbsKizArchiveSnapshot() });
+    }
+    if (action !== "scan") return NextResponse.json({ error: "Неизвестное действие" }, { status: 400 });
+    const result = await addFbsKizToArchive(String(body.value || ""));
     return NextResponse.json({ ok: true, result, snapshot: await getFbsKizArchiveSnapshot() });
   } catch (error) {
     return apiError(error);

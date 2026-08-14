@@ -10,6 +10,7 @@ import {
   Eye,
   FileCheck2,
   LockKeyhole,
+  Printer,
   QrCode,
   RefreshCw,
   ScanLine,
@@ -21,7 +22,9 @@ import {
 import type {
   FbsKizArchiveEvent,
   FbsKizArchiveProduct,
+  FbsKizArchiveSize,
   FbsKizArchiveSnapshot,
+  FbsKizPrintBatch,
   FbsKizVerificationStatus,
 } from "@/lib/fbs-kiz-archive";
 
@@ -44,11 +47,14 @@ type ScanResult = {
 };
 
 const EMPTY: FbsKizArchiveSnapshot = {
-  summary: { total: 0, onlineVerified: 0, formatVerified: 0, errors24h: 0 },
+  summary: { total: 0, available: 0, reserved: 0, printed: 0, onlineVerified: 0, formatVerified: 0, errors24h: 0 },
   onlineVerificationConfigured: false,
   products: [],
+  printBatches: [],
   events: [],
 };
+
+type PrintSelection = { product: FbsKizArchiveProduct; size: FbsKizArchiveSize };
 
 const STATUS_LABELS: Record<FbsKizVerificationStatus, string> = {
   online_verified: "Подтверждён TrueAPI",
@@ -96,6 +102,12 @@ export function KizArchiveClient() {
   const [result, setResult] = useState<ScanResult | null>(null);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [details, setDetails] = useState<FbsKizArchiveEvent | null>(null);
+  const [printSelection, setPrintSelection] = useState<PrintSelection | null>(null);
+  const [printQuantity, setPrintQuantity] = useState(1);
+  const [printBusy, setPrintBusy] = useState(false);
+  const [printError, setPrintError] = useState("");
+  const [recoveryBatch, setRecoveryBatch] = useState<FbsKizPrintBatch | null>(null);
+  const [lastPrintedPosition, setLastPrintedPosition] = useState(0);
 
   useEffect(() => {
     const existed = document.documentElement.classList.contains("fbs-readable-ui");
@@ -129,7 +141,18 @@ export function KizArchiveClient() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { if (!loading) inputRef.current?.focus(); }, [loading]);
+  useEffect(() => { if (!loading && !printSelection && !recoveryBatch) inputRef.current?.focus(); }, [loading, printSelection, recoveryBatch]);
+
+  const activePrintBatches = useMemo(
+    () => snapshot.printBatches.filter((batch) => ["queued", "printing", "paused"].includes(batch.status)),
+    [snapshot.printBatches],
+  );
+
+  useEffect(() => {
+    if (!activePrintBatches.length) return;
+    const timer = window.setInterval(() => void load(true), 2000);
+    return () => window.clearInterval(timer);
+  }, [activePrintBatches.length, load]);
 
   const filteredProducts = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -146,6 +169,65 @@ export function KizArchiveClient() {
       else next.add(nmId);
       return next;
     });
+  }
+
+  function openPrint(product: FbsKizArchiveProduct, size: FbsKizArchiveSize) {
+    setPrintSelection({ product, size });
+    setPrintQuantity(Math.min(Math.max(size.available, 1), 40));
+    setPrintError("");
+  }
+
+  async function createPrintBatch() {
+    if (!printSelection || printBusy) return;
+    setPrintBusy(true);
+    setPrintError("");
+    try {
+      const response = await fetch("/api/fbs/kiz-archive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "create_print_batch",
+          nmId: printSelection.product.nmId,
+          barcode: printSelection.size.barcode,
+          quantity: printQuantity,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(errorText(payload, "Не удалось создать пачку КИЗ"));
+      setSnapshot((payload as { snapshot: FbsKizArchiveSnapshot }).snapshot);
+      setPrintSelection(null);
+    } catch (printFailure) {
+      setPrintError(printFailure instanceof Error ? printFailure.message : String(printFailure));
+    } finally {
+      setPrintBusy(false);
+    }
+  }
+
+  function openRecovery(batch: FbsKizPrintBatch) {
+    setRecoveryBatch(batch);
+    setLastPrintedPosition(batch.printed);
+    setPrintError("");
+  }
+
+  async function resumePrintBatch() {
+    if (!recoveryBatch || printBusy) return;
+    setPrintBusy(true);
+    setPrintError("");
+    try {
+      const response = await fetch("/api/fbs/kiz-archive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "resume_print_batch", jobId: recoveryBatch.jobId, lastPrintedPosition }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(errorText(payload, "Не удалось продолжить печать"));
+      setSnapshot((payload as { snapshot: FbsKizArchiveSnapshot }).snapshot);
+      setRecoveryBatch(null);
+    } catch (recoveryFailure) {
+      setPrintError(recoveryFailure instanceof Error ? recoveryFailure.message : String(recoveryFailure));
+    } finally {
+      setPrintBusy(false);
+    }
   }
 
   async function submit(event: FormEvent) {
@@ -183,7 +265,7 @@ export function KizArchiveClient() {
       </div>
       <div className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg-card)] px-4 py-3 text-sm text-[var(--text-muted)]">
         <LockKeyhole size={20} className="text-emerald-400" />
-        <span>Полный код зашифрован · перепечатка недоступна</span>
+        <span>Полный код зашифрован · после печати уничтожается</span>
       </div>
     </header>
 
@@ -193,9 +275,9 @@ export function KizArchiveClient() {
     </section>}
 
     <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4"><div className="text-sm text-[var(--text-muted)]">Всего в архиве</div><div className="mt-1 text-3xl font-bold">{formatNumber(snapshot.summary.total)}</div></div>
-      <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4"><div className="text-sm text-[var(--text-muted)]">Подтверждено TrueAPI</div><div className="mt-1 text-3xl font-bold text-emerald-400">{formatNumber(snapshot.summary.onlineVerified)}</div></div>
-      <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4"><div className="text-sm text-[var(--text-muted)]">Проверен формат</div><div className="mt-1 text-3xl font-bold text-amber-400">{formatNumber(snapshot.summary.formatVerified)}</div></div>
+      <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4"><div className="text-sm text-[var(--text-muted)]">Доступно для печати</div><div className="mt-1 text-3xl font-bold text-emerald-400">{formatNumber(snapshot.summary.available)}</div><div className="mt-1 text-xs text-[var(--text-muted)]">Всего принято: {formatNumber(snapshot.summary.total)}</div></div>
+      <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4"><div className="text-sm text-[var(--text-muted)]">Сейчас печатается</div><div className="mt-1 text-3xl font-bold text-amber-400">{formatNumber(snapshot.summary.reserved)}</div></div>
+      <div className="rounded-xl border border-[var(--accent)]/25 bg-[var(--accent)]/5 p-4"><div className="text-sm text-[var(--text-muted)]">Использовано</div><div className="mt-1 text-3xl font-bold text-[var(--accent)]">{formatNumber(snapshot.summary.printed)}</div></div>
       <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4"><div className="text-sm text-[var(--text-muted)]">Ошибки за 24 часа</div><div className="mt-1 text-3xl font-bold text-red-400">{formatNumber(snapshot.summary.errors24h)}</div></div>
     </section>
 
@@ -218,6 +300,18 @@ export function KizArchiveClient() {
       </div>
     </section>
 
+    {activePrintBatches.length > 0 && <section className="overflow-hidden rounded-2xl border border-amber-500/30 bg-[var(--bg-card)]">
+      <div className="flex items-center gap-3 border-b border-[var(--border)] p-4"><Printer className="text-amber-400" size={27} /><div><h2 className="text-xl font-bold">Печать КИЗ</h2><p className="text-sm text-[var(--text-muted)]">Прогресс обновляется автоматически.</p></div></div>
+      <div className="divide-y divide-[var(--border)]">{activePrintBatches.map((batch) => {
+        const percent = batch.total ? Math.round(batch.printed * 100 / batch.total) : 0;
+        return <div key={batch.jobId} className="grid items-center gap-4 p-4 lg:grid-cols-[minmax(260px,1fr)_minmax(280px,1.2fr)_190px]">
+          <div><strong className="block">WB {batch.nmId} · {batch.sizeName}</strong><span className="text-sm text-[var(--text-muted)]">{batch.productName}</span></div>
+          <div><div className="mb-2 flex justify-between text-sm"><span>{batch.status === "paused" ? "Печать остановлена" : batch.status === "queued" ? "Ожидает принтер" : "Печатается"}</span><strong>{batch.printed} из {batch.total}</strong></div><div className="h-3 overflow-hidden rounded-full bg-[var(--bg)]"><div className={`h-full transition-all ${batch.status === "paused" ? "bg-red-500" : "bg-amber-400"}`} style={{ width: `${percent}%` }} /></div>{batch.lastError && <div className="mt-2 text-sm text-red-400">{batch.lastError}</div>}</div>
+          {batch.status === "paused" ? <button type="button" onClick={() => openRecovery(batch)} className="min-h-12 rounded-xl bg-red-500 px-4 font-semibold text-white transition hover:brightness-110">Восстановить печать</button> : <div className="flex min-h-12 items-center justify-center gap-2 rounded-xl border border-[var(--border)] text-[var(--text-muted)]"><RefreshCw size={19} className="animate-spin" /> {batch.printed}/{batch.total}</div>}
+        </div>;
+      })}</div>
+    </section>}
+
     <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)]">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] p-4">
         <div><h2 className="text-xl font-bold">Артикулы и размеры</h2><p className="text-sm text-[var(--text-muted)]">Размерная сетка загружена из данных выбранного юрлица.</p></div>
@@ -229,7 +323,7 @@ export function KizArchiveClient() {
 
       {loading ? <div className="flex min-h-48 items-center justify-center gap-3 text-[var(--text-muted)]"><RefreshCw className="animate-spin" /> Загружаем товары…</div>
         : filteredProducts.length === 0 ? <div className="flex min-h-48 flex-col items-center justify-center px-4 text-center"><Archive size={34} className="text-[var(--text-muted)]" /><div className="mt-3 font-semibold">Подходящие товары не найдены</div><div className="mt-1 text-sm text-[var(--text-muted)]">Измените поиск или обновите каталог FBS.</div></div>
-          : <div className="divide-y divide-[var(--border)]">{filteredProducts.map((product) => <ProductBlock key={product.nmId} product={product} expanded={expanded.has(product.nmId)} onToggle={() => toggleProduct(product.nmId)} />)}</div>}
+          : <div className="divide-y divide-[var(--border)]">{filteredProducts.map((product) => <ProductBlock key={product.nmId} product={product} expanded={expanded.has(product.nmId)} onToggle={() => toggleProduct(product.nmId)} onPrint={(size) => openPrint(product, size)} />)}</div>}
     </section>
 
     <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)]">
@@ -240,9 +334,25 @@ export function KizArchiveClient() {
       </div></div>}
     </section>
 
+    {printSelection && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4" onClick={() => !printBusy && setPrintSelection(null)}><div className="w-full max-w-[560px] rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+      <div className="flex items-start justify-between gap-4"><div><div className="text-sm font-semibold text-[var(--accent)]">ПЕЧАТЬ КИЗ</div><h3 className="mt-1 text-xl font-bold">WB {printSelection.product.nmId} · {printSelection.size.russianSize}</h3><div className="mt-1 text-sm text-[var(--text-muted)]">Доступно: {printSelection.size.available}</div></div><button type="button" disabled={printBusy} onClick={() => setPrintSelection(null)} className="flex h-11 w-11 items-center justify-center rounded-full border border-[var(--border)] transition hover:bg-[var(--bg-card-hover)] disabled:opacity-40"><X size={22} /></button></div>
+      <label className="mt-5 block"><span className="text-sm font-semibold">Количество этикеток</span><input type="number" min={1} max={Math.min(500, printSelection.size.available)} value={printQuantity} onChange={(event) => setPrintQuantity(Number(event.target.value))} autoFocus className="mt-2 h-14 w-full rounded-xl border border-[var(--border)] bg-[var(--bg)] px-4 text-2xl font-bold outline-none focus:border-[var(--accent)]" /></label>
+      <div className="mt-4 rounded-xl border border-amber-500/25 bg-amber-500/10 p-4 text-sm text-[var(--text-muted)]">Система зарезервирует {printQuantity || 0} уникальных КИЗ. После подтверждённой печати они исчезнут из доступного остатка.</div>
+      {printError && <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">{printError}</div>}
+      <div className="mt-5 flex gap-3"><button type="button" disabled={printBusy} onClick={() => setPrintSelection(null)} className="min-h-12 flex-1 rounded-xl border border-[var(--border)] font-semibold transition hover:bg-[var(--bg-card-hover)] disabled:opacity-40">Отмена</button><button type="button" disabled={printBusy || printQuantity < 1 || printQuantity > printSelection.size.available || printQuantity > 500} onClick={() => void createPrintBatch()} className="flex min-h-12 flex-[1.4] items-center justify-center gap-2 rounded-xl bg-[var(--accent)] px-5 font-semibold text-white transition hover:brightness-110 disabled:opacity-40">{printBusy ? <RefreshCw className="animate-spin" size={20} /> : <Printer size={20} />} Печатать {printQuantity || 0}</button></div>
+    </div></div>}
+
+    {recoveryBatch && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4" onClick={() => !printBusy && setRecoveryBatch(null)}><div className="w-full max-w-[620px] rounded-2xl border border-red-500/35 bg-[var(--bg-card)] p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+      <div className="flex items-start justify-between gap-4"><div><div className="text-sm font-semibold text-red-400">ВОССТАНОВЛЕНИЕ ПЕЧАТИ</div><h3 className="mt-1 text-xl font-bold">WB {recoveryBatch.nmId} · {recoveryBatch.sizeName}</h3></div><button type="button" disabled={printBusy} onClick={() => setRecoveryBatch(null)} className="flex h-11 w-11 items-center justify-center rounded-full border border-[var(--border)] transition hover:bg-[var(--bg-card-hover)]"><X size={22} /></button></div>
+      <div className="mt-4 rounded-xl border border-red-500/25 bg-red-500/10 p-4"><strong className="block text-red-400">Проверьте физические этикетки</strong><span className="mt-1 block text-sm text-[var(--text-muted)]">На каждой этикетке указан номер вида 18/{recoveryBatch.total}. Введите номер последней нормально вышедшей этикетки. Следующая позиция будет отправлена на печать заново.</span></div>
+      <label className="mt-5 block"><span className="text-sm font-semibold">Последняя напечатанная позиция</span><input type="number" min={recoveryBatch.printed} max={recoveryBatch.total} value={lastPrintedPosition} onChange={(event) => setLastPrintedPosition(Number(event.target.value))} autoFocus className="mt-2 h-14 w-full rounded-xl border border-[var(--border)] bg-[var(--bg)] px-4 text-2xl font-bold outline-none focus:border-red-400" /><span className="mt-2 block text-sm text-[var(--text-muted)]">Допустимо: от {recoveryBatch.printed} до {recoveryBatch.total}</span></label>
+      {printError && <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">{printError}</div>}
+      <div className="mt-5 flex gap-3"><button type="button" disabled={printBusy} onClick={() => setRecoveryBatch(null)} className="min-h-12 flex-1 rounded-xl border border-[var(--border)] font-semibold transition hover:bg-[var(--bg-card-hover)]">Закрыть</button><button type="button" disabled={printBusy || lastPrintedPosition < recoveryBatch.printed || lastPrintedPosition > recoveryBatch.total} onClick={() => void resumePrintBatch()} className="min-h-12 flex-[1.5] rounded-xl bg-red-500 px-5 font-semibold text-white transition hover:brightness-110 disabled:opacity-40">Продолжить с позиции {Math.min(lastPrintedPosition + 1, recoveryBatch.total)}</button></div>
+    </div></div>}
+
     {details && <div className="fixed inset-0 z-50 flex justify-end bg-black/60" onClick={() => setDetails(null)}><aside className="h-full w-full max-w-[560px] overflow-y-auto border-l border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
       <div className="flex items-start justify-between gap-4"><div><div className="text-sm font-semibold text-[var(--accent)]">ЗАПИСЬ ЖУРНАЛА</div><h3 className="mt-1 text-xl font-bold">{details.codeTail}</h3></div><button type="button" onClick={() => setDetails(null)} className="flex h-11 w-11 items-center justify-center rounded-full border border-[var(--border)] transition hover:bg-[var(--bg-card-hover)]"><X size={22} /></button></div>
-      <div className="mt-5 rounded-xl border border-[var(--border)] bg-[var(--bg)] p-4"><div className="flex items-center gap-3"><ShieldCheck className="text-[var(--accent)]" size={28} /><div><div className="font-semibold">Полный код недоступен в интерфейсе</div><div className="text-sm text-[var(--text-muted)]">Он хранится в зашифрованном виде и не может быть перепечатан.</div></div></div></div>
+      <div className="mt-5 rounded-xl border border-[var(--border)] bg-[var(--bg)] p-4"><div className="flex items-center gap-3"><ShieldCheck className="text-[var(--accent)]" size={28} /><div><div className="font-semibold">Полный код недоступен в интерфейсе</div><div className="text-sm text-[var(--text-muted)]">До печати он зашифрован. После подтверждённой печати полный код удаляется.</div></div></div></div>
       <dl className="mt-5 divide-y divide-[var(--border)] rounded-xl border border-[var(--border)]">{[
         ["Артикул WB", details.nmId ? String(details.nmId) : "Не определён"],
         ["Товар", details.productName || "—"],
@@ -256,17 +366,17 @@ export function KizArchiveClient() {
   </main>;
 }
 
-function ProductBlock({ product, expanded, onToggle }: { product: FbsKizArchiveProduct; expanded: boolean; onToggle: () => void }) {
+function ProductBlock({ product, expanded, onToggle, onPrint }: { product: FbsKizArchiveProduct; expanded: boolean; onToggle: () => void; onPrint: (size: FbsKizArchiveSize) => void }) {
   return <div>
     <button type="button" onClick={onToggle} className="grid w-full items-center gap-4 px-4 py-4 text-left transition hover:bg-[var(--bg-card-hover)] md:grid-cols-[34px_minmax(330px,1fr)_150px_170px]">
       <span className="text-[var(--text-muted)]">{expanded ? <ChevronDown size={24} /> : <ChevronRight size={24} />}</span>
       <span><strong className="block text-lg">WB {product.nmId}</strong><span className="block text-sm text-[var(--text-muted)]">{product.productName} · {product.vendorCode}</span></span>
       <span><strong className="block text-xl">{product.sizes.length}</strong><span className="text-sm text-[var(--text-muted)]">размеров</span></span>
-      <span><strong className="block text-xl">{product.total}</strong><span className="text-sm text-[var(--text-muted)]">КИЗ в архиве</span></span>
+      <span><strong className="block text-xl text-emerald-400">{product.available}</strong><span className="text-sm text-[var(--text-muted)]">доступно</span></span>
     </button>
-    {expanded && <div className="overflow-x-auto border-t border-[var(--border)] bg-[var(--bg)]/55"><div className="min-w-[930px]">
-      <div className="grid grid-cols-[150px_160px_minmax(250px,1fr)_130px_160px_160px] gap-3 px-5 py-3 text-center text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]"><span>Размер WB</span><span>Размер</span><span>ШК товара</span><span>Всего</span><span>TrueAPI</span><span>Формат</span></div>
-      {product.sizes.map((size) => <div key={`${product.nmId}-${size.barcode}`} className="grid grid-cols-[150px_160px_minmax(250px,1fr)_130px_160px_160px] items-center gap-3 border-t border-[var(--border)]/70 px-5 py-3 text-center"><strong>{size.wbSize}</strong><span>{size.russianSize}</span><span className="font-mono text-sm">{size.barcode}</span><strong>{size.total}</strong><span className={size.onlineVerified ? "font-semibold text-emerald-400" : "text-[var(--text-muted)]"}>{size.onlineVerified}</span><span className={size.formatVerified ? "font-semibold text-amber-400" : "text-[var(--text-muted)]"}>{size.formatVerified}</span></div>)}
+    {expanded && <div className="overflow-x-auto border-t border-[var(--border)] bg-[var(--bg)]/55"><div className="min-w-[1120px]">
+      <div className="grid grid-cols-[130px_140px_minmax(220px,1fr)_130px_130px_130px_190px] gap-3 px-5 py-3 text-center text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]"><span>Размер WB</span><span>Размер</span><span>ШК товара</span><span>Доступно</span><span>В печати</span><span>Использовано</span><span>Действие</span></div>
+      {product.sizes.map((size) => <div key={`${product.nmId}-${size.barcode}`} className="grid grid-cols-[130px_140px_minmax(220px,1fr)_130px_130px_130px_190px] items-center gap-3 border-t border-[var(--border)]/70 px-5 py-3 text-center"><strong>{size.wbSize}</strong><span>{size.russianSize}</span><span className="font-mono text-sm">{size.barcode}</span><strong className={size.available ? "text-emerald-400" : "text-[var(--text-muted)]"}>{size.available}</strong><span className={size.reserved ? "font-semibold text-amber-400" : "text-[var(--text-muted)]"}>{size.reserved}</span><span className="text-[var(--text-muted)]">{size.printed}</span><button type="button" disabled={size.available < 1 || size.reserved > 0} onClick={() => onPrint(size)} className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[var(--accent)] px-4 font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-[var(--bg-card-hover)] disabled:text-[var(--text-muted)]"><Printer size={19} /> Печать</button></div>)}
     </div></div>}
   </div>;
 }

@@ -2,7 +2,8 @@
 
 -- Organization-isolated archive of already applied Honest Sign codes.
 -- Raw Data Matrix values are encrypted by the application before insert and
--- are never returned by the API. The archive intentionally has no print flow.
+-- are never returned by the API. Batch printing is added by the subsequent
+-- 20260814-fbs-kiz-printing.sql migration.
 BEGIN;
 
 CREATE TABLE IF NOT EXISTS public.fbs_kiz_archive (

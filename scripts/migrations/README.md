@@ -19,9 +19,11 @@ Required order for multi-organization work:
    print state for supplies delivered through a pickup point.
 7. `20260814-fbs-kiz-archive.sql` — encrypted, organization-isolated archive
    of already applied Honest Sign codes and its immutable scan journal.
-8. Tenant-aware application and background jobs select the organization schema
+8. `20260814-fbs-kiz-printing.sql` — per-code reservation/consumption state and
+   durable print-agent recovery for archive batch printing.
+9. Tenant-aware application and background jobs select the organization schema
    through a server-controlled PostgreSQL `search_path`.
-9. The existing legal entity remains in `public`; each additional legal entity
+10. The existing legal entity remains in `public`; each additional legal entity
    receives an empty `organization_<id>` structural clone. This keeps identical
    WB identifiers independent without rewriting the current 3.2 GB dataset.
 
