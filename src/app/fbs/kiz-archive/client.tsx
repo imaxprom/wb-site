@@ -28,6 +28,7 @@ import type {
   FbsKizPrintBatch,
   FbsKizVerificationStatus,
 } from "@/lib/fbs-kiz-archive";
+import { captureFbsScannerKey, normalizeFbsScannerFieldValue } from "@/lib/fbs-scanner-input-client";
 
 type ScanResult = {
   duplicate: boolean;
@@ -362,7 +363,7 @@ export function KizArchiveClient() {
         <div>
           <div className="flex items-center gap-3"><span className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--accent)]/15 text-[var(--accent)]"><ScanLine size={27} /></span><h2 className="text-xl font-bold">Отсканируйте нанесённый Data Matrix</h2></div>
           <form onSubmit={submit} className="mt-4 flex gap-3">
-            <input ref={inputRef} value={value} onChange={(event) => setValue(event.target.value)} disabled={saving} className="min-h-14 min-w-0 flex-1 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-4 font-mono text-sm outline-none transition focus:border-[var(--accent)] disabled:opacity-60" placeholder="Поле готово к сканированию" autoComplete="off" />
+            <input ref={inputRef} value={value} onKeyDown={(event) => captureFbsScannerKey(event, setValue)} onChange={(event) => setValue(normalizeFbsScannerFieldValue(event.target.value))} disabled={saving} className="min-h-14 min-w-0 flex-1 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-4 font-mono text-sm outline-none transition focus:border-[var(--accent)] disabled:opacity-60" placeholder="Поле готово к сканированию" autoComplete="off" />
             <button type="submit" disabled={!value || saving} className="min-h-14 shrink-0 rounded-xl bg-[var(--accent)] px-6 font-semibold text-white transition hover:brightness-110 disabled:opacity-45">{saving ? "Проверяем…" : "Проверить и сохранить"}</button>
           </form>
         </div>

@@ -1,3 +1,5 @@
+import { normalizeFbsScannerKeyboardText } from "@/lib/fbs-scanner-input";
+
 const GROUP_SEPARATOR = "\u001d";
 const AIM_GS1_DATAMATRIX_PREFIX = "]d2";
 
@@ -33,7 +35,7 @@ function validGs1Text(value: string): boolean {
  * the code is significant and must never be trimmed or replaced.
  */
 export function normalizeFbsDataMatrix(raw: string): string {
-  const withoutTerminator = raw.replace(/[\r\n]+$/g, "");
+  const withoutTerminator = normalizeFbsScannerKeyboardText(raw.replace(/[\r\n]+$/g, ""));
   return withoutTerminator.startsWith(AIM_GS1_DATAMATRIX_PREFIX)
     ? withoutTerminator.slice(AIM_GS1_DATAMATRIX_PREFIX.length)
     : withoutTerminator;

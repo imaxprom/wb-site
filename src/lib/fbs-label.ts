@@ -1,10 +1,9 @@
+import { normalizeFbsScannerKeyboardText } from "@/lib/fbs-scanner-input";
+
 type StickerSource = {
   sticker_barcode?: unknown;
   raw_json?: Record<string, unknown> | null;
 };
-
-const RU_KEYS = "ёйцукенгшщзхъфывапролджэячсмитьбюЁЙЦУКЕНГШЩЗХЪФЫВАПРОЛДЖЭЯЧСМИТЬБЮ";
-const EN_KEYS = "`qwertyuiop[]asdfghjkl;'zxcvbnm,.~QWERTYUIOP{}ASDFGHJKL:\"ZXCVBNM<>";
 
 function withoutScannerSuffix(value: string): string {
   return value.replace(/[\r\n]+$/g, "").trim();
@@ -12,13 +11,6 @@ function withoutScannerSuffix(value: string): string {
 
 function withoutAimPrefix(value: string): string {
   return value.replace(/^\](?:C[0123456]|d[0123456]|Q[0123456])/, "");
-}
-
-function switchRussianKeyboardToEnglish(value: string): string {
-  return Array.from(value, (character) => {
-    const index = RU_KEYS.indexOf(character);
-    return index >= 0 ? EN_KEYS[index] : character;
-  }).join("");
 }
 
 function addStickerVariants(target: Set<string>, value: string) {
@@ -37,7 +29,7 @@ function addStickerVariants(target: Set<string>, value: string) {
  */
 export function fbsStickerScanVariants(rawValue: string): string[] {
   const exact = withoutScannerSuffix(rawValue);
-  const keyboardFixed = switchRussianKeyboardToEnglish(exact);
+  const keyboardFixed = normalizeFbsScannerKeyboardText(exact);
   const result = new Set<string>();
   addStickerVariants(result, exact);
   addStickerVariants(result, keyboardFixed);
