@@ -65,6 +65,11 @@ export function fbsEnglishScannerCharacter(event: FbsScannerKeyboardEvent): stri
   if (event.ctrlKey || event.altKey || event.metaKey) return null;
 
   if (/^Key[A-Z]$/.test(event.code)) {
+    // `event.key` already contains the case that the scanner actually sent.
+    // Rebuilding it from `shiftKey` loses Caps Lock/scanner case-conversion
+    // state and corrupts mixed-case WB sticker barcodes. Normalize only the
+    // keyboard layout here; keep physical-key reconstruction for punctuation.
+    if (event.key.length === 1) return normalizeFbsScannerKeyboardText(event.key);
     const letter = event.code.slice(3);
     return event.shiftKey ? letter : letter.toLowerCase();
   }
