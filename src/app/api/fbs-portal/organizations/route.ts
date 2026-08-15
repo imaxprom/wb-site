@@ -2,14 +2,26 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFbsPortalSession } from "@/lib/fbs-portal-auth";
 import { isFbsPortalHostname } from "@/lib/fbs-portal-host";
 import { createOrganizationCookie, ORGANIZATION_COOKIE_MAX_AGE, ORGANIZATION_COOKIE_NAME } from "@/lib/organization-cookie";
+import { enterOrganizationContext } from "@/lib/organization-context";
+import { getFbsKizArchiveEnabled } from "@/lib/fbs-kiz-archive-access";
 import { pgGet } from "@/lib/postgres";
 
 export async function GET(request: NextRequest) {
   if (!isFbsPortalHostname(request.headers.get("host"))) return new NextResponse("Not found", { status: 404 });
   const session = await getFbsPortalSession(request);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  enterOrganizationContext({
+    organizationId: session.organization.id,
+    userId: session.user.id,
+    organizationRole: session.user.is_admin ? "admin" : "member",
+    source: "request",
+  });
+  const kizArchiveEnabled = session.organization.can_assembly
+    ? await getFbsKizArchiveEnabled()
+    : false;
   return NextResponse.json({
     activeOrganizationId: session.organization.id,
+    kizArchiveEnabled,
     user: {
       id: session.user.id,
       email: session.user.email,

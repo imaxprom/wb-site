@@ -9,6 +9,7 @@ import { getFbsPrinterIndicator, type FbsPrintAgent } from "@/lib/fbs-printer-st
 
 type PortalPayload = {
   activeOrganizationId: number;
+  kizArchiveEnabled: boolean;
   user: { id: number; email: string; name: string; isAdmin: boolean };
   organizations: Array<{
     id: number; displayName: string; legalName: string; inn: string | null;
@@ -54,6 +55,17 @@ export function FbsPortalShell({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("fbs-organization-renamed", organizationRenamed);
   }, []);
 
+  useEffect(() => {
+    function archiveVisibilityChanged(event: Event) {
+      const enabled = (event as CustomEvent<{ enabled?: boolean }>).detail?.enabled;
+      if (typeof enabled !== "boolean") return;
+      setPayload((current) => current ? { ...current, kizArchiveEnabled: enabled } : current);
+      if (!enabled && pathname.startsWith("/fbs/kiz-archive")) window.location.assign("/fbs");
+    }
+    window.addEventListener("fbs-kiz-archive-visibility-changed", archiveVisibilityChanged);
+    return () => window.removeEventListener("fbs-kiz-archive-visibility-changed", archiveVisibilityChanged);
+  }, [pathname]);
+
   const active = useMemo(() => payload?.organizations.find((organization) => organization.id === payload.activeOrganizationId) || payload?.organizations[0], [payload]);
   useEffect(() => {
     if (!active?.canAssembly) {
@@ -98,7 +110,7 @@ export function FbsPortalShell({ children }: { children: React.ReactNode }) {
         : "bg-slate-400";
   const primaryItems = [
     ...(active?.canAssembly ? [{ href: "/fbs", label: "FBS Сборка", icon: ClipboardCheck }] : []),
-    ...(active?.canAssembly ? [{ href: "/fbs/kiz-archive", label: "Архив КИЗ", icon: ScanQrCode }] : []),
+    ...(active?.canAssembly && payload?.kizArchiveEnabled ? [{ href: "/fbs/kiz-archive", label: "Архив КИЗ", icon: ScanQrCode }] : []),
     ...(active?.canAssembly ? [{ href: "/printer", label: "Принтер", icon: Printer }] : []),
   ];
   const bottomItems = [

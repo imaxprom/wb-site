@@ -2,6 +2,7 @@ import { headers } from "next/headers";
 import { FbsApiKeySettings } from "@/components/FbsApiKeySettings";
 import { FbsOrganizationNameSettings } from "@/components/FbsOrganizationNameSettings";
 import { FbsMarkingSettings } from "@/components/FbsMarkingSettings";
+import { FbsKizArchiveSettings } from "@/components/FbsKizArchiveSettings";
 import { MphubSettingsPage } from "@/components/MphubSettingsPage";
 import { isFbsPortalHostname } from "@/lib/fbs-portal-host";
 import { requireFbsPortalAdminPage } from "@/lib/fbs-portal-page-auth";
@@ -17,6 +18,7 @@ export default async function SettingsPage() {
     </header>
     <FbsOrganizationNameSettings />
     <FbsMarkingSettings />
+    <FbsKizArchiveSettings />
     <FbsApiKeySettings />
     <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4 text-sm text-[var(--text-muted)]">Настройка применяется только к выбранному справа юрлицу. Ключи двух кабинетов хранятся раздельно.</div>
   </main>;

@@ -9,6 +9,7 @@ import {
   resumeFbsKizPrintBatch,
 } from "@/lib/fbs-kiz-archive";
 import { localReadonlyGuard } from "@/lib/local-readonly-guard";
+import { getFbsKizArchiveEnabled } from "@/lib/fbs-kiz-archive-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +18,9 @@ export async function GET(request: NextRequest) {
   const authError = await requireFbsAccess(request, "assembly");
   if (authError) return authError;
   activateAuthenticatedRequestContext(request);
+  if (!await getFbsKizArchiveEnabled()) {
+    return NextResponse.json({ error: "Архив КИЗ отключён для выбранного юрлица" }, { status: 403 });
+  }
   try {
     return NextResponse.json({ ok: true, snapshot: await getFbsKizArchiveSnapshot() });
   } catch (error) {
@@ -28,6 +32,9 @@ export async function POST(request: NextRequest) {
   const authError = await requireFbsAccess(request, "assembly", { mutation: true });
   if (authError) return authError;
   activateAuthenticatedRequestContext(request);
+  if (!await getFbsKizArchiveEnabled()) {
+    return NextResponse.json({ error: "Архив КИЗ отключён для выбранного юрлица" }, { status: 403 });
+  }
   const readonlyError = localReadonlyGuard("FBS KIZ archive mutation");
   if (readonlyError) return readonlyError;
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
