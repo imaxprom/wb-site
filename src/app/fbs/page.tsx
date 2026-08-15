@@ -330,14 +330,6 @@ export default function FbsPage() {
   }, []);
 
   useEffect(() => {
-    const readableModeWasEnabled = document.documentElement.classList.contains("fbs-readable-ui");
-    document.documentElement.classList.add("fbs-readable-ui");
-    return () => {
-      if (!readableModeWasEnabled) document.documentElement.classList.remove("fbs-readable-ui");
-    };
-  }, []);
-
-  useEffect(() => {
     if (!assemblyStatusPanel) return;
     const previousOverflow = document.body.style.overflow;
     const closeOnEscape = (event: KeyboardEvent) => {

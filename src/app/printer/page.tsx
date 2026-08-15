@@ -55,14 +55,6 @@ export default function PrinterPage() {
   const [testJobId, setTestJobId] = useState("");
   const [testOutcome, setTestOutcome] = useState<"" | "waiting" | "confirm">("");
 
-  useEffect(() => {
-    const readableModeWasEnabled = document.documentElement.classList.contains("fbs-readable-ui");
-    document.documentElement.classList.add("fbs-readable-ui");
-    return () => {
-      if (!readableModeWasEnabled) document.documentElement.classList.remove("fbs-readable-ui");
-    };
-  }, []);
-
   const load = useCallback(async (quiet = false) => {
     try {
       const response = await fetch("/api/fbs?printer=1", { cache: "no-store" });

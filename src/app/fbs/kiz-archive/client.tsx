@@ -114,14 +114,6 @@ export function KizArchiveClient() {
   const [selectedMappingKey, setSelectedMappingKey] = useState("");
   const [mappingError, setMappingError] = useState("");
 
-  useEffect(() => {
-    const existed = document.documentElement.classList.contains("fbs-readable-ui");
-    document.documentElement.classList.add("fbs-readable-ui");
-    return () => {
-      if (!existed) document.documentElement.classList.remove("fbs-readable-ui");
-    };
-  }, []);
-
   const load = useCallback(async (quiet = false) => {
     if (quiet) setRefreshing(true);
     else setLoading(true);

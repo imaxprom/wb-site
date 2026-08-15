@@ -150,14 +150,6 @@ export default function FbsStockPage() {
   const editorRef = useRef<HTMLElement | null>(null);
   const quantityInputRef = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => {
-    const readableModeWasEnabled = document.documentElement.classList.contains("fbs-readable-ui");
-    document.documentElement.classList.add("fbs-readable-ui");
-    return () => {
-      if (!readableModeWasEnabled) document.documentElement.classList.remove("fbs-readable-ui");
-    };
-  }, []);
-
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
