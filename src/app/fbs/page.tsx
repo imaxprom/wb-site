@@ -12,6 +12,7 @@ import FbsPickSheet from "@/components/FbsPickSheet";
 import { parseFbsDataMatrix } from "@/lib/fbs-datamatrix";
 import { fbsLabelText, fbsStickerNumber } from "@/lib/fbs-label";
 import { captureFbsScannerKey, normalizeFbsScannerFieldValue } from "@/lib/fbs-scanner-input-client";
+import { playFbsScanTone } from "@/lib/fbs-scan-tone";
 import {
   DEFAULT_FBS_MARKING_POLICY,
   getFbsEffectiveRequiredMeta,
@@ -261,28 +262,6 @@ function assemblySgtinErrorMessage(order: Order, status?: AssemblyMarkingStatus)
     sgtinnotbelongproduct: "Код не относится к этому товару",
   };
   return messages[decision] || (decision ? `WB отклонил код маркировки: ${decision}` : "WB отклонил код — пересканируйте");
-}
-
-function playScanTone(success: boolean) {
-  if (success) return;
-  try {
-    const context = new AudioContext();
-    const oscillator = context.createOscillator();
-    const gain = context.createGain();
-    oscillator.type = "square";
-    oscillator.frequency.setValueAtTime(650, context.currentTime);
-    oscillator.frequency.setValueAtTime(420, context.currentTime + 0.3);
-    gain.gain.setValueAtTime(0.95, context.currentTime);
-    gain.gain.setValueAtTime(0.95, context.currentTime + 0.5);
-    gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.7);
-    oscillator.connect(gain);
-    gain.connect(context.destination);
-    oscillator.start();
-    oscillator.stop(context.currentTime + 0.7);
-    oscillator.addEventListener("ended", () => void context.close(), { once: true });
-  } catch {
-    // Visual feedback remains available if the browser blocks audio.
-  }
 }
 
 export default function FbsPage() {
@@ -732,7 +711,7 @@ export default function FbsPage() {
           setAssemblyMarkingMessage(message);
           setAssemblyMarkingError(message);
           setError(message);
-          playScanTone(false);
+          playFbsScanTone(false);
         }
       } catch {
         // The durable server queue will retry; scanning must not stop on a transient poll failure.
@@ -789,11 +768,11 @@ export default function FbsPage() {
     const rejected = resolved.find(metaRejected);
     if (rejected) {
       setAssemblyMarkingMessage(`${fbsLabelText(rejected)}: ${assemblySgtinErrorMessage(rejected)}`);
-      playScanTone(false);
+      playFbsScanTone(false);
     } else {
       const accepted = resolved[resolved.length - 1];
       setAssemblyMarkingMessage(`${fbsLabelText(accepted)}: «Честный знак» принят WB`);
-      playScanTone(true);
+      playFbsScanTone(true);
     }
   }, [activeStep, assemblySgtinStateKey]);
 
@@ -1160,13 +1139,13 @@ export default function FbsPage() {
         setAssemblyMarkingOrderId(order.order_id);
         setAssemblyMarkingMessage(`${fbsLabelText(order)} найдена. Отсканируйте «Честный знак»`);
         setAssemblyMarkingError("");
-        playScanTone(true);
+        playFbsScanTone(true);
       } catch (cause) {
         const message = cause instanceof Error ? cause.message : "Не удалось распознать этикетку WB";
         setAssemblyMarkingMessage(message);
         setAssemblyMarkingError(message);
         setError(message);
-        playScanTone(false);
+        playFbsScanTone(false);
       } finally {
         setAssemblyMarkingBusy(false);
         focusAssemblyMarkingScanner(true);
@@ -1181,7 +1160,7 @@ export default function FbsPage() {
       setAssemblyMarkingMessage(message);
       setAssemblyMarkingError(message);
       setError(message);
-      playScanTone(false);
+      playFbsScanTone(false);
       focusAssemblyMarkingScanner(true);
       return;
     }
@@ -1192,7 +1171,7 @@ export default function FbsPage() {
     setAssemblyMarkingError("");
     setAssemblyMarkingStatus((current) => ({ ...current, [orderId]: { state: "sending", message: "Отправляем WB", updatedAt: new Date().toISOString() } }));
     setAssemblyMarkingMessage(`${label}: «Честный знак» отправляется WB. Сканируйте следующую этикетку WB`);
-    playScanTone(true);
+    playFbsScanTone(true);
     focusAssemblyMarkingScanner(true);
 
     void compactFbsAction({ action: "attach_assembly_sgtin", orderId, value })
@@ -1209,7 +1188,7 @@ export default function FbsPage() {
         setAssemblyMarkingMessage(`${label}: ${message}`);
         setAssemblyMarkingError(`${label}: ${message}`);
         setError(`${label}: ${message}`);
-        playScanTone(false);
+        playFbsScanTone(false);
       });
   }
 

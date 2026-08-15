@@ -29,6 +29,7 @@ import type {
   FbsKizVerificationStatus,
 } from "@/lib/fbs-kiz-archive";
 import { captureFbsScannerKey, normalizeFbsScannerFieldValue } from "@/lib/fbs-scanner-input-client";
+import { playFbsScanTone } from "@/lib/fbs-scan-tone";
 
 type ScanResult = {
   duplicate: boolean;
@@ -298,6 +299,7 @@ export function KizArchiveClient() {
     } catch (scanError) {
       setError(scanError instanceof Error ? scanError.message : String(scanError));
       selectScanValueOnFocusRef.current = true;
+      playFbsScanTone(false);
     } finally {
       setSaving(false);
     }
@@ -332,6 +334,7 @@ export function KizArchiveClient() {
       setMappingQuery("");
     } catch (mappingFailure) {
       setMappingError(mappingFailure instanceof Error ? mappingFailure.message : String(mappingFailure));
+      playFbsScanTone(false);
     } finally {
       setSaving(false);
     }
