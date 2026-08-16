@@ -110,12 +110,12 @@ export function FbsPortalShell({ children }: { children: React.ReactNode }) {
         : "bg-slate-400";
   const primaryItems = [
     ...(active?.canAssembly ? [{ href: "/fbs", label: "FBS Сборка", icon: ClipboardCheck }] : []),
-    ...(active?.canAssembly ? [{ href: "/fbs/archive", label: "Архив поставок", icon: Archive }] : []),
     ...(active?.canAssembly && payload?.kizArchiveEnabled ? [{ href: "/fbs/kiz-archive", label: "Архив КИЗ", icon: ScanQrCode }] : []),
     ...(active?.canAssembly ? [{ href: "/printer", label: "Принтер", icon: Printer }] : []),
   ];
   const bottomItems = [
     ...(active?.canStock ? [{ href: "/fbs-stock", label: "FBS Управление остатками", icon: Boxes }] : []),
+    ...(active?.canAssembly ? [{ href: "/fbs/archive", label: "Архив поставок", icon: Archive }] : []),
     ...(payload?.user.isAdmin ? [{ href: "/users", label: "Сотрудники", icon: Users }] : []),
     ...(payload?.user.isAdmin ? [{ href: "/settings", label: "Настройки", icon: Settings }] : []),
   ];
