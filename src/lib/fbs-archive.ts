@@ -535,6 +535,30 @@ async function performArchiveSync(forceFull = false): Promise<SyncResult> {
   const warnings: string[] = [];
   const supplies = await getFbsSupplies();
   await upsertSupplies(supplies);
+  const locallyKnownSupplies = await pgRows<{
+    supply_id: string;
+    name: string;
+    done: boolean;
+    created_at_wb: string | null;
+    closed_at_wb: string | null;
+    scan_at_wb: string | null;
+  }>(`
+    SELECT supply_id,name,done,created_at_wb,closed_at_wb,scan_at_wb
+    FROM fbs_fulfillment_supplies
+  `);
+  const supplyById = new Map<string, FbsWbSupply>(supplies.map((supply) => [supply.id, supply]));
+  for (const supply of locallyKnownSupplies) {
+    if (supplyById.has(supply.supply_id)) continue;
+    supplyById.set(supply.supply_id, {
+      id: supply.supply_id,
+      name: supply.name,
+      done: supply.done,
+      createdAt: supply.created_at_wb || undefined,
+      closedAt: supply.closed_at_wb,
+      scanDt: supply.scan_at_wb,
+    });
+  }
+  const suppliesForReconciliation = Array.from(supplyById.values());
 
   const now = new Date();
   const oldestLiveSupply = supplies.map((supply) => new Date(String(supply.createdAt || "")))
@@ -588,7 +612,7 @@ async function performArchiveSync(forceFull = false): Promise<SyncResult> {
     }
   }
   await upsertOrders(Array.from(incoming.values()));
-  const memberships = await reconcileMemberships(supplies, full);
+  const memberships = await reconcileMemberships(suppliesForReconciliation, full);
   await importFinancialHistory();
   let salesMatched = 0;
   try {
@@ -609,7 +633,7 @@ async function performArchiveSync(forceFull = false): Promise<SyncResult> {
   });
   return {
     full,
-    supplies: supplies.length,
+    supplies: suppliesForReconciliation.length,
     orders: incoming.size,
     archivedOrders,
     membershipsChecked: memberships.checked,
