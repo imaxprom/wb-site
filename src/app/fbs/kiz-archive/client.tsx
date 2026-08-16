@@ -363,10 +363,10 @@ export function KizArchiveClient() {
           </form>
         </div>
 
-        <div className={`flex min-h-[128px] items-center rounded-xl border p-4 ${error ? "border-red-500/30 bg-red-500/10" : result ? (result.item.verificationStatus === "online_verified" ? "border-emerald-500/30 bg-emerald-500/10" : "border-amber-500/30 bg-amber-500/10") : "border-[var(--border)] bg-[var(--bg)]"}`}>
+        <div className={`flex min-h-[128px] items-center rounded-xl border p-4 ${error ? "border-red-500/30 bg-red-500/10" : result ? "border-emerald-500/30 bg-emerald-500/10" : "border-[var(--border)] bg-[var(--bg)]"}`}>
           {saving ? <div className="flex items-center gap-3"><RefreshCw size={30} className="animate-spin text-[var(--accent)]" /><div><div className="font-semibold">Проверяем КИЗ</div><div className="text-sm text-[var(--text-muted)]">Формат, GTIN, товар и размер</div></div></div>
             : error ? <div className="flex items-start gap-3"><TriangleAlert size={30} className="mt-0.5 shrink-0 text-red-400" /><div><div className="font-semibold text-red-400">КИЗ не сохранён</div><div className="mt-1 text-sm text-[var(--text-muted)]">{error}</div></div></div>
-              : result ? <div className="w-full"><div className={`flex items-center gap-2 font-semibold ${result.item.verificationStatus === "online_verified" ? "text-emerald-400" : "text-amber-400"}`}><CheckCircle2 size={25} />{result.duplicate ? "КИЗ уже был в архиве" : "КИЗ проверен и сохранён"}</div><div className="mt-2 text-sm">WB {result.item.nmId} · {result.item.wbSize} / {result.item.russianSize}</div><div className="text-sm text-[var(--text-muted)]">{result.item.unitRef}</div></div>
+              : result ? <div className="w-full"><div className="flex items-center gap-2 font-semibold text-emerald-400"><CheckCircle2 size={25} />{result.duplicate ? "КИЗ уже был в архиве" : "КИЗ проверен и сохранён"}</div><div className="mt-2 text-sm">WB {result.item.nmId} · {result.item.wbSize} / {result.item.russianSize}</div><div className="text-sm text-[var(--text-muted)]">{result.item.unitRef}</div></div>
                 : <div className="flex items-center gap-3 text-[var(--text-muted)]"><QrCode size={30} /><div><div className="font-semibold text-[var(--text)]">Ожидаем код</div><div className="text-sm">Сканер уже в фокусе</div></div></div>}
         </div>
       </div>
