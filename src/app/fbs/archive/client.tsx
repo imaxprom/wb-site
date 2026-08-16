@@ -395,14 +395,25 @@ export function FbsSupplyArchiveClient() {
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div><h2 className="text-xl font-bold">Заказы по дням</h2><p className="text-sm text-[var(--text-muted)]">Каждый заказ относится к одному текущему результату и учитывается по дате заказа.</p></div>
         </div>
-        <div className="h-[430px] w-full">
+        <div className="relative isolate h-[430px] w-full overflow-visible">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={overview.days.map((day) => ({ ...day, label: shortDate(day.date) }))} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
               <CartesianGrid stroke="#2a2a3a" strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="label" stroke="#8888a0" minTickGap={24} />
               <YAxis stroke="#8888a0" allowDecimals={false} />
-              <Tooltip contentStyle={{ background: "#12121a", border: "1px solid #2a2a3a", borderRadius: 12 }} labelStyle={{ color: "#e4e4ef" }} />
-              <Legend />
+              <Tooltip
+                wrapperStyle={{ zIndex: 50, pointerEvents: "none" }}
+                contentStyle={{
+                  backgroundColor: "#12121a",
+                  border: "1px solid #2a2a3a",
+                  borderRadius: 12,
+                  boxShadow: "0 14px 36px rgba(0, 0, 0, 0.55)",
+                  opacity: 1,
+                }}
+                labelStyle={{ color: "#e4e4ef" }}
+                itemStyle={{ backgroundColor: "#12121a" }}
+              />
+              <Legend wrapperStyle={{ zIndex: 1 }} />
               {BUCKETS.map((bucket) => <Bar key={bucket.key} dataKey={bucket.key} name={bucket.label} stackId="orders" fill={bucket.color} radius={bucket.key === "unknown" ? [3, 3, 0, 0] : undefined} />)}
             </BarChart>
           </ResponsiveContainer>
