@@ -537,9 +537,17 @@ async function performArchiveSync(forceFull = false): Promise<SyncResult> {
   await upsertSupplies(supplies);
 
   const now = new Date();
-  const oldestSupply = supplies.map((supply) => new Date(String(supply.createdAt || "")))
+  const oldestLiveSupply = supplies.map((supply) => new Date(String(supply.createdAt || "")))
     .filter((date) => Number.isFinite(date.getTime()))
     .sort((left, right) => left.getTime() - right.getTime())[0];
+  const localOldestRow = await pgGet<{ created_at_wb: string | null }>(`
+    SELECT MIN(created_at_wb) AS created_at_wb FROM fbs_fulfillment_supplies
+  `);
+  const oldestLocalSupply = localOldestRow?.created_at_wb ? new Date(localOldestRow.created_at_wb) : null;
+  const oldestSupply = oldestLocalSupply && Number.isFinite(oldestLocalSupply.getTime())
+    && (!oldestLiveSupply || oldestLocalSupply < oldestLiveSupply)
+    ? oldestLocalSupply
+    : oldestLiveSupply;
   const recentFloor = new Date(now.getTime() - (full ? 93 : 30) * 24 * 60 * 60_000);
   const recentFrom = oldestSupply && oldestSupply > recentFloor ? oldestSupply : recentFloor;
   const recentOrders: FbsWbOrder[] = [];
