@@ -69,6 +69,59 @@ const BUCKETS: Array<{ key: FbsArchiveBucket; label: string; color: string; pill
 
 const BUCKET_BY_KEY = new Map(BUCKETS.map((bucket) => [bucket.key, bucket]));
 
+const EXACT_STATUS_LABELS: Record<string, string> = {
+  "new/waiting": "Новое задание",
+  "confirm/waiting": "На сборке",
+  "complete/waiting": "В пути",
+  "complete/sorted": "Отсортирован",
+  "complete/postponed_delivery": "Доставка перенесена",
+  "complete/accepted_by_carrier": "Принят перевозчиком",
+  "complete/sent_to_carrier": "Передан перевозчику",
+  "complete/ready_for_pickup": "Готов к получению",
+  "complete/sold": "Выкуплен",
+  "new/declined_by_client": "Отменён до отгрузки",
+  "confirm/declined_by_client": "Отменён до отгрузки",
+  "complete/declined_by_client": "Отменён до отгрузки",
+  "new/canceled_by_client": "Отказ покупателя",
+  "confirm/canceled_by_client": "Отказ покупателя",
+  "complete/canceled_by_client": "Отказ покупателя в ПВЗ",
+  "complete/defect": "Брак",
+  "new/canceled": "Отменён",
+  "confirm/canceled": "Отменён",
+  "complete/canceled": "Отменён",
+  "cancel/canceled": "Отменён продавцом",
+};
+
+const SUPPLIER_STATUS_LABELS: Record<string, string> = {
+  new: "Новое задание",
+  confirm: "На сборке",
+  complete: "Передан в доставку",
+  cancel: "Отменён продавцом",
+};
+
+const WB_STATUS_LABELS: Record<string, string> = {
+  waiting: "Ожидает обработки",
+  sorted: "Отсортирован",
+  postponed_delivery: "Доставка перенесена",
+  accepted_by_carrier: "Принят перевозчиком",
+  sent_to_carrier: "Передан перевозчику",
+  ready_for_pickup: "Готов к получению",
+  sold: "Выкуплен",
+  declined_by_client: "Отменён до отгрузки",
+  canceled_by_client: "Отказ покупателя",
+  defect: "Брак",
+  canceled: "Отменён",
+};
+
+function localizedOrderStatus(supplierStatus: string, wbStatus: string): string {
+  const exact = EXACT_STATUS_LABELS[`${supplierStatus}/${wbStatus}`];
+  if (exact) return exact;
+  const supplier = SUPPLIER_STATUS_LABELS[supplierStatus];
+  const wb = WB_STATUS_LABELS[wbStatus];
+  if (supplier && wb && supplier !== wb) return `${supplier} · ${wb}`;
+  return wb || supplier || "Статус уточняется";
+}
+
 function errorText(payload: unknown, fallback: string): string {
   if (payload && typeof payload === "object" && "error" in payload) {
     return String((payload as { error?: unknown }).error || fallback);
@@ -127,7 +180,7 @@ function OrderTable({ orders }: { orders: FbsArchiveOrderDetail[] }) {
       </thead>
       <tbody>
         {orders.map((order) => {
-          const sticker = order.sticker_barcode || (order.sticker_id ? String(order.sticker_id) : "—");
+          const sticker = order.sticker_number || "Номер не сохранён";
           return <tr key={order.order_id} className="border-t border-[var(--border)] align-middle hover:bg-[var(--bg-card-hover)]">
             <td className="px-4 py-3">
               <div className="flex min-w-[360px] items-center gap-3">
@@ -150,12 +203,12 @@ function OrderTable({ orders }: { orders: FbsArchiveOrderDetail[] }) {
             <td className="px-4 py-3">
               <BucketPill bucket={order.bucket} />
               {order.return_at && <div className="mt-1 text-fuchsia-300">Возврат: {formatDate(order.return_at)}</div>}
-              <div className="mt-1 text-[var(--text-muted)]">{order.supplier_status} / {order.wb_status}</div>
+              <div className="mt-1 text-[var(--text-muted)]">{localizedOrderStatus(order.supplier_status, order.wb_status)}</div>
               {order.status_history.length > 1 && <details className="mt-2">
                 <summary className="cursor-pointer text-[var(--accent)]">История статусов</summary>
                 <div className="mt-2 space-y-1 border-l border-[var(--border)] pl-3">
                   {order.status_history.map((event, index) => <div key={`${event.supplier_status}-${event.wb_status}-${index}`}>
-                    <span>{event.supplier_status} / {event.wb_status}</span>
+                    <span>{localizedOrderStatus(event.supplier_status, event.wb_status)}</span>
                     <span className="ml-2 text-[var(--text-muted)]">с {formatDate(event.first_observed_at)}</span>
                   </div>)}
                 </div>

@@ -79,6 +79,7 @@ export type FbsArchiveOrderDetail = {
   order_uid: string;
   rid: string;
   sticker_id: number | null;
+  sticker_number: string;
   sticker_barcode: string;
   supply_id: string;
   warehouse_id: number | null;
@@ -808,7 +809,9 @@ export async function getFbsArchiveSupplyDetails(supplyId: string): Promise<{ su
   )`;
   const orders = await pgRows<Omit<FbsArchiveOrderDetail, "status_history">>(`
     ${returnedCte}
-    SELECT o.order_id,o.order_uid,o.rid,o.sticker_id,o.sticker_barcode,o.supply_id,
+    SELECT o.order_id,o.order_uid,o.rid,o.sticker_id,
+      COALESCE(NULLIF(o.raw_json->>'_mphubStickerNumber',''),NULLIF(o.sticker_id::text,''),'') AS sticker_number,
+      o.sticker_barcode,o.supply_id,
       o.warehouse_id,COALESCE(NULLIF(o.raw_json->>'_mphubWarehouseName',''),'') AS warehouse_name,
       o.nm_id,o.chrt_id,o.vendor_code,o.product_name,o.size_name,o.photo_url,o.skus,
       o.supplier_status,o.wb_status,${BUCKET_SQL} AS bucket,o.created_at_wb,o.status_synced_at,ret.return_at
