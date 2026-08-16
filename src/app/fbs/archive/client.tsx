@@ -27,6 +27,7 @@ import {
 } from "recharts";
 import type {
   FbsArchiveBucket,
+  FbsArchiveDay,
   FbsArchiveOrderDetail,
   FbsArchiveOverview,
   FbsArchiveSupplySummary,
@@ -68,6 +69,17 @@ const BUCKETS: Array<{ key: FbsArchiveBucket; label: string; color: string; pill
 ];
 
 const BUCKET_BY_KEY = new Map(BUCKETS.map((bucket) => [bucket.key, bucket]));
+const TOOLTIP_BUCKET_ORDER: FbsArchiveBucket[] = [
+  "sold",
+  "pickup",
+  "transit",
+  "refused",
+  "assembly",
+  "early_cancel",
+  "returned",
+  "issue",
+  "unknown",
+];
 
 const EXACT_STATUS_LABELS: Record<string, string> = {
   "new/waiting": "Новое задание",
@@ -156,6 +168,38 @@ function supplyStatus(supply: FbsArchiveSupplySummary) {
 function BucketPill({ bucket }: { bucket: FbsArchiveBucket }) {
   const config = BUCKET_BY_KEY.get(bucket) || BUCKET_BY_KEY.get("unknown")!;
   return <span className={cn("inline-flex rounded-lg border px-2.5 py-1 text-sm font-semibold", config.pill)}>{config.label}</span>;
+}
+
+function OrdersChartTooltip({
+  active,
+  label,
+  payload,
+}: {
+  active?: boolean;
+  label?: string | number;
+  payload?: Array<{ payload?: FbsArchiveDay & { label?: string } }>;
+}) {
+  const day = payload?.[0]?.payload;
+  if (!active || !day) return null;
+  return <div className="min-w-[260px] rounded-xl border border-[#2a2a3a] bg-[#12121a] p-3 text-[#e4e4ef] opacity-100 shadow-[0_14px_36px_rgba(0,0,0,0.55)]">
+    <div className="mb-2 text-sm font-semibold text-[#a7a7bb]">{String(label || day.label || day.date)}</div>
+    <div className="flex items-center justify-between gap-6 border-b border-[#2a2a3a] pb-2 text-base font-bold">
+      <span>Всего заказов</span>
+      <span className="tabular-nums">{Number(day.total || 0).toLocaleString("ru-RU")}</span>
+    </div>
+    <div className="mt-2 space-y-1.5">
+      {TOOLTIP_BUCKET_ORDER.map((key) => {
+        const bucket = BUCKET_BY_KEY.get(key)!;
+        return <div key={key} className="flex items-center justify-between gap-6 text-sm">
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ backgroundColor: bucket.color }} />
+            <span>{bucket.label}</span>
+          </span>
+          <strong className="tabular-nums">{Number(day[key] || 0).toLocaleString("ru-RU")}</strong>
+        </div>;
+      })}
+    </div>
+  </div>;
 }
 
 function MetricCard({ label, value, icon, tone }: { label: string; value: number; icon: React.ReactNode; tone: string }) {
@@ -403,15 +447,7 @@ export function FbsSupplyArchiveClient() {
               <YAxis stroke="#8888a0" allowDecimals={false} />
               <Tooltip
                 wrapperStyle={{ zIndex: 50, pointerEvents: "none" }}
-                contentStyle={{
-                  backgroundColor: "#12121a",
-                  border: "1px solid #2a2a3a",
-                  borderRadius: 12,
-                  boxShadow: "0 14px 36px rgba(0, 0, 0, 0.55)",
-                  opacity: 1,
-                }}
-                labelStyle={{ color: "#e4e4ef" }}
-                itemStyle={{ backgroundColor: "#12121a" }}
+                content={<OrdersChartTooltip />}
               />
               <Legend wrapperStyle={{ zIndex: 1 }} />
               {BUCKETS.map((bucket) => <Bar key={bucket.key} dataKey={bucket.key} name={bucket.label} stackId="orders" fill={bucket.color} radius={bucket.key === "unknown" ? [3, 3, 0, 0] : undefined} />)}
