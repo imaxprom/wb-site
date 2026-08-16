@@ -549,7 +549,13 @@ async function performArchiveSync(forceFull = false): Promise<SyncResult> {
     ? oldestLocalSupply
     : oldestLiveSupply;
   const recentFloor = new Date(now.getTime() - (full ? 93 : 30) * 24 * 60 * 60_000);
-  const recentFrom = oldestSupply && oldestSupply > recentFloor ? oldestSupply : recentFloor;
+  // The regular orders method still returns part of the boundary month that
+  // is not yet present in WB's month archive. During a full pass query both
+  // sources with overlap and deduplicate by order ID; otherwise supplies near
+  // the three-month boundary can look empty even though order-ids is complete.
+  const recentFrom = full && oldestSupply
+    ? oldestSupply
+    : oldestSupply && oldestSupply > recentFloor ? oldestSupply : recentFloor;
   const recentOrders: FbsWbOrder[] = [];
   for (let cursor = new Date(recentFrom); cursor < now;) {
     const end = new Date(Math.min(now.getTime(), cursor.getTime() + 29 * 24 * 60 * 60_000));
