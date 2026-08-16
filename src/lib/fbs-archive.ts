@@ -526,6 +526,21 @@ async function importFinancialHistory(): Promise<void> {
   `).catch(() => undefined);
 }
 
+async function backfillLocallyObservedStatuses(): Promise<void> {
+  await pgGet(`
+    INSERT INTO fbs_order_status_events (
+      order_id,supplier_status,wb_status,source,raw_json
+    )
+    SELECT
+      o.order_id,o.supplier_status,o.wb_status,'local_snapshot',
+      jsonb_build_object('archiveSource',o.archive_source,'statusSyncedAt',o.status_synced_at)
+    FROM fbs_fulfillment_orders o
+    WHERE o.supplier_status<>'' AND o.wb_status<>''
+    ON CONFLICT (order_id,supplier_status,wb_status) DO NOTHING
+    RETURNING id
+  `).catch(() => undefined);
+}
+
 async function performArchiveSync(forceFull = false): Promise<SyncResult> {
   const archiveState = await pgGet<{ last_success_at: string | null }>(`
     SELECT last_success_at FROM fbs_archive_sync_state WHERE source='archive'
@@ -613,6 +628,11 @@ async function performArchiveSync(forceFull = false): Promise<SyncResult> {
   }
   await upsertOrders(Array.from(incoming.values()));
   const memberships = await reconcileMemberships(suppliesForReconciliation, full);
+  // Some completed orders remain in the verified supply composition after WB
+  // has stopped returning them from both order list endpoints. Preserve the
+  // status already observed by the operational sync so every archived order
+  // still has an auditable baseline without inventing a historical WB time.
+  await backfillLocallyObservedStatuses();
   await importFinancialHistory();
   let salesMatched = 0;
   try {

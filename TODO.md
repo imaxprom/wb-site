@@ -1,6 +1,6 @@
 # MpHub TODO
 
-Last updated: 2026-08-13 00:56 MSK.
+Last updated: 2026-08-16 19:07 MSK.
 
 ## High Priority
 
@@ -12,7 +12,7 @@ Last updated: 2026-08-13 00:56 MSK.
 
 ## Current FBS Follow-Up
 
-- После первого production backfill архива поставок сверить для обоих юрлиц: WB verified order count, локальный состав, неизвестные статусы и события возврата по srid/rid. Фоновый `fbs-archive-sync.sh` должен работать каждые 10 минут без пересечения tenant-схем.
+- Мониторить `/fbs/archive` после новых отгрузок: cron `fbs-archive-sync.sh` работает каждые 10 минут, составы обеих организаций сверены с WB без расхождений, неизвестных статусов и sync errors. Реальные возвраты считать только по событиям `srid=rid`.
 - On organization 2, open PVZ supply `WB-GI-264053929` and print the main supply QR. Cargo-place QR `WB-MP-48974219` is already printed; do not initiate this print remotely without the user.
 - Verify the UI then permits “Finish cycle” only after `qr_printed_at` is confirmed by the print agent.
 - Monitor future partial WB add failures: actual live membership must be persisted, attached orders move to assembly, rejected orders stay in New, and sync must reconcile open supplies.
@@ -21,7 +21,7 @@ Last updated: 2026-08-13 00:56 MSK.
 
 ## Production Checks
 
-- Clean-baseline release `/home/makson/releases/20260812-220325` с marker `production-baseline-2026-08-13-final` проверен; после следующего approved release PM2 должен работать из нового active cwd с нулём неожиданных рестартов.
+- После каждого release PM2 должен работать из нового active cwd с нулём неожиданных рестартов; `/fbs/archive` и фоновый архивный cron входят в обязательную production-проверку.
 - После baseline release проверить marker, PM2 cwd/restarts, `/login`, FBS portal login, обе организации и production 404 для debug/test URL.
 - Не возвращать в deploy runtime data/env, generated reports, Android build/APK/debug.keystore, `.codex` и локальные visual test routes.
 - Production snapshot at 23:44 MSK: shipment products 69, stock 922, orders 263364; reviews 159734; use a fresh snapshot for later factual answers.
