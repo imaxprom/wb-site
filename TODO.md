@@ -12,6 +12,7 @@ Last updated: 2026-08-13 00:56 MSK.
 
 ## Current FBS Follow-Up
 
+- После первого production backfill архива поставок сверить для обоих юрлиц: WB verified order count, локальный состав, неизвестные статусы и события возврата по srid/rid. Фоновый `fbs-archive-sync.sh` должен работать каждые 10 минут без пересечения tenant-схем.
 - On organization 2, open PVZ supply `WB-GI-264053929` and print the main supply QR. Cargo-place QR `WB-MP-48974219` is already printed; do not initiate this print remotely without the user.
 - Verify the UI then permits “Finish cycle” only after `qr_printed_at` is confirmed by the print agent.
 - Monitor future partial WB add failures: actual live membership must be persisted, attached orders move to assembly, rejected orders stay in New, and sync must reconcile open supplies.

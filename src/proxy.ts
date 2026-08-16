@@ -187,7 +187,8 @@ export async function proxy(req: NextRequest) {
       pathname === "/api/data/sync" ||
       pathname === "/api/supply-reports/sync" ||
       pathname === "/api/shipment/cart-stock" ||
-      pathname === "/api/fbs-stock/sync"
+      pathname === "/api/fbs-stock/sync" ||
+      pathname === "/api/fbs/archive"
     )
   ) {
     return NextResponse.next();

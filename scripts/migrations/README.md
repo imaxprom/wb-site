@@ -23,9 +23,11 @@ Required order for multi-organization work:
    durable print-agent recovery for archive batch printing.
 9. `20260814-fbs-kiz-gtin-mapping.sql` — explicit tenant-isolated mapping from
    Honest Sign GTIN to the exact WB article and size when the WB barcode differs.
-10. Tenant-aware application and background jobs select the organization schema
+10. `20260816-fbs-supply-archive.sql` — immutable FBS identifiers, observed
+    status history, sale/return events and resumable archive sync state.
+11. Tenant-aware application and background jobs select the organization schema
    through a server-controlled PostgreSQL `search_path`.
-11. The existing legal entity remains in `public`; each additional legal entity
+12. The existing legal entity remains in `public`; each additional legal entity
    receives an empty `organization_<id>` structural clone. This keeps identical
    WB identifiers independent without rewriting the current 3.2 GB dataset.
 

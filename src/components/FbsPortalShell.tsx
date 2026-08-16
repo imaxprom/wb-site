@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Boxes, ChevronLeft, ClipboardCheck, LogOut, Pin, Printer, ScanQrCode, Settings, Users, Warehouse } from "lucide-react";
+import { Archive, Boxes, ChevronLeft, ClipboardCheck, LogOut, Pin, Printer, ScanQrCode, Settings, Users, Warehouse } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getFbsPrinterIndicator, type FbsPrintAgent } from "@/lib/fbs-printer-status";
 
@@ -110,6 +110,7 @@ export function FbsPortalShell({ children }: { children: React.ReactNode }) {
         : "bg-slate-400";
   const primaryItems = [
     ...(active?.canAssembly ? [{ href: "/fbs", label: "FBS Сборка", icon: ClipboardCheck }] : []),
+    ...(active?.canAssembly ? [{ href: "/fbs/archive", label: "Архив поставок", icon: Archive }] : []),
     ...(active?.canAssembly && payload?.kizArchiveEnabled ? [{ href: "/fbs/kiz-archive", label: "Архив КИЗ", icon: ScanQrCode }] : []),
     ...(active?.canAssembly ? [{ href: "/printer", label: "Принтер", icon: Printer }] : []),
   ];
@@ -156,8 +157,8 @@ export function FbsPortalShell({ children }: { children: React.ReactNode }) {
       </div>
       <nav className="flex-1 overflow-y-auto py-4">
         {primaryItems.map((item) => {
-          const archivePath = pathname.startsWith("/fbs/kiz-archive");
-          const selected = pathname === item.href || (item.href !== "/fbs" && pathname.startsWith(`${item.href}/`)) || (item.href === "/fbs" && !archivePath && pathname.startsWith(`${item.href}/`));
+          const nestedFbsPath = pathname.startsWith("/fbs/kiz-archive") || pathname.startsWith("/fbs/archive");
+          const selected = pathname === item.href || (item.href !== "/fbs" && pathname.startsWith(`${item.href}/`)) || (item.href === "/fbs" && !nestedFbsPath && pathname.startsWith(`${item.href}/`));
           const printerItem = item.href === "/printer";
           return <Link key={item.href} href={item.href} onClick={() => setMobileOpen(false)} title={expanded ? undefined : printerItem ? `${item.label}: ${printerIndicator.label}` : item.label} className={cn("flex items-center py-3 text-base transition-colors", expanded ? "gap-3 px-5" : "justify-center px-3", selected ? "border-r-2 border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]" : "text-[var(--text-muted)] hover:bg-[var(--bg-card-hover)] hover:text-[var(--text)]")}><span className="relative shrink-0"><item.icon size={21} className={cn("shrink-0", printerItem && printerColor)} />{printerItem && <span className={cn("absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border-2 border-[var(--bg-card)]", printerDot)} aria-hidden="true" />}</span>{expanded && <span className="flex min-w-0 flex-1 items-center justify-between gap-2"><span>{item.label}</span>{printerItem && <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", printerDot)} title={printerIndicator.label} />}</span>}</Link>;
         })}

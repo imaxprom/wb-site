@@ -15,6 +15,7 @@ PATH=/usr/local/bin:/usr/bin:/bin
 0 5 * * * cd /home/makson/current && /usr/bin/node scripts/run-for-organizations.js -- /bin/bash scripts/supply-reports-sync.sh > /dev/null 2>&1
 0 3,11,19 * * * cd /home/makson/current && /bin/bash scripts/cart-stock-sync.sh > /dev/null 2>&1
 * * * * * cd /home/makson/current && /bin/bash scripts/fbs-stock-sync.sh > /dev/null 2>&1
+*/10 * * * * cd /home/makson/current && /bin/bash scripts/fbs-archive-sync.sh > /dev/null 2>&1
 
 */5 * * * * cd /home/makson/current && /usr/bin/python3 scripts/vps-watchdog.py >> data/watchdog.log 2>&1
 42 * * * * cd /home/makson/current && /bin/bash scripts/data-health-cron.sh >> data/data-health-cron.log 2>&1

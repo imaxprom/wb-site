@@ -38,6 +38,28 @@ export interface FbsWbOrder {
   [key: string]: unknown;
 }
 
+export interface FbsWbArchivedOrder {
+  id: number;
+  supplyId?: string;
+  orderUid?: string;
+  rid?: string;
+  createdAt?: string;
+  stickerId?: number;
+  warehouseId?: number;
+  cargoType?: number;
+  status?: {
+    supplierStatus?: string;
+    wbStatus?: string;
+  };
+  product?: {
+    nmId?: number;
+    chrtId?: number;
+    article?: string;
+    skus?: string[];
+  };
+  [key: string]: unknown;
+}
+
 export type FbsMetaType = "sgtin" | "uin" | "imei" | "gtin" | "expiration" | "customsDeclaration";
 
 export interface FbsWbSupply {
@@ -520,6 +542,37 @@ export async function getFbsOrdersSince(dateFrom: Date, dateTo = new Date()): Pr
     const payload = await wbFetch<{ next?: number; orders?: FbsWbOrder[] }>(
       MARKETPLACE_API,
       `/api/v3/orders?${query.toString()}`,
+    );
+    const pageOrders = Array.isArray(payload.orders) ? payload.orders : [];
+    orders.push(...pageOrders);
+    const nextValue = Number(payload.next || 0);
+    if (pageOrders.length < 1000 || !nextValue || nextValue === next) break;
+    next = nextValue;
+    await delay(220);
+  }
+  return orders;
+}
+
+/**
+ * WB keeps older FBS assembly orders in a separate year/month archive. The
+ * response already contains the immutable supplyId, rid, sticker and final
+ * status, so it is the authoritative source for rebuilding closed supplies.
+ */
+export async function getFbsArchivedOrders(year: number, month: number): Promise<FbsWbArchivedOrder[]> {
+  if (!Number.isSafeInteger(year) || year < 2020 || year > 2100) throw new Error("Некорректный год архива FBS");
+  if (!Number.isSafeInteger(month) || month < 1 || month > 12) throw new Error("Некорректный месяц архива FBS");
+  const orders: FbsWbArchivedOrder[] = [];
+  let next = 0;
+  for (let page = 0; page < 100; page += 1) {
+    const query = new URLSearchParams({
+      year: String(year),
+      month: String(month),
+      next: String(next),
+      limit: "1000",
+    });
+    const payload = await wbFetch<{ next?: number; orders?: FbsWbArchivedOrder[] }>(
+      MARKETPLACE_API,
+      `/api/marketplace/v3/fbs/orders/archive?${query.toString()}`,
     );
     const pageOrders = Array.isArray(payload.orders) ? payload.orders : [];
     orders.push(...pageOrders);

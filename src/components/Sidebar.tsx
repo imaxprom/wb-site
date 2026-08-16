@@ -21,6 +21,7 @@ import {
   ClipboardCheck,
   Printer,
   ScanQrCode,
+  Archive,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -45,6 +46,7 @@ const NAV_GROUPS: NavItem[][] = [
     { href: "/warehouse", label: "Склад", icon: Warehouse },
     { href: "/fbs-stock", label: "FBS Управление остатками", icon: Boxes },
     { href: "/fbs", label: "FBS Сборка", icon: ClipboardCheck },
+    { href: "/fbs/archive", label: "Архив поставок", icon: Archive },
     { href: "/fbs/kiz-archive", label: "Архив КИЗ", icon: ScanQrCode },
     { href: "/printer", label: "Принтер", icon: Printer },
     { href: "/supplies", label: "Поставки", icon: Package },
@@ -216,7 +218,7 @@ export function Sidebar({
                 />
               )}
               {group.filter((item) => !item.systemAdmin || isSystemAdmin).map((item) => {
-                const isArchive = pathname.startsWith("/fbs/kiz-archive");
+                const isArchive = pathname.startsWith("/fbs/kiz-archive") || pathname.startsWith("/fbs/archive");
                 const isActive = !item.external && (pathname === item.href || (item.href !== "/fbs" && pathname.startsWith(item.href + "/"))) && !(item.href === "/fbs" && isArchive);
                 const className = cn(
                   "flex items-center text-base transition-colors",
