@@ -33,6 +33,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const body = await request.json().catch(() => ({})) as { full?: unknown };
   if (!isCronRequest(request)) {
     const authError = await requireFbsAccess(request, "assembly", { mutation: true });
     if (authError) return authError;
@@ -40,7 +41,6 @@ export async function POST(request: NextRequest) {
     const readonlyError = localReadonlyGuard("FBS archive sync");
     if (readonlyError) return readonlyError;
     try {
-      const body = await request.json().catch(() => ({})) as { full?: unknown };
       return NextResponse.json({ ok: true, result: await syncFbsArchive({ full: body.full === true }) });
     } catch (error) {
       return apiError(error);
@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
           userId: null,
           organizationRole: "owner",
           source: "job",
-        }, () => syncFbsArchive());
+        }, () => syncFbsArchive({ full: body.full === true }));
         results.push({ organizationId: Number(organization.id), name: organization.display_name, ok: true, result });
       } catch (error) {
         results.push({
