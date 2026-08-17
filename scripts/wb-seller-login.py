@@ -541,20 +541,49 @@ def supplier_matches_query(name, query):
     return bool(query_words) and all(word in normalized_name for word in query_words)
 
 def collect_supplier_elements(page, header_only=False):
-    items = []
+    """Collect visible supplier rows in one browser evaluation.
+
+    The previous implementation made a Playwright round-trip for every DOM node.
+    On the current seller portal that can take over a minute and outlive the HTTP
+    request which submitted the SMS code.
+    """
+    try:
+        raw_items = page.evaluate(
+            """(headerOnly) => {
+                const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+                const entityName = /(^|\\s)(ИП|ООО|АО|Самозанят)\\s+/i;
+                const visible = (el) => {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+                };
+                const selector = "button,a,[role='button'],[role='option'],[role='menuitem'],label,li,div,span";
+                return Array.from(document.querySelectorAll(selector))
+                    .filter(visible)
+                    .map((el) => {
+                        const rect = el.getBoundingClientRect();
+                        return {
+                            text: normalize(el.innerText || el.textContent || ''),
+                            x: rect.x,
+                            y: rect.y,
+                            width: rect.width,
+                            height: rect.height,
+                        };
+                    })
+                    .filter((item) => item.text.length >= 3 && item.text.length <= 320 && entityName.test(item.text))
+                    .filter((item) => !headerOnly || (item.y < 130 && item.x > window.innerWidth * 0.45));
+            }""",
+            header_only,
+        )
+    except Exception:
+        raw_items = []
+
     by_key = {}
-    for el in page.query_selector_all("*"):
+    for raw_item in raw_items or []:
         try:
-            if not el.is_visible():
-                continue
-            raw_text = el.inner_text()
+            raw_text = raw_item.get("text", "")
             names = supplier_names_from_text(raw_text)
             if not names:
-                continue
-            box = el.bounding_box()
-            if not box:
-                continue
-            if header_only and not (box["x"] > 900 and box["y"] < 90):
                 continue
             for name in names:
                 entity = parse_legal_entity_text(raw_text, name) or {"name": name, "id": "", "supplierId": ""}
@@ -563,18 +592,17 @@ def collect_supplier_elements(page, header_only=False):
                     "name": name,
                     "text": normalize_supplier_name(raw_text),
                     "entity": entity,
-                    "x": box["x"],
-                    "y": box["y"],
-                    "width": box["width"],
-                    "height": box["height"],
-                    "el": el,
+                    "x": raw_item.get("x", 0),
+                    "y": raw_item.get("y", 0),
+                    "width": raw_item.get("width", 0),
+                    "height": raw_item.get("height", 0),
                 }
                 previous = by_key.get(key)
-                if previous is None or box["width"] * box["height"] < previous["width"] * previous["height"]:
+                if previous is None or item["width"] * item["height"] < previous["width"] * previous["height"]:
                     by_key[key] = item
         except Exception:
             pass
-    items.extend(by_key.values())
+    items = list(by_key.values())
     items.sort(key=lambda item: (item["y"], item["x"], item["width"] * item["height"]))
     return items
 
@@ -606,65 +634,90 @@ def current_supplier_from_header(page):
     return header_suppliers[0]["name"] if header_suppliers else ""
 
 def click_supplier_header(page, current_supplier):
-    for item in collect_supplier_elements(page, header_only=True):
-        try:
-            if item["name"] == current_supplier:
-                item["el"].click()
-                page.wait_for_timeout(2500)
-                return True
-        except Exception:
-            pass
-    return False
+    try:
+        clicked = page.evaluate(
+            """(supplierName) => {
+                const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                const wanted = normalize(supplierName);
+                const visible = (el) => {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+                };
+                const candidates = Array.from(document.querySelectorAll("button,a,[role='button']"))
+                    .filter(visible)
+                    .map((el) => ({ el, rect: el.getBoundingClientRect(), text: normalize(el.innerText || el.textContent || '') }))
+                    .filter(({ rect, text }) => rect.y < 140 && text.includes(wanted))
+                    .sort((a, b) => (a.text === wanted ? -1 : 1) - (b.text === wanted ? -1 : 1) || b.rect.x - a.rect.x || (a.rect.width * a.rect.height) - (b.rect.width * b.rect.height));
+                if (!candidates[0]) return false;
+                candidates[0].el.click();
+                return true;
+            }""",
+            current_supplier,
+        )
+        if clicked:
+            page.wait_for_timeout(1800)
+        return bool(clicked)
+    except Exception:
+        return False
 
 def click_supplier_choice(page, choice):
     selected = choice if isinstance(choice, dict) else {"name": str(choice), "supplierId": ""}
     wanted = normalize_supplier_name(selected.get("name", ""))
     wanted_id = str(selected.get("supplierId") or "")
-    matches = []
-    for item in collect_supplier_elements(page, header_only=False):
-        try:
-            name_matches = item["name"] == wanted or supplier_matches_query(item["name"], wanted)
-            id_matches = not wanted_id or bool(re.search(r"(?:ID|ИД)\s*[:№#]?\s*" + re.escape(wanted_id) + r"\b", item.get("text", ""), re.IGNORECASE))
-            if name_matches and id_matches and item["y"] > 45:
-                matches.append(item)
-        except Exception:
-            pass
+    try:
+        clicked = page.evaluate(
+            """(entity) => {
+                const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+                const visible = (el) => {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+                };
+                const candidates = Array.from(document.querySelectorAll("li,button,[role='button'],[role='option'],[role='menuitem'],label,div,span"))
+                    .filter(visible)
+                    .map((el) => ({ el, text: normalize(el.innerText || el.textContent || ''), rect: el.getBoundingClientRect() }))
+                    .filter(({ text, rect }) => text.includes(entity.name) && (!entity.supplierId || text.includes(entity.supplierId)) && text.length < 320 && rect.y > 40)
+                    .sort((a, b) => (a.text.length - b.text.length) || (a.rect.width * a.rect.height) - (b.rect.width * b.rect.height));
+                const match = candidates[0];
+                if (!match) return false;
+                const target = match.el.closest("li,button,[role='button'],[role='option'],[role='menuitem'],label") || match.el;
+                target.scrollIntoView({ block: 'center', inline: 'center' });
+                for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
+                    target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+                }
+                target.click();
+                return true;
+            }""",
+            {"name": wanted, "supplierId": wanted_id},
+        )
+        if not clicked:
+            return False
 
-    matches.sort(key=lambda item: (
-        0 if item["x"] > 900 else 1,
-        abs(item["y"] - 190),
-        item["width"] * item["height"],
-    ))
-
-    viewport = page.viewport_size or {"width": 1920, "height": 1080}
-    for item in matches[:8]:
-        try:
-            center_y = item["y"] + item["height"] / 2
-            row_radio_x = min(viewport["width"] - 45, max(item["x"] + item["width"] + 24, viewport["width"] - 58))
-            print(
-                "    Trying supplier click:",
-                item["name"],
-                "at",
-                round(row_radio_x),
-                round(center_y),
-            )
-            page.mouse.click(row_radio_x, center_y)
-            page.wait_for_timeout(8000)
-
-            current = current_supplier_from_header(page)
-            if current and (current == wanted or supplier_matches_query(current, wanted)):
-                print("    Switched to:", current)
-                return True
-
-            item["el"].click()
-            page.wait_for_timeout(5000)
-            current = current_supplier_from_header(page)
-            if current and (current == wanted or supplier_matches_query(current, wanted)):
-                print("    Switched to:", current)
-                return True
-        except Exception as e:
-            print("    Supplier click attempt failed:", e)
-
+        page.wait_for_timeout(1200)
+        page.evaluate(
+            """() => {
+                const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                const labels = ['выбрать', 'продолжить', 'подтвердить', 'перейти', 'войти', 'continue', 'select', 'confirm'];
+                const buttons = Array.from(document.querySelectorAll("button,a,[role='button']"));
+                const button = buttons.find((el) => {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    const text = normalize(el.innerText || el.textContent || '');
+                    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && labels.some((label) => text.includes(label));
+                });
+                if (!button) return false;
+                button.click();
+                return true;
+            }"""
+        )
+        page.wait_for_timeout(4500)
+        current = current_supplier_from_header(page)
+        if current and (current == wanted or supplier_matches_query(current, wanted)):
+            print("    Switched to:", current)
+            return True
+    except Exception as e:
+        print("    Supplier click attempt failed:", e)
     return False
 
 def supplier_debug_state(page):
@@ -867,6 +920,8 @@ with sync_playwright() as p:
             browser.close()
             sys.exit(0)
 
+        status("processing", message="WB проверяет SMS-код...")
+
         print("[5] Entering code: ***")
 
         # Clean up code file for potential retry
@@ -965,6 +1020,16 @@ with sync_playwright() as p:
     # Open the WB cabinet menu and collect structured legal entities just like WBADS.
     legal_entities = []
     if current_supplier != "Неизвестно" and click_supplier_header(page, current_supplier):
+        try:
+            page.wait_for_function(
+                """() => {
+                    const text = document.body?.innerText || '';
+                    return /Your account|Ваш аккаунт|Ваш кабинет/i.test(text) && /(?:^|\\s)(?:ID|ИД)\\s*[:№#]?\\s*\\d+/im.test(text);
+                }""",
+                timeout=8000,
+            )
+        except Exception:
+            print("    Supplier menu did not expose account IDs within 8 seconds")
         legal_entities = legal_entity_list(page, current_supplier)
         print("    Legal entity candidates:", [(entity["name"], entity["id"]) for entity in legal_entities])
     else:
@@ -1002,6 +1067,7 @@ with sync_playwright() as p:
                 )
                 browser.close()
                 sys.exit(0)
+            status("processing", message="Переключаем кабинет WB...")
             selected_entity = next(
                 (entity for entity in legal_entities if entity["id"] == choice_id or entity["name"] == normalize_supplier_name(choice_id)),
                 None,
@@ -1025,6 +1091,8 @@ with sync_playwright() as p:
             status("failed", message="Таймаут: юрлицо не выбрано за 3 минуты.")
             browser.close()
             sys.exit(0)
+
+        status("processing", message="Переключаем кабинет WB...")
 
         selected_entity = next(
             (entity for entity in legal_entities if entity["id"] == choice_id or entity["name"] == normalize_supplier_name(choice_id)),

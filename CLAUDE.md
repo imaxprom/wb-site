@@ -107,7 +107,7 @@ docs/            — ТЗ и документация
 - Для WB жалоб текст должен отправляться в `feedbackComplaint.explanation`, не в `feedbackComplaint.text`. Перед отправкой нужно запрашивать доступные причины `/complaints/{feedbackId}` и выбирать только `explanationRequired=true`; для fallback предпочитать reason `19`.
 - Автожалобы имеют защитную паузу `review_complaint_pauses`: если свежие последние 5 обработанных жалоб за 24 часа все `rejected`, ставится пауза на 24 часа. Не использовать all-time проверку последних 5, она создаёт вечный стоп на старых отказах. `approved` при синке статусов снимает паузу; ручная жалоба может идти с `force=true`.
 - `review_accounts.wb_seller_lk` хранит LK JWT для заголовка `wb-seller-lk`; публичный API не должен отдавать этот токен.
-- SMS-авторизация WB через `scripts/wb-seller-login.py` синхронизирует `authorizev3`, `wbx-validation-key`, `wb_seller_lk` в `review_accounts` по `supplier_id`. Если у номера несколько юрлиц, выбор должен запрашиваться у пользователя, не выбирается автоматически.
+- SMS-авторизация WB через `scripts/wb-seller-login.py` синхронизирует `authorizev3`, `wbx-validation-key`, `wb_seller_lk` в `review_accounts` по `supplier_id`. После отправки SMS UI не держит длинный HTTP-запрос: `/api/wb/auth/progress` коротко опрашивает фоновую сессию до выбора кабинета или сохранения токенов. Если у номера несколько юрлиц, выбор должен запрашиваться у пользователя, не выбирается автоматически.
 
 ## Расчёт отгрузки
 - 2026-05-19 точечно выкачены на production правки расчёта отгрузки:

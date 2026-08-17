@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { AutoCheckLine } from "./AutoCheckLine";
 
-type Step = "loading" | "phone" | "captcha" | "code" | "supplier_select" | "authenticated";
+type Step = "loading" | "phone" | "captcha" | "code" | "processing" | "supplier_select" | "authenticated";
 type LegalEntityOption = {
   id: string;
   name: string;
@@ -23,6 +23,7 @@ type AuthApiResult = {
   suppliers?: string[];
   currentSupplier?: string;
   retryAfterSeconds?: number;
+  message?: string;
 };
 
 export function WbAuth() {
@@ -61,6 +62,7 @@ export function WbAuth() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
+  const [processingMessage, setProcessingMessage] = useState("Ожидаем ответ Wildberries...");
   const [cooldownUntil, setCooldownUntil] = useState<number | null>(null);
   const [cooldownPhone, setCooldownPhone] = useState("");
   const [now, setNow] = useState(Date.now());
@@ -86,6 +88,46 @@ export function WbAuth() {
   useEffect(() => {
     if (step === "code") codeRef.current?.focus();
     if (step === "captcha") captchaRef.current?.focus();
+  }, [step]);
+
+  useEffect(() => {
+    if (step !== "processing") return;
+
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const startedAt = Date.now();
+
+    const poll = async () => {
+      if (!active) return;
+      try {
+        const response = await fetch(`/api/wb/auth/progress?ts=${Date.now()}`, { cache: "no-store" });
+        const data = await response.json() as AuthApiResult;
+        if (!active) return;
+        if (data.step === "processing" && data.ok) {
+          setProcessingMessage(data.message || "Ожидаем ответ Wildberries...");
+        } else {
+          handleStepResult(data);
+          return;
+        }
+      } catch {
+        // A single failed poll must not abort an otherwise valid WB browser session.
+      }
+
+      if (Date.now() - startedAt >= 6 * 60 * 1000) {
+        setError("Wildberries не завершил авторизацию за 6 минут. Запросите новый SMS-код.");
+        setStep("phone");
+        return;
+      }
+      timer = setTimeout(poll, 1500);
+    };
+
+    timer = setTimeout(poll, 1200);
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
+    // handleStepResult intentionally reads the latest component state on each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
 
   function applyActiveSession(data: {
@@ -137,6 +179,7 @@ export function WbAuth() {
         setCooldownUntil(Date.now() + data.retryAfterSeconds * 1000);
       }
       setError(data.error || "Неизвестная ошибка");
+      setStep("phone");
       return;
     }
 
@@ -162,6 +205,10 @@ export function WbAuth() {
       case "code":
         setCode("");
         setStep("code");
+        break;
+      case "processing":
+        setProcessingMessage(data.message || "Ожидаем ответ Wildberries...");
+        setStep("processing");
         break;
       case "supplier_select":
         setLegalEntities(
@@ -205,6 +252,7 @@ export function WbAuth() {
 
     setLoading(true);
     setError("");
+    setProcessingMessage("Ожидаем ответ Wildberries...");
 
     try {
       const res = await fetch("/api/wb/auth", {
@@ -312,7 +360,7 @@ export function WbAuth() {
     <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
       <div className="flex items-center justify-between mb-1">
         <h3 className="font-medium">Авторизация WB</h3>
-        {(step === "captcha" || step === "code" || step === "supplier_select") && (
+        {(step === "captcha" || step === "code" || step === "processing" || step === "supplier_select") && (
           <StepIndicator current={step} />
         )}
       </div>
@@ -436,6 +484,14 @@ export function WbAuth() {
         </div>
       )}
 
+      {/* --- BACKGROUND AUTH PROCESSING --- */}
+      {step === "processing" && (
+        <div className="flex items-center gap-3 rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/5 p-4 text-sm text-[var(--accent)]">
+          <Spinner />
+          <span>{processingMessage}</span>
+        </div>
+      )}
+
       {/* --- SUPPLIER SELECT --- */}
       {step === "supplier_select" && (
         <div className="space-y-3">
@@ -546,14 +602,14 @@ function Spinner() {
   );
 }
 
-function StepIndicator({ current }: { current: "captcha" | "code" | "supplier_select" }) {
+function StepIndicator({ current }: { current: "captcha" | "code" | "processing" | "supplier_select" }) {
   const steps = [
     { key: "phone", label: "Телефон" },
     { key: "code", label: "SMS" },
     { key: "supplier_select", label: "Кабинет" },
   ];
 
-  const currentIdx = current === "captcha" ? 1 : current === "code" ? 1 : 2;
+  const currentIdx = current === "supplier_select" ? 2 : 1;
 
   return (
     <div className="flex items-center gap-1.5 text-xs">

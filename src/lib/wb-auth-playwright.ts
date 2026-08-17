@@ -13,7 +13,6 @@ import { pgQuery } from "./postgres";
 const DEFAULT_RATE_LIMIT_SECONDS = 30 * 60;
 const MAX_RATE_LIMIT_SECONDS = 24 * 60 * 60;
 const SEND_PHONE_TIMEOUT_MS = 75 * 1000;
-const SUBMIT_CODE_TIMEOUT_MS = 4 * 60 * 1000;
 
 const g = globalThis as unknown as { __wbAuthProcs?: Map<number, ChildProcess> };
 
@@ -24,8 +23,9 @@ function authProcesses(): Map<number, ChildProcess> {
 
 export type AuthStepResult = {
   ok: boolean;
-  step: "code" | "captcha" | "authenticated" | "supplier_select" | "error";
+  step: "code" | "captcha" | "processing" | "authenticated" | "supplier_select" | "error";
   error?: string;
+  message?: string;
   warning?: string;
   legalEntities?: LegalEntityOption[];
   selectedLegalEntity?: LegalEntityOption;
@@ -293,68 +293,61 @@ export async function playwrightSubmitCode(code: string): Promise<AuthStepResult
 
     fs.writeFileSync(paths.smsCodePath, digits, { mode: 0o600 });
     console.log("[wb-auth-pw] SMS code submitted");
+    return { ok: true, step: "processing", message: "WB проверяет код и загружает кабинеты..." };
+  } catch (err) {
+    return { ok: false, step: "error", error: `Ошибка: ${err instanceof Error ? err.message : err}` };
+  }
+}
 
-    // Wait for status change
-    const startTime = Date.now();
-    while (Date.now() - startTime < SUBMIT_CODE_TIMEOUT_MS) {
-      await new Promise(r => setTimeout(r, 2000));
+export async function playwrightCheckProgress(): Promise<AuthStepResult> {
+  try {
+    const paths = getWbAuthPaths();
+    const status = getLastStatus(paths);
 
-      const status = getLastStatus(paths);
-      if (!status) continue;
-      const state = status.state as string;
-
-      if (state === "code_error") {
-        // Wrong code — user can retry
-        return { ok: false, step: "code", error: (status.message as string) || "Неверный SMS-код." };
-      }
-
-      if (state === "code_expired") {
-        killAuthProcess(paths);
-        return { ok: false, step: "error", error: (status.message as string) || "Код истёк." };
-      }
-
-      if (state === "supplier_select") {
-        const legalEntities = legalEntitiesFromStatus(status);
-        return {
-          ok: true,
-          step: "supplier_select",
-          legalEntities,
-          suppliers: (status.suppliers as string[]) || [],
-          currentSupplier: (status.current as string) || "",
-        };
-      }
-
-      if (state === "success") {
-        // Refresh seller tokens
-        await refreshSellerTokenFromAuth(paths);
-        const mismatch = checkSupplierMismatch(paths);
-        return {
-          ok: true,
-          step: "authenticated",
-          selectedLegalEntity: selectedLegalEntityFromStatus(status),
-          warning: mismatch || undefined,
-        };
-      }
-
-      if (state === "failed") {
-        killAuthProcess(paths);
-        return { ok: false, step: "error", error: (status.message as string) || "Авторизация не удалась." };
-      }
-
-      // Check if process died
-      const proc = authProcesses().get(paths.organizationId);
-      if (proc && proc.exitCode !== null) {
-        const s = getLastStatus(paths);
-        if (s?.state === "success") {
-          await refreshSellerTokenFromAuth(paths);
-          return { ok: true, step: "authenticated" };
-        }
-        return { ok: false, step: "error", error: (s?.message as string) || "Скрипт завершился." };
-      }
+    if (!status) {
+      return { ok: true, step: "processing", message: "Ожидаем ответ Wildberries..." };
     }
 
-    killAuthProcess(paths);
-    return { ok: false, step: "error", error: "Таймаут обработки кода: WB принял код, но токены не успели сохраниться." };
+    const state = String(status.state || "");
+    if (state === "code_error") {
+      return { ok: false, step: "code", error: String(status.message || "Неверный SMS-код.") };
+    }
+    if (state === "code_expired") {
+      killAuthProcess(paths);
+      return { ok: false, step: "error", error: String(status.message || "Код истёк.") };
+    }
+    if (state === "supplier_select") {
+      return {
+        ok: true,
+        step: "supplier_select",
+        legalEntities: legalEntitiesFromStatus(status),
+        suppliers: Array.isArray(status.suppliers) ? status.suppliers.map(String) : [],
+        currentSupplier: String(status.current || ""),
+      };
+    }
+    if (state === "success") {
+      await refreshSellerTokenFromAuth(paths);
+      const mismatch = checkSupplierMismatch(paths);
+      return {
+        ok: true,
+        step: "authenticated",
+        selectedLegalEntity: selectedLegalEntityFromStatus(status),
+        warning: mismatch || undefined,
+      };
+    }
+    if (state === "failed" || state === "blocked") {
+      killAuthProcess(paths);
+      return { ok: false, step: "error", error: String(status.message || "Авторизация не удалась.") };
+    }
+
+    const message = state === "saving"
+      ? "Сохраняем авторизацию..."
+      : state === "processing"
+        ? String(status.message || "Wildberries обрабатывает запрос...")
+      : state === "sms_sent"
+        ? "WB проверяет SMS-код..."
+        : "Ожидаем ответ Wildberries...";
+    return { ok: true, step: "processing", message };
   } catch (err) {
     return { ok: false, step: "error", error: `Ошибка: ${err instanceof Error ? err.message : err}` };
   }
@@ -377,34 +370,7 @@ export async function playwrightSelectSupplier(entityId: string): Promise<AuthSt
 
     fs.writeFileSync(paths.supplierChoicePath, selected.id, { mode: 0o600 });
     console.log("[wb-auth-pw] Legal entity choice written:", selected.id);
-
-    const startTime = Date.now();
-    while (Date.now() - startTime < 30000) {
-      await new Promise(r => setTimeout(r, 2000));
-
-      const status = getLastStatus(paths);
-      if (!status) continue;
-      const state = status.state as string;
-
-      if (state === "success") {
-        await refreshSellerTokenFromAuth(paths);
-        const mismatch = checkSupplierMismatch(paths);
-        return {
-          ok: true,
-          step: "authenticated",
-          selectedLegalEntity: selectedLegalEntityFromStatus(status) || selected,
-          warning: mismatch || undefined,
-        };
-      }
-
-      if (state === "failed") {
-        killAuthProcess(paths);
-        return { ok: false, step: "error", error: (status.message as string) || "Не удалось переключить кабинет." };
-      }
-    }
-
-    killAuthProcess(paths);
-    return { ok: false, step: "error", error: "Таймаут переключения кабинета." };
+    return { ok: true, step: "processing", message: `Подключаем кабинет «${selected.name}»...` };
   } catch (err) {
     return { ok: false, step: "error", error: `Ошибка: ${err instanceof Error ? err.message : err}` };
   }

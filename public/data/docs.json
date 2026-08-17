@@ -2384,7 +2384,7 @@
             "GET /api/data/meta, orders, orders-aggregated, order-stats, products, stock, warehouses, warehouse-regions, buyout-rates",
             "POST /api/data/sync — ручной/скриптовый запуск синхронизации отгрузки",
             "GET|POST|DELETE /api/wb/auth — авторизация ЛК WB",
-            "POST /api/wb/auth/captcha, verify, select-supplier — шаги WB auth",
+            "POST /api/wb/auth/captcha, verify, select-supplier — короткие команды шагов WB auth; GET /api/wb/auth/progress — фоновый опрос обработки SMS и выбора юрлица без длинного соединения",
             "GET|POST /api/wb/daily-sync — статус/запуск daily sync из UI",
             "GET|POST /api/wb/adv — рекламные расходы WB",
             "GET /api/wb/barcodes, funnel, orders, orders-stats, reports, stocks, stocks-raw, stocks-summary, test, warehouses",
