@@ -32,7 +32,8 @@ if ($RequestUri -match "PRN-(011|012|013)" -and -not (Test-IsAdministrator)) {
     exit 0
   } catch {
     Write-Host "Administrator permission was not granted. Code PRN-013." -ForegroundColor Red
-    Read-Host "Press Enter to close"
+    Write-Host "This window will close automatically in 60 seconds."
+    Start-Sleep -Seconds 60
     exit 1
   }
 }
@@ -79,6 +80,7 @@ function Register-RecoveryTools {
   }
 }
 
+$recoverySucceeded = $false
 try {
   New-Item -ItemType Directory -Path $appDir -Force | Out-Null
   Write-RecoveryLog "Recovery started"
@@ -227,18 +229,28 @@ while ($true) {
 
   Write-Host ""
   Write-Host "Printer recovery completed." -ForegroundColor Green
+  Write-Host "Completed at: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
   Write-Host "Return to the FBS page and click 'Check again'."
   Write-Host "Log: $logPath"
+  $recoverySucceeded = $true
 } catch {
   $message = $_.Exception.Message
   Write-RecoveryLog "Recovery failed: $message"
   if ($null -ne $config) { Send-RecoveryStatus -Config $config -Status "recovery_error" -Message $message }
   Write-Host ""
   Write-Host "Could not recover printing." -ForegroundColor Red
+  Write-Host "Failed at: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
   Write-Host $message -ForegroundColor Red
   Write-Host "Tell the administrator this error code."
   Write-Host "Log: $logPath"
 }
 
 Write-Host ""
-Read-Host "Press Enter to close"
+if ($recoverySucceeded) {
+  Write-Host "This window will close automatically in 8 seconds."
+  Start-Sleep -Seconds 8
+  exit 0
+}
+Write-Host "This error window will close automatically in 90 seconds."
+Start-Sleep -Seconds 90
+exit 1

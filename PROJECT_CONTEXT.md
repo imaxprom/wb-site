@@ -1,6 +1,6 @@
 # MpHub Project Context
 
-Last verified: 2026-08-17 16:10 MSK from local code, production `ssh wb-site`, PM2 and production PostgreSQL.
+Last verified: 2026-08-17 17:30 MSK from local code, production `ssh wb-site`, PM2, production PostgreSQL and warehouse Windows over Tailscale/OpenSSH.
 
 ## Runtime
 
@@ -52,7 +52,7 @@ Last verified: 2026-08-17 16:10 MSK from local code, production `ssh wb-site`, P
 - Verified incident fixed 2026-08-12: supply `WB-GI-264192275` (Yekaterinburg, organization 1) now contains order `5472246019`; local count is 1 and live status is `confirm/waiting`.
 - PVZ workflow requires cargo-place QR codes before delivery. After delivery it now also requires the main supply QR before allowing “Finish cycle”. WB live endpoint successfully returned the main QR for PVZ supply `WB-GI-264053929`; UI change is included in the clean baseline.
 - Organization 2 PVZ supply `WB-GI-264053929`: 36 orders, one cargo place `WB-MP-48974219`, cargo-place QR printed, delivered, main supply QR still not printed at the last read-only check. Opening FBS should resume it on shipping and offer “Print supply QR”. Do not trigger the printer during diagnostics without user approval.
-- Separate warehouse Windows remote administration is not implemented. Proposed next step, only after explicit approval and while someone is on site: install Tailscale, enable Windows OpenSSH, create a dedicated admin account, allow key-only access and verify reconnect after reboot. This would let Codex diagnose print agent, Windows spooler and Zebra remotely; physical jams remain local work.
+- Warehouse Windows remote administration is active and reboot-tested. Connect only through technical VM `codex-cli` to Tailscale/OpenSSH alias `warehouse-pack-01` using the dedicated key-only administrator `mphub-support`; do not expose its access material. The workstation was verified live on 2026-08-17: Zebra `ZDesigner ZT220-200dpi ZPL` Normal, Spooler Running, `KeepPrintedJobs=False`, MpHub scheduled supervisor Running. Physical jams remain local work.
 
 ## Android Shipment Scanner
 

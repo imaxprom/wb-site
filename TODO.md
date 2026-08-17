@@ -16,9 +16,9 @@ Last updated: 2026-08-17 16:10 MSK.
 - On organization 2, open PVZ supply `WB-GI-264053929` and print the main supply QR. Cargo-place QR `WB-MP-48974219` is already printed; do not initiate this print remotely without the user.
 - Verify the UI then permits “Finish cycle” only after `qr_printed_at` is confirmed by the print agent.
 - Monitor future partial WB add failures: actual live membership must be persisted, attached orders move to assembly, rejected orders stay in New, and sync must reconcile open supplies.
-- If the user approves remote Windows administration, configure Tailscale + Windows OpenSSH + dedicated key-only admin account on the warehouse computer, then test access after reboot. This is not installed yet.
+- Remote Windows administration is configured and reboot-tested through `codex-cli` → Tailscale/OpenSSH alias `warehouse-pack-01` with dedicated key-only admin `mphub-support`. Use it for read-only diagnosis first; physical jam/media handling remains on site.
 - For printer failures, inspect print-agent status/log, PostgreSQL print job, Windows spooler and Zebra state before resetting any queue. Never reprint blindly when physical output is unknown.
-- На текущем Windows ещё раз обновить helper из `/printer`, затем повторить восстановление и подтвердить UAC кнопкой «Да». Проверяем текущий контролируемый сценарий после выявленного `Deleting, Printing, Retained`: отключение `KeepPrintedJobs` → при необходимости остановка Spooler и удаление только SPL/SHD с точными ID `MpHub-*` → `queue_ready` → точный выбор результата этикетки → продолжение очереди без дубля. Статус `Deleting` больше не считается отменой печати.
+- После следующего реального замятия проверить новый ограниченный по времени интерфейс helper: успешное окно закрывается само, реальная ошибка показывает время и код не более 90 секунд. Сам сценарий уже проверен 2026-08-17: `KeepPrintedJobs=False`, точная очистка удержанного MpHub job, `queue_ready`, последующая печать 7/7, 2/2 и теста; статус `Deleting` не считается отменой.
 
 ## Production Checks
 
