@@ -31,6 +31,15 @@ type PrintJob = {
   last_error: string;
 };
 
+function isAutomaticFullBatchRecovery(job: PrintJob) {
+  return !job.group_key.startsWith("single:")
+    && !job.group_key.startsWith("supply-qr:")
+    && !job.group_key.startsWith("box-qr:")
+    && !job.group_key.startsWith("box-qr-reprint:")
+    && !job.group_key.startsWith("test:")
+    && !job.group_key.startsWith("kiz-archive:");
+}
+
 type PrinterSnapshot = {
   printAgents: FbsPrintAgent[];
   printJobs: PrintJob[];
@@ -121,6 +130,7 @@ export default function PrinterPage() {
   const activeJobs = useMemo(() => data.printJobs.filter((job) => ["queued", "printing", "paused"].includes(job.status)), [data.printJobs]);
   const pausedJobList = useMemo(() => activeJobs.filter((job) => job.status === "paused"), [activeJobs]);
   const pausedJobs = pausedJobList.length;
+  const automaticFullBatchPaused = pausedJobList.some(isAutomaticFullBatchRecovery);
   const queueBlocked = data.printQueuePaused || pausedJobs > 0;
   const windowsQueueReady = data.printAgents.some((agent) => agent.status === "queue_ready");
   const recoveryFailure = data.printAgents.find((agent) => agent.status === "recovery_error") || null;
@@ -134,7 +144,7 @@ export default function PrinterPage() {
   useEffect(() => {
     if (!repairStarted || !ready || queueBlocked) return;
     setRepairStarted(false);
-    setNotice("Принтер снова подключён. Напечатайте тестовую этикетку.");
+    setNotice("Принтер восстановлен. Прерванная пачка этикеток WB печатается заново полностью.");
   }, [queueBlocked, ready, repairStarted]);
 
   useEffect(() => {
@@ -285,13 +295,13 @@ export default function PrinterPage() {
 
     {queueBlocked ? <section className="rounded-xl border-2 border-red-500/45 bg-red-500/5 p-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0"><div className="flex items-center gap-2 text-xl font-bold text-red-500"><AlertTriangle size={24} />{recoveryFailure ? "Не удалось очистить очередь Windows" : "Замятие печати"}</div><p className="mt-1 text-base text-[var(--text-muted)]">Печать специально остановлена, чтобы Zebra не выдала дубликаты после перезагрузки.</p><div className="mt-2 font-mono text-sm font-semibold text-red-500">Код: {recoveryFailure ? "PRN-012" : "PRN-011"}</div></div>
+        <div className="min-w-0"><div className="flex items-center gap-2 text-xl font-bold text-red-500"><AlertTriangle size={24} />{recoveryFailure ? "Не удалось очистить очередь Windows" : "Замятие печати"}</div><p className="mt-1 text-base text-[var(--text-muted)]">{automaticFullBatchPaused ? "Удалите испорченные этикетки. Эта пачка WB после восстановления будет напечатана полностью заново." : "Печать остановлена до безопасного восстановления очереди Windows."}</p><div className="mt-2 font-mono text-sm font-semibold text-red-500">Код: {recoveryFailure ? "PRN-012" : "PRN-011"}</div></div>
         {connected?.printer_name && <div className="rounded-lg bg-[var(--bg-card)] px-3 py-2 text-sm text-[var(--text-muted)]">{connected.printer_name}</div>}
       </div>
       <ol className="mt-5 grid gap-3 text-base md:grid-cols-3">
-        <li className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-3"><strong>1.</strong> Уберите зажёванную этикетку, закройте Zebra и дождитесь зелёного индикатора.</li>
+        <li className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-3"><strong>1.</strong> {automaticFullBatchPaused ? "Уберите замятие и выбросьте все этикетки прерванной пачки." : "Уберите замятие, закройте Zebra и дождитесь зелёного индикатора."}</li>
         <li className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-3"><strong>2.</strong> Нажмите «Восстановить после замятия» и разрешите Windows открыть программу.</li>
-        <li className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-3"><strong>3.</strong> Ниже укажите, вышла последняя этикетка или нет.</li>
+        <li className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-3"><strong>3.</strong> {automaticFullBatchPaused ? "Вся пачка WB автоматически напечатается заново с первой этикетки." : "Для QR, одиночной этикетки или КИЗ подтвердите точный результат в карточке ниже."}</li>
       </ol>
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <button type="button" onClick={startRepair} disabled={repairStarted || !configured} className="flex items-center gap-2 rounded-lg bg-amber-500 px-5 py-3 font-semibold text-white disabled:opacity-45">{repairStarted ? <Loader2 size={19} className="animate-spin" /> : <Wrench size={19} />}{repairStarted ? "Восстанавливаем…" : "Восстановить после замятия"}</button>
@@ -309,6 +319,7 @@ export default function PrinterPage() {
         {pausedJobList.length === 0 && <div className="rounded-xl border border-red-500/30 bg-[var(--bg-card)] p-4">Очередь остановлена, но её карточка не загрузилась. Нажмите «Проверить снова» или сообщите администратору код PRN-011.</div>}
         {pausedJobList.map((job) => {
           const kizArchive = job.group_key.startsWith("kiz-archive:");
+          const automaticFullBatch = isAutomaticFullBatchRecovery(job);
           const requiresScan = !job.group_key.startsWith("supply-qr:")
             && !job.group_key.startsWith("box-qr:")
             && !job.group_key.startsWith("box-qr-reprint:")
@@ -317,7 +328,7 @@ export default function PrinterPage() {
           const recoveryReady = jobAgent?.status === "queue_ready";
           return <div key={job.job_id} className="rounded-xl border border-red-500/30 bg-[var(--bg-card)] p-4">
             <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="font-semibold">{job.product_name || (job.group_key.startsWith("supply-qr:") ? "QR поставки" : "Этикетка WB")}{job.size_name ? ` · ${job.size_name}` : ""}</div><div className="mt-1 text-sm text-[var(--text-muted)]">Подтверждено {job.printed_count} из {job.total_count}. Неясен результат следующей этикетки.</div></div><span className="rounded-full bg-red-500/10 px-3 py-1 text-sm font-semibold text-red-500">Печать остановлена</span></div>
-            {kizArchive ? <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-amber-500/10 p-3 text-amber-600"><span>Для КИЗ нужно подтвердить последнюю физически вышедшую позицию в его защищённом архиве.</span><a href="/fbs/kiz-archive" className="rounded-lg bg-amber-500 px-4 py-2 font-semibold text-white">Открыть Архив КИЗ</a></div> : <>
+            {kizArchive ? <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-amber-500/10 p-3 text-amber-600"><span>Для КИЗ нужно подтвердить последнюю физически вышедшую позицию в его защищённом архиве.</span><a href="/fbs/kiz-archive" className="rounded-lg bg-amber-500 px-4 py-2 font-semibold text-white">Открыть Архив КИЗ</a></div> : automaticFullBatch ? <div className="mt-4 rounded-lg bg-amber-500/10 p-3 font-medium text-amber-600">После успешного восстановления все {job.total_count} этикеток этой пачки автоматически напечатаются заново.</div> : <>
               {confirmPrintedJobId === job.job_id && requiresScan && <form className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3" onSubmit={(event) => { event.preventDefault(); void resolvePausedJob(job, "printed"); }}><label htmlFor={`paused-label-${job.job_id}`} className="font-semibold">Отсканируйте этикетку, которая действительно вышла</label><div className="mt-2 flex flex-col gap-2 sm:flex-row"><input id={`paused-label-${job.job_id}`} value={printedBarcode} onKeyDown={(event) => { captureFbsScannerKey(event, setPrintedBarcode); }} onChange={(event) => setPrintedBarcode(normalizeFbsScannerFieldValue(event.target.value))} autoComplete="off" className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-4 py-3 font-mono outline-none focus:border-emerald-500" placeholder="ШК этикетки WB" /><button type="submit" disabled={!printedBarcode.trim() || Boolean(busy)} className="rounded-lg bg-emerald-500 px-5 py-3 font-semibold text-white disabled:opacity-40">Подтвердить</button><button type="button" onClick={() => { setConfirmPrintedJobId(""); setPrintedBarcode(""); }} className="rounded-lg border border-[var(--border)] px-4 py-3">Отмена</button></div></form>}
               <div className="mt-4 grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => void resolvePausedJob(job, "retry")} disabled={!recoveryReady || Boolean(busy)} className="rounded-lg bg-[var(--accent)] px-4 py-3 font-semibold text-white disabled:opacity-40">Этикетка не вышла — повторить</button><button type="button" onClick={() => void resolvePausedJob(job, "printed")} disabled={!recoveryReady || Boolean(busy)} className="rounded-lg border border-emerald-500/40 px-4 py-3 font-semibold text-emerald-500 disabled:opacity-40">Этикетка вышла — продолжить</button></div>
               {!recoveryReady && <div className="mt-2 text-sm font-medium text-amber-600">Сначала выполните шаг 2 — после очистки Windows эти две кнопки станут активными.</div>}

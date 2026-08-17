@@ -18,7 +18,7 @@ Last updated: 2026-08-17 17:45 MSK.
 - Monitor future partial WB add failures: actual live membership must be persisted, attached orders move to assembly, rejected orders stay in New, and sync must reconcile open supplies.
 - Remote Windows administration is configured and reboot-tested through `codex-cli` → Tailscale/OpenSSH alias `warehouse-pack-01` with dedicated key-only admin `mphub-support`. Use it for read-only diagnosis first; physical jam/media handling remains on site.
 - For printer failures, inspect print-agent status/log, PostgreSQL print job, Windows spooler and Zebra state before resetting any queue. Never reprint blindly when physical output is unknown.
-- После следующего реального замятия проверить новый ограниченный по времени интерфейс helper: успешное окно закрывается само, реальная ошибка показывает время и код не более 90 секунд. Сам сценарий уже проверен 2026-08-17: `KeepPrintedJobs=False`, точная очистка удержанного MpHub job, `queue_ready`, последующая печать 7/7, 2/2 и теста; статус `Deleting` не считается отменой.
+- После следующего реального замятия проверить финальный сценарий: сотрудник выбрасывает всю прерванную обычную пачку WB, helper очищает Windows, а сервер автоматически создаёт полную попытку `1/N`; предыдущий job остаётся `cancelled` в аудите. Отдельно убедиться, что эта пачка после `N/N` стала самой нижней в «Готовых» своей категории. QR, single и КИЗ не должны перейти на этот сценарий.
 
 ## Production Checks
 

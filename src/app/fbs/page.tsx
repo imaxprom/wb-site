@@ -31,6 +31,7 @@ type Order = {
   optional_meta: MetaType[]; supplier_status: string; wb_status: string;
   picked_at: string | null; sticker_printed_at: string | null; packed_at: string | null;
   metadata_decisions: Array<{ key?: string; type?: string; name?: string; decision?: string; status?: string; message?: string }>;
+  metadata_checked_at: string | null;
   optional_meta_reviewed_at: string | null;
   reshipment_required: boolean; created_at_wb: string | null; raw_json: Record<string, unknown>;
 };
@@ -50,7 +51,7 @@ type WorkflowStep = "tasks" | "assembly" | "marking" | "shipping";
 type BatchCategory = "backpack" | "underwear" | "other";
 type BatchGroupState = "active" | "pending" | "complete";
 type BatchGroup = { key: string; order: Order; sku: string; orders: Order[]; category: BatchCategory };
-type BatchArticleGroup = { wbArticle: number; groups: BatchGroup[]; orderCount: number; sizeCount: number; state: BatchGroupState };
+type BatchArticleGroup = { wbArticle: number; groups: BatchGroup[]; orderCount: number; sizeCount: number; state: BatchGroupState; completedAt: number };
 type BatchSection = { category: BatchCategory; orderCount: number; articles: BatchArticleGroup[]; completedGroupCount: number };
 type AssemblyMarkingStatus = { state: "sending" | "pending" | "filled" | "error"; message: string; updatedAt?: string };
 type AssemblyStatusPanel = "accepted" | "pending" | "errors";
@@ -666,7 +667,7 @@ export default function FbsPage() {
           ...current,
           orders: current.orders.map((order) => {
             const status = byId.get(order.order_id);
-            return status ? { ...order, metadata_decisions: status.metadata_decisions || [] } : order;
+            return status ? { ...order, metadata_decisions: status.metadata_decisions || [], metadata_checked_at: status.updated_at || order.metadata_checked_at } : order;
           }),
         }));
         setAssemblyMarkingStatus((current) => {
@@ -806,12 +807,20 @@ export default function FbsPage() {
     const activeGroups = categoryGroups.filter((group) => stateFor(group) === "active");
     const pendingGroups = categoryGroups.filter((group) => stateFor(group) === "pending");
     const completedGroups = categoryGroups.filter((group) => stateFor(group) === "complete");
+    const completedAtFor = (group: BatchGroup) => group.orders.reduce((latest, order) => {
+      const requiresSgtin = effectiveRequiredMeta(order, data.markingPolicy).includes("sgtin");
+      const value = requiresSgtin
+        ? assemblyMarkingStatus[order.order_id]?.updatedAt || order.metadata_checked_at || order.sticker_printed_at
+        : order.sticker_printed_at;
+      const timestamp = value ? new Date(value).getTime() : 0;
+      return Number.isFinite(timestamp) ? Math.max(latest, timestamp) : latest;
+    }, 0);
     const buildArticles = (groups: BatchGroup[], state: BatchGroupState) => {
       const articleMap = new Map<number, BatchGroup[]>();
       for (const group of groups) {
         articleMap.set(group.order.nm_id, [...(articleMap.get(group.order.nm_id) || []), group]);
       }
-      return Array.from(articleMap.entries()).map(([wbArticle, articleGroups]): BatchArticleGroup => {
+      const articles = Array.from(articleMap.entries()).map(([wbArticle, articleGroups]): BatchArticleGroup => {
         const visibleSizes = new Set(articleGroups.map((group) => visibleSize(group.order.size_name || "")).filter(Boolean));
         return {
           wbArticle,
@@ -819,8 +828,12 @@ export default function FbsPage() {
           orderCount: articleGroups.reduce((sum, group) => sum + group.orders.length, 0),
           sizeCount: visibleSizes.size || articleGroups.length,
           state,
+          completedAt: state === "complete" ? Math.max(...articleGroups.map(completedAtFor)) : 0,
         };
       });
+      return state === "complete"
+        ? articles.sort((a, b) => a.completedAt - b.completedAt || a.wbArticle - b.wbArticle)
+        : articles;
     };
     return {
       category,

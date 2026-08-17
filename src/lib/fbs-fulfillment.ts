@@ -79,6 +79,7 @@ type OrderRow = {
   sticker_barcode: string;
   packed_at: string | null;
   metadata_decisions: FbsWbMetaDetail[];
+  metadata_checked_at: string | null;
   optional_meta_reviewed_at: string | null;
   reshipment_required: boolean;
   created_at_wb: string | null;

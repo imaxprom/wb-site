@@ -35,6 +35,7 @@ export type FbsPrintJob = {
   last_error: string;
   created_at: string;
   updated_at: string;
+  completed_at?: string | null;
 };
 
 export async function getFbsPrintAgentSnapshot() {
@@ -89,6 +90,94 @@ function wbStickerNumber(sticker: FbsWbSticker): string {
 
 async function recordEvent(client: PoolClient, supplyId: string, action: string, message: string, details: unknown = {}) {
   await client.query(`INSERT INTO fbs_fulfillment_events (supply_id,action,status,message,details_json) VALUES ($1,$2,'ok',$3,$4::jsonb)`, [supplyId, action, message, JSON.stringify(details)]);
+}
+
+function isOrdinaryWbLabelBatch(job: Pick<FbsPrintJob, "group_key" | "nm_id" | "chrt_id" | "sku">) {
+  const originalGroupKey = safeGroupKey(Number(job.nm_id), Number(job.chrt_id), String(job.sku || ""));
+  return job.group_key === originalGroupKey || job.group_key.startsWith(`batch-reprint:${originalGroupKey}:`);
+}
+
+async function restartOrdinaryWbLabelBatchAfterJam(client: PoolClient, job: FbsPrintJob) {
+  if (!isOrdinaryWbLabelBatch(job)) return null;
+  const items = await client.query<{
+    position: number;
+    order_id: number;
+    sticker_barcode: string;
+    sticker_file: string;
+    sticker_format: string;
+    reference_id: string;
+  }>(`
+    SELECT position,order_id,sticker_barcode,sticker_file,sticker_format,reference_id
+    FROM fbs_print_job_items
+    WHERE job_id=$1
+    ORDER BY position
+    FOR UPDATE
+  `, [job.job_id]);
+  if (items.rows.length !== Number(job.total_count) || items.rows.some((item) => !item.sticker_file)) {
+    throw new Error("PRN-014: не удалось восстановить все файлы пачки WB");
+  }
+
+  const newJobId = crypto.randomUUID();
+  const originalGroupKey = safeGroupKey(Number(job.nm_id), Number(job.chrt_id), String(job.sku || ""));
+  const newGroupKey = job.group_key === originalGroupKey
+    ? originalGroupKey
+    : `batch-reprint:${originalGroupKey}:${newJobId}`;
+
+  await client.query(`
+    UPDATE fbs_print_jobs
+    SET status='cancelled',last_error=$2,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+    WHERE job_id=$1
+  `, [job.job_id, `Пачка отбракована после замятия; полная перепечатка ${newJobId}`]);
+  await client.query(`
+    INSERT INTO fbs_print_jobs (
+      job_id,supply_id,group_key,nm_id,chrt_id,sku,product_name,size_name,total_count
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+  `, [newJobId, job.supply_id, newGroupKey, job.nm_id, job.chrt_id, job.sku, job.product_name || "", job.size_name || "", items.rows.length]);
+  for (const item of items.rows) {
+    await client.query(`
+      INSERT INTO fbs_print_job_items (
+        job_id,position,order_id,sticker_barcode,sticker_file,sticker_format,reference_id
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7)
+    `, [newJobId, item.position, item.order_id, item.sticker_barcode || "", item.sticker_file, item.sticker_format, item.reference_id || ""]);
+  }
+
+  // The initial assembly batch represents the employee's working status. All
+  // labels from the interrupted attempt are discarded, so reset that status
+  // and rebuild it only from confirmations of the new full batch. A manual
+  // reprint batch must not change already completed assembly/marking state.
+  if (job.group_key === originalGroupKey) {
+    const orderIds = items.rows.map((item) => Number(item.order_id)).filter((orderId) => orderId > 0);
+    if (orderIds.length) {
+      await client.query(`
+        UPDATE fbs_fulfillment_orders
+        SET picked_at=NULL,sticker_printed_at=NULL,updated_at=CURRENT_TIMESTAMP
+        WHERE order_id=ANY($1::bigint[])
+      `, [orderIds]);
+    }
+  }
+  await recordEvent(
+    client,
+    job.supply_id,
+    "print_jam_batch_restarted",
+    `После замятия вся пачка из ${items.rows.length} этикеток поставлена на повторную печать`,
+    { previousJobId: job.job_id, jobId: newJobId, totalCount: items.rows.length, discardedAttempt: true },
+  );
+  return { jobId: newJobId, totalCount: items.rows.length };
+}
+
+async function restartPausedOrdinaryWbLabelBatches(client: PoolClient, agentId: string) {
+  const paused = await client.query<FbsPrintJob>(`
+    SELECT * FROM fbs_print_jobs
+    WHERE status='paused' AND agent_id=$1
+    ORDER BY updated_at
+    FOR UPDATE
+  `, [agentId]);
+  const restarted = [] as Array<{ jobId: string; totalCount: number }>;
+  for (const job of paused.rows) {
+    const result = await restartOrdinaryWbLabelBatchAfterJam(client, job);
+    if (result) restarted.push(result);
+  }
+  return restarted;
 }
 
 export async function getFbsPrintQueueSnapshot(supplyId = "") {
@@ -476,15 +565,29 @@ export async function authenticateFbsPrintAgent(token: string) {
 
 export async function heartbeatFbsPrintAgent(agentId: string, printerName: string, status = "online", error = "") {
   await withPgTransaction(async (client) => {
+    const explicitQueueReady = status === "queue_ready";
+    let batchRestartError = "";
+    if (explicitQueueReady) {
+      await client.query("SAVEPOINT restart_wb_batch_after_jam");
+      try {
+        await restartPausedOrdinaryWbLabelBatches(client, agentId);
+        await client.query("RELEASE SAVEPOINT restart_wb_batch_after_jam");
+      } catch (cause) {
+        await client.query("ROLLBACK TO SAVEPOINT restart_wb_batch_after_jam");
+        await client.query("RELEASE SAVEPOINT restart_wb_batch_after_jam");
+        batchRestartError = cause instanceof Error ? cause.message : String(cause);
+      }
+    }
     const [paused, currentAgent] = await Promise.all([
       client.query<{ last_error: string }>(`SELECT last_error FROM fbs_print_jobs WHERE status='paused' ORDER BY updated_at DESC LIMIT 1`),
       client.query<{ status: string; last_error: string }>(`SELECT status,last_error FROM fbs_print_agents WHERE agent_id=$1`, [agentId]),
     ]);
-    const explicitQueueReady = status === "queue_ready";
     const queuePaused = Boolean(paused.rows[0]) && (["online", "printing"].includes(status) || explicitQueueReady);
     const currentPausedStatus = currentAgent.rows[0]?.status || "";
     const pausedStatus = ["queue_ready", "recovery_error"].includes(currentPausedStatus) ? currentPausedStatus : "queue_paused";
-    const nextStatus = explicitQueueReady
+    const nextStatus = batchRestartError
+      ? "recovery_error"
+      : explicitQueueReady
       ? paused.rows[0] ? "queue_ready" : "online"
       : queuePaused ? pausedStatus : status.slice(0, 30);
     await client.query(`
@@ -495,7 +598,9 @@ export async function heartbeatFbsPrintAgent(agentId: string, printerName: strin
       agentId,
       printerName.slice(0, 200),
       nextStatus,
-      queuePaused
+      batchRestartError
+        ? batchRestartError.slice(0, 1000)
+        : queuePaused
         ? nextStatus === "queue_ready"
           ? "Очередь Windows очищена — подтвердите результат этикетки"
           : nextStatus === "recovery_error"
@@ -732,9 +837,12 @@ export async function resolvePausedFbsPrintJob(
     }
 
     if (outcome === "retry") {
-      await client.query(`UPDATE fbs_print_job_items SET status='pending',lease_until=NULL WHERE job_id=$1 AND position=$2`, [jobId, item.position]);
-      await client.query(`UPDATE fbs_print_jobs SET status='queued',last_error='',updated_at=CURRENT_TIMESTAMP WHERE job_id=$1`, [jobId]);
-      await recordEvent(client, job.supply_id, "print_jam_requeued", `Этикетка ${item.position}/${job.total_count} не вышла и поставлена на повторную печать`, { jobId, position: item.position });
+      const restarted = await restartOrdinaryWbLabelBatchAfterJam(client, job);
+      if (!restarted) {
+        await client.query(`UPDATE fbs_print_job_items SET status='pending',lease_until=NULL WHERE job_id=$1 AND position=$2`, [jobId, item.position]);
+        await client.query(`UPDATE fbs_print_jobs SET status='queued',last_error='',updated_at=CURRENT_TIMESTAMP WHERE job_id=$1`, [jobId]);
+        await recordEvent(client, job.supply_id, "print_jam_requeued", `Этикетка ${item.position}/${job.total_count} не вышла и поставлена на повторную печать`, { jobId, position: item.position });
+      }
     } else {
       await client.query(`UPDATE fbs_print_job_items SET status='printed',printed_at=COALESCE(printed_at,CURRENT_TIMESTAMP),lease_until=NULL WHERE job_id=$1 AND position=$2`, [jobId, item.position]);
 
@@ -776,6 +884,6 @@ export async function resolvePausedFbsPrintJob(
     if (!anotherPaused.rows[0] && job.agent_id) {
       await client.query(`UPDATE fbs_print_agents SET status='online',last_error='',updated_at=CURRENT_TIMESTAMP WHERE agent_id=$1`, [job.agent_id]);
     }
-    return { resumed: true, outcome, position: item.position };
+    return { resumed: true, outcome, position: item.position, wholeBatch: outcome === "retry" && isOrdinaryWbLabelBatch(job) };
   });
 }
