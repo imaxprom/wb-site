@@ -409,7 +409,7 @@ function checkCronLogs(checks, capabilities) {
       name: "Cron reviews-sync",
       logPath: path.join(DATA_DIR, "reviews-sync.log"),
       okPattern: /Archive top tick (OK|skipped|rate-limited)|Archive tick OK|Delta sync done|Reviews sync completed/i,
-      errorPattern: /ERROR|CRITICAL|Traceback/i,
+      errorPattern: /FATAL|ERROR|CRITICAL|Traceback/i,
       maxOkAgeMin: 75,
     });
     checkLogFreshness(checks, {
@@ -431,7 +431,7 @@ function checkCronLogs(checks, capabilities) {
       name: "Cron paid-storage",
       logPath: path.join(DATA_DIR, "paid-storage-sync.log"),
       okPattern: /Done: \d+ ok, 0 failed/i,
-      errorPattern: /failed[^0]|ERROR|CRITICAL|Traceback/i,
+      errorPattern: /Done:\s+\d+\s+ok,\s+[1-9]\d*\s+failed|\]\s+FAIL:|ERROR|CRITICAL|Traceback/i,
       maxOkAgeMin: 36 * 60,
     });
   } else {
