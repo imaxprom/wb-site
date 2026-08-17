@@ -89,23 +89,16 @@ export function OrganizationSwitcher({
   }
 
   return (
-    <div ref={rootRef} className="fixed right-4 top-3 z-[80] md:right-6">
+    <div ref={rootRef} className="relative z-[80] mt-2 w-full">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="flex h-10 max-w-[260px] items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg-card)] px-3 text-left shadow-lg shadow-black/10 transition-colors hover:bg-[var(--bg-card-hover)]"
+        className="flex h-10 w-full min-w-0 items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3 text-left transition-colors hover:bg-[var(--bg-card-hover)]"
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--accent)]/15 text-[var(--accent)]">
-          <UserRound size={16} aria-hidden="true" />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-semibold text-[var(--text)]">{active.displayName}</span>
-          <span className="block truncate text-[10px] text-[var(--text-muted)]">
-            {active.inn ? `ИНН ${active.inn}` : active.legalName}
-          </span>
-        </span>
+        <UserRound size={16} className="shrink-0 text-[var(--accent)]" aria-hidden="true" />
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold text-[var(--text)]">{active.displayName}</span>
         {switchingId !== null
           ? <Loader2 size={15} className="shrink-0 animate-spin text-[var(--accent)]" />
           : <ChevronDown size={15} className={cn("shrink-0 text-[var(--text-muted)] transition-transform", open && "rotate-180")} />}
@@ -114,7 +107,7 @@ export function OrganizationSwitcher({
       {open && (
         <div
           role="menu"
-          className="absolute right-0 mt-2 w-[320px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-1.5 shadow-2xl shadow-black/25"
+          className="absolute left-0 mt-2 w-[320px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-1.5 shadow-2xl shadow-black/25"
         >
           <div className="px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)]">
             Юридическое лицо

@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 import { DataProvider } from "@/components/DataProvider";
 import { cn } from "@/lib/utils";
-import { OrganizationSwitcher, type OrganizationsPayload } from "@/components/OrganizationSwitcher";
+import { type OrganizationsPayload } from "@/components/OrganizationSwitcher";
 import { FbsPortalShell } from "@/components/FbsPortalShell";
 import { FbsPortalLogin } from "@/components/FbsPortalLogin";
 
@@ -77,8 +77,8 @@ function ShellWithNav({
         pinned={pinned}
         onTogglePinned={onTogglePinned}
         isSystemAdmin={organizations?.isSystemAdmin === true}
+        organizations={organizations}
       />
-      <OrganizationSwitcher payload={organizations} />
       <main className={cn("min-w-0 flex-1 ml-0 p-4 pt-16 md:p-6 transition-all duration-200", pinned ? "md:ml-60" : "md:ml-16")}>
         {children}
       </main>

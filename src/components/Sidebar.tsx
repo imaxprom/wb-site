@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getFbsPrinterIndicator, type FbsPrintAgent } from "@/lib/fbs-printer-status";
+import { OrganizationSwitcher, type OrganizationsPayload } from "@/components/OrganizationSwitcher";
 
 type NavItem = {
   href: string;
@@ -65,10 +66,12 @@ export function Sidebar({
   pinned,
   onTogglePinned,
   isSystemAdmin,
+  organizations,
 }: {
   pinned: boolean;
   onTogglePinned: () => void;
   isSystemAdmin: boolean;
+  organizations: OrganizationsPayload | null;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -204,6 +207,7 @@ export function Sidebar({
               <Pin size={15} className={cn("transition-transform", pinned && "rotate-45")} aria-hidden="true" />
             </button>
           </div>
+          {expanded && <OrganizationSwitcher payload={organizations} />}
         </div>
 
         <nav className="flex-1 py-4 overflow-y-auto overflow-x-hidden">

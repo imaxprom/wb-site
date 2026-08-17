@@ -20,6 +20,6 @@ export default async function SettingsPage() {
     <FbsMarkingSettings />
     <FbsKizArchiveSettings />
     <FbsApiKeySettings />
-    <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4 text-sm text-[var(--text-muted)]">Настройка применяется только к выбранному справа юрлицу. Ключи двух кабинетов хранятся раздельно.</div>
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4 text-sm text-[var(--text-muted)]">Настройка применяется только к выбранному в левом меню юрлицу. Ключи двух кабинетов хранятся раздельно.</div>
   </main>;
 }
