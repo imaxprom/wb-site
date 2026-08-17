@@ -478,11 +478,12 @@ export async function heartbeatFbsPrintAgent(agentId: string, printerName: strin
   await withPgTransaction(async (client) => {
     const [paused, currentAgent] = await Promise.all([
       client.query<{ last_error: string }>(`SELECT last_error FROM fbs_print_jobs WHERE status='paused' ORDER BY updated_at DESC LIMIT 1`),
-      client.query<{ status: string }>(`SELECT status FROM fbs_print_agents WHERE agent_id=$1`, [agentId]),
+      client.query<{ status: string; last_error: string }>(`SELECT status,last_error FROM fbs_print_agents WHERE agent_id=$1`, [agentId]),
     ]);
     const explicitQueueReady = status === "queue_ready";
     const queuePaused = Boolean(paused.rows[0]) && (["online", "printing"].includes(status) || explicitQueueReady);
-    const pausedStatus = currentAgent.rows[0]?.status === "queue_ready" ? "queue_ready" : "queue_paused";
+    const currentPausedStatus = currentAgent.rows[0]?.status || "";
+    const pausedStatus = ["queue_ready", "recovery_error"].includes(currentPausedStatus) ? currentPausedStatus : "queue_paused";
     const nextStatus = explicitQueueReady
       ? paused.rows[0] ? "queue_ready" : "online"
       : queuePaused ? pausedStatus : status.slice(0, 30);
@@ -495,7 +496,11 @@ export async function heartbeatFbsPrintAgent(agentId: string, printerName: strin
       printerName.slice(0, 200),
       nextStatus,
       queuePaused
-        ? nextStatus === "queue_ready" ? "Очередь Windows очищена — подтвердите результат этикетки" : String(paused.rows[0]?.last_error || "Очередь печати требует подтверждения").slice(0, 1000)
+        ? nextStatus === "queue_ready"
+          ? "Очередь Windows очищена — подтвердите результат этикетки"
+          : nextStatus === "recovery_error"
+            ? String(currentAgent.rows[0]?.last_error || "Windows не смогла очистить очередь печати").slice(0, 1000)
+            : String(paused.rows[0]?.last_error || "Очередь печати требует подтверждения").slice(0, 1000)
         : error.slice(0, 1000),
     ]);
   });
@@ -522,8 +527,12 @@ export async function claimFbsPrintItem(agentId: string, printerName: string) {
       await client.query(`
         UPDATE fbs_print_agents
         SET printer_name=$2,
-            status=CASE WHEN status='queue_ready' THEN 'queue_ready' ELSE 'queue_paused' END,
-            last_error=CASE WHEN status='queue_ready' THEN 'Очередь Windows очищена — подтвердите результат этикетки' ELSE $3 END,
+            status=CASE WHEN status IN ('queue_ready','recovery_error') THEN status ELSE 'queue_paused' END,
+            last_error=CASE
+              WHEN status='queue_ready' THEN 'Очередь Windows очищена — подтвердите результат этикетки'
+              WHEN status='recovery_error' THEN last_error
+              ELSE $3
+            END,
             last_seen_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
         WHERE agent_id=$1
       `, [agentId, printerName.slice(0, 200), String(paused.rows[0].last_error || "Очередь печати требует подтверждения").slice(0, 1000)]);

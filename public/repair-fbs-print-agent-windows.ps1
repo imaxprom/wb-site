@@ -14,6 +14,29 @@ $repairPath = Join-Path $appDir "repair-fbs-print-agent-windows.ps1"
 $logPath = Join-Path $appDir "repair.log"
 $taskName = "MpHub FBS Print Agent"
 
+function Test-IsAdministrator {
+  $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+  $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
+  return $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+# Clearing a retained Windows spooler job may require restarting the Spooler.
+# Elevate only for the explicit jam-recovery flow; normal agent startup remains
+# silent and never shows a UAC prompt.
+if ($RequestUri -match "PRN-(011|012|013)" -and -not (Test-IsAdministrator)) {
+  $powershell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+  $scriptPath = [string]$MyInvocation.MyCommand.Path
+  $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -ServerUrl `"$ServerUrl`" -RequestUri `"$RequestUri`""
+  try {
+    Start-Process -FilePath $powershell -Verb RunAs -ArgumentList $arguments | Out-Null
+    exit 0
+  } catch {
+    Write-Host "Administrator permission was not granted. Code PRN-013." -ForegroundColor Red
+    Read-Host "Press Enter to close"
+    exit 1
+  }
+}
+
 function Write-RecoveryLog {
   param([string]$Message)
   $stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -101,7 +124,21 @@ try {
     [string]$_.DocumentName -like "MpHub-*"
   })
   if ($remainingMpHubJobs.Count -gt 0) {
-    throw "PRN-012: Windows did not remove the stalled MpHub print job"
+    Write-RecoveryLog "Restarting Windows Print Spooler for $($remainingMpHubJobs.Count) retained MpHub job(s)"
+    Restart-Service -Name Spooler -Force -ErrorAction Stop
+    (Get-Service -Name Spooler -ErrorAction Stop).WaitForStatus("Running", [TimeSpan]::FromSeconds(20))
+    Start-Sleep -Seconds 2
+    foreach ($printJob in @(Get-PrintJob -PrinterName $printerName -ErrorAction Stop | Where-Object { [string]$_.DocumentName -like "MpHub-*" })) {
+      Remove-PrintJob -PrinterName $printerName -ID ([int]$printJob.ID) -ErrorAction Stop
+      Write-RecoveryLog "Removed retained MpHub spool job $($printJob.ID) after Spooler restart"
+    }
+    Start-Sleep -Seconds 2
+    $remainingMpHubJobs = @(Get-PrintJob -PrinterName $printerName -ErrorAction Stop | Where-Object {
+      [string]$_.DocumentName -like "MpHub-*"
+    })
+    if ($remainingMpHubJobs.Count -gt 0) {
+      throw "PRN-012: Windows did not remove the stalled MpHub print job after Spooler restart"
+    }
   }
 
   $temporaryAgent = "$agentPath.download"
@@ -160,7 +197,7 @@ while ($true) {
 } catch {
   $message = $_.Exception.Message
   Write-RecoveryLog "Recovery failed: $message"
-  if ($null -ne $config) { Send-RecoveryStatus -Config $config -Status "error" -Message $message }
+  if ($null -ne $config) { Send-RecoveryStatus -Config $config -Status "recovery_error" -Message $message }
   Write-Host ""
   Write-Host "Could not recover printing." -ForegroundColor Red
   Write-Host $message -ForegroundColor Red

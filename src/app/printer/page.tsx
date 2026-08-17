@@ -123,6 +123,7 @@ export default function PrinterPage() {
   const pausedJobs = pausedJobList.length;
   const queueBlocked = data.printQueuePaused || pausedJobs > 0;
   const windowsQueueReady = data.printAgents.some((agent) => agent.status === "queue_ready");
+  const recoveryFailure = data.printAgents.find((agent) => agent.status === "recovery_error") || null;
 
   useEffect(() => {
     if (!repairStarted && testOutcome !== "waiting") return;
@@ -143,13 +144,19 @@ export default function PrinterPage() {
   }, [repairStarted, windowsQueueReady]);
 
   useEffect(() => {
-    if (!repairStarted || windowsQueueReady) return;
+    if (!repairStarted || windowsQueueReady || recoveryFailure) return;
     const timer = window.setTimeout(() => {
       setRepairStarted(false);
       setError("Очистка Windows не подтвердилась. Если окно восстановления уже завершилось, нажмите «Восстановить после замятия» ещё раз — старый помощник мог сначала обновить себя.");
     }, 30_000);
     return () => window.clearTimeout(timer);
-  }, [repairStarted, windowsQueueReady]);
+  }, [recoveryFailure, repairStarted, windowsQueueReady]);
+
+  useEffect(() => {
+    if (!repairStarted || !recoveryFailure) return;
+    setRepairStarted(false);
+    setError(recoveryFailure.last_error || "Windows не смогла очистить очередь печати. Обновите помощник восстановления.");
+  }, [recoveryFailure, repairStarted]);
 
   useEffect(() => {
     if (!testJobId || !testStatus) return;
@@ -278,7 +285,7 @@ export default function PrinterPage() {
 
     {queueBlocked ? <section className="rounded-xl border-2 border-red-500/45 bg-red-500/5 p-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0"><div className="flex items-center gap-2 text-xl font-bold text-red-500"><AlertTriangle size={24} />Замятие печати</div><p className="mt-1 text-base text-[var(--text-muted)]">Печать специально остановлена, чтобы Zebra не выдала дубликаты после перезагрузки.</p><div className="mt-2 font-mono text-sm font-semibold text-red-500">Код: PRN-011</div></div>
+        <div className="min-w-0"><div className="flex items-center gap-2 text-xl font-bold text-red-500"><AlertTriangle size={24} />{recoveryFailure ? "Не удалось очистить очередь Windows" : "Замятие печати"}</div><p className="mt-1 text-base text-[var(--text-muted)]">Печать специально остановлена, чтобы Zebra не выдала дубликаты после перезагрузки.</p><div className="mt-2 font-mono text-sm font-semibold text-red-500">Код: {recoveryFailure ? "PRN-012" : "PRN-011"}</div></div>
         {connected?.printer_name && <div className="rounded-lg bg-[var(--bg-card)] px-3 py-2 text-sm text-[var(--text-muted)]">{connected.printer_name}</div>}
       </div>
       <ol className="mt-5 grid gap-3 text-base md:grid-cols-3">
@@ -286,8 +293,17 @@ export default function PrinterPage() {
         <li className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-3"><strong>2.</strong> Нажмите «Восстановить после замятия» и разрешите Windows открыть программу.</li>
         <li className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-3"><strong>3.</strong> Ниже укажите, вышла последняя этикетка или нет.</li>
       </ol>
-      <button type="button" onClick={startRepair} disabled={repairStarted || !configured} className="mt-4 flex items-center gap-2 rounded-lg bg-amber-500 px-5 py-3 font-semibold text-white disabled:opacity-45">{repairStarted ? <Loader2 size={19} className="animate-spin" /> : <Wrench size={19} />}{repairStarted ? "Восстанавливаем…" : "Восстановить после замятия"}</button>
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <button type="button" onClick={startRepair} disabled={repairStarted || !configured} className="flex items-center gap-2 rounded-lg bg-amber-500 px-5 py-3 font-semibold text-white disabled:opacity-45">{repairStarted ? <Loader2 size={19} className="animate-spin" /> : <Wrench size={19} />}{repairStarted ? "Восстанавливаем…" : "Восстановить после замятия"}</button>
+        <a href="/setup-fbs-printer-recovery.cmd" download className="rounded-lg border border-[var(--border)] px-4 py-3 font-semibold">Окно сразу выдаёт ошибку — обновить помощник</a>
+      </div>
       {repairStarted && <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-600">Дождитесь зелёной надписи в окне Windows. Программа удалит только зависшие задания MpHub и перезапустит печать.</div>}
+      {recoveryFailure && <div className="mt-4 rounded-xl border border-red-500/35 bg-[var(--bg-card)] p-4">
+        <div className="font-semibold text-red-500">Windows не смогла очистить зависшее задание</div>
+        <p className="mt-1 text-sm text-[var(--text-muted)]">Один раз обновите помощник на этом компьютере, затем снова нажмите «Восстановить после замятия» и подтвердите запрос Windows кнопкой «Да».</p>
+        <div className="mt-2 break-words text-sm text-red-500">{recoveryFailure.last_error || "Код PRN-012"}</div>
+        <a href="/setup-fbs-printer-recovery.cmd" download className="mt-3 inline-flex items-center gap-2 rounded-lg border border-red-500/40 px-4 py-2 font-semibold text-red-500"><Wrench size={18} />Обновить помощник восстановления</a>
+      </div>}
 
       <div className="mt-5 space-y-3">
         {pausedJobList.length === 0 && <div className="rounded-xl border border-red-500/30 bg-[var(--bg-card)] p-4">Очередь остановлена, но её карточка не загрузилась. Нажмите «Проверить снова» или сообщите администратору код PRN-011.</div>}

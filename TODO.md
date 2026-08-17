@@ -18,7 +18,7 @@ Last updated: 2026-08-17 16:10 MSK.
 - Monitor future partial WB add failures: actual live membership must be persisted, attached orders move to assembly, rejected orders stay in New, and sync must reconcile open supplies.
 - If the user approves remote Windows administration, configure Tailscale + Windows OpenSSH + dedicated key-only admin account on the warehouse computer, then test access after reboot. This is not installed yet.
 - For printer failures, inspect print-agent status/log, PostgreSQL print job, Windows spooler and Zebra state before resetting any queue. Never reprint blindly when physical output is unknown.
-- После deployment нового jam recovery на текущем Windows один раз обновить локальный helper (первый запуск старой версии может только скачать новую; интерфейс попросит повторить), затем рядом с сотрудником проверить контролируемый сценарий на тестовой этикетке: `queue_paused` → очистка только `MpHub-*` → `queue_ready` → точный выбор результата → продолжение очереди без дубля.
+- На текущем Windows нажать в `/printer` «Окно сразу выдаёт ошибку — обновить помощник», один раз запустить скачанный файл, затем повторить восстановление и подтвердить UAC кнопкой «Да». После этого рядом с сотрудником проверить текущий контролируемый сценарий: `queue_paused` → при Retained перезапуск Spooler и очистка только `MpHub-*` → `queue_ready` → точный выбор результата этикетки → продолжение очереди без дубля.
 
 ## Production Checks
 
