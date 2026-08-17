@@ -1482,6 +1482,7 @@
           "items": [
             "src/lib/wb-auth-playwright.ts — основной runtime авторизации через Playwright/Python bridge",
             "src/lib/wb-auth-cdp.ts — вспомогательный CDP/captcha путь",
+            "scripts/lib/wb_legal_entities.py — распознавание российских и иностранных кабинетов по WB ID/INN без зависимости от языка названия",
             "src/lib/wb-seller-api.ts — HTTP-клиент: рефреш токенов, API-запросы",
             "src/components/WbAuth.tsx — React UI: поля ввода, шаги, ошибки",
             "src/app/api/wb/auth/route.ts — POST/GET/DELETE, requireAdmin",

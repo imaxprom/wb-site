@@ -7,6 +7,13 @@ States: sms_sent, blocked, code_error, code_expired, supplier_select, success, f
 """
 from playwright.sync_api import sync_playwright
 import base64, json, time, sys, os, re, subprocess, urllib.request
+from lib.wb_legal_entities import (
+    has_legal_entity_marker,
+    normalize_supplier_name,
+    parse_legal_entity_text,
+    supplier_matches_query,
+    supplier_names_from_text,
+)
 
 PHONE = os.environ.get("WB_PHONE", "9641521652")
 TARGET_SUPPLIER_QUERY = os.environ.get("WB_TARGET_SUPPLIER", "").strip()
@@ -436,110 +443,6 @@ def capture_authorizev3(page):
 
     return ""
 
-def normalize_supplier_name(value):
-    value = re.sub(r"\s+", " ", value or "").strip()
-    value = value.replace("Индивидуальный предприниматель", "ИП")
-    return value
-
-def parse_legal_entity_text(value, fallback_name=""):
-    """Parse the same legal-entity metadata that WBADS exposes to its UI."""
-    raw = value or ""
-    clean = normalize_supplier_name(raw)
-    names = []
-    for line in raw.splitlines():
-        names.extend(supplier_names_from_text(line))
-    if not names:
-        names = supplier_names_from_text(clean)
-    name = names[0] if names else normalize_supplier_name(fallback_name)
-    if not name:
-        return None
-
-    supplier_match = re.search(r"(?:^|\s)(?:ID|ИД)\s*[:№#]?\s*(\d+)", clean, re.IGNORECASE)
-    inn_match = re.search(r"(?:^|\s)(?:INN|ИНН)\s*[:№#]?\s*(\d{8,12})", clean, re.IGNORECASE)
-    supplier_id = supplier_match.group(1) if supplier_match else ""
-    inn = inn_match.group(1) if inn_match else ""
-
-    store_name = ""
-    lines = [normalize_supplier_name(line) for line in raw.splitlines() if normalize_supplier_name(line)]
-    ignored = re.compile(
-        r"^(?:ID|ИД|INN|ИНН|Ваш\s+(?:аккаунт|кабинет)|Your\s+account|Выбрать|Продолжить)",
-        re.IGNORECASE,
-    )
-    for line in lines:
-        candidate = re.sub(r"\s+(?:INN|ИНН|ID|ИД)\s*[:№#]?\s*\d+.*$", "", line, flags=re.IGNORECASE).strip(" ·•-")
-        if not candidate or ignored.search(candidate):
-            continue
-        if supplier_matches_query(candidate, name) or supplier_names_from_text(candidate):
-            remainder = normalize_supplier_name(candidate.replace(name, "", 1)).strip(" ·•-")
-            if remainder and not ignored.search(remainder):
-                store_name = remainder
-            continue
-        if len(candidate) <= 80:
-            store_name = candidate
-            break
-
-    if not store_name:
-        before_meta = re.sub(
-            r"\s+(?:INN|ИНН|ID|ИД)\s*[:№#]?\s*\d+.*$",
-            "",
-            clean,
-            flags=re.IGNORECASE,
-        )
-        remainder = normalize_supplier_name(before_meta.replace(name, "", 1)).strip(" ·•-")
-        if remainder and len(remainder) <= 80 and not ignored.search(remainder):
-            store_name = remainder
-
-    entity_id = supplier_id or ("name:" + re.sub(r"[^а-яёa-z0-9]+", "-", name.lower(), flags=re.IGNORECASE).strip("-"))
-    subtitle_parts = []
-    if store_name:
-        subtitle_parts.append(store_name)
-    if inn:
-        subtitle_parts.append("ИНН " + inn)
-    if supplier_id:
-        subtitle_parts.append("ID " + supplier_id)
-    return {
-        "id": entity_id,
-        "name": name,
-        "subtitle": " · ".join(subtitle_parts),
-        "supplierId": supplier_id,
-        "storeName": store_name,
-        "inn": inn,
-    }
-
-def supplier_names_from_text(value):
-    value = normalize_supplier_name(value)
-    names = []
-
-    for match in re.finditer(r"\bИП\s+[А-ЯЁ][а-яё-]+(?:\s+[А-ЯЁ]\.\s*[А-ЯЁ]\.?)?", value):
-        names.append(normalize_supplier_name(match.group(0)))
-
-    for match in re.finditer(r"\bИП\s+[А-ЯЁ][а-яё-]+(?:\s+[А-ЯЁ][а-яё-]+){1,2}", value):
-        names.append(normalize_supplier_name(match.group(0)))
-
-    for match in re.finditer(r"\bООО\s+[«\"]?[^,\n]{2,60}", value):
-        names.append(normalize_supplier_name(match.group(0).strip(" .")))
-
-    result = []
-    seen = set()
-    for name in names:
-        key = name.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(name)
-    return result
-
-def supplier_matches_query(name, query):
-    if not query:
-        return False
-    normalized_name = normalize_supplier_name(name).lower().replace("ё", "е")
-    normalized_query = normalize_supplier_name(query).lower().replace("ё", "е")
-    query_words = [
-        word for word in re.findall(r"[а-яa-z0-9]+", normalized_query, re.IGNORECASE)
-        if word not in ["ип", "ооо"] and len(word) > 2
-    ]
-    return bool(query_words) and all(word in normalized_name for word in query_words)
-
 def collect_supplier_elements(page, header_only=False):
     """Collect visible supplier rows in one browser evaluation.
 
@@ -552,6 +455,7 @@ def collect_supplier_elements(page, header_only=False):
             """(headerOnly) => {
                 const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
                 const entityName = /(^|\\s)(ИП|ООО|АО|Самозанят)\\s+/i;
+                const entityId = /(^|[\\s•])(ID|ИД)\\s*[:№#]?\\s*[0-9a-z-]{3,}/i;
                 const visible = (el) => {
                     const rect = el.getBoundingClientRect();
                     const style = window.getComputedStyle(el);
@@ -564,13 +468,14 @@ def collect_supplier_elements(page, header_only=False):
                         const rect = el.getBoundingClientRect();
                         return {
                             text: normalize(el.innerText || el.textContent || ''),
+                            rawText: String(el.innerText || el.textContent || '').trim(),
                             x: rect.x,
                             y: rect.y,
                             width: rect.width,
                             height: rect.height,
                         };
                     })
-                    .filter((item) => item.text.length >= 3 && item.text.length <= 320 && entityName.test(item.text))
+                    .filter((item) => item.text.length >= 3 && item.text.length <= 500 && (entityName.test(item.text) || entityId.test(item.text)))
                     .filter((item) => !headerOnly || (item.y < 130 && item.x > window.innerWidth * 0.45));
             }""",
             header_only,
@@ -581,15 +486,16 @@ def collect_supplier_elements(page, header_only=False):
     by_key = {}
     for raw_item in raw_items or []:
         try:
-            raw_text = raw_item.get("text", "")
+            raw_text = raw_item.get("rawText") or raw_item.get("text", "")
             names = supplier_names_from_text(raw_text)
-            if not names:
-                continue
-            for name in names:
+            fallbacks = names or ([""] if has_legal_entity_marker(raw_text) else [])
+            for name in fallbacks:
                 entity = parse_legal_entity_text(raw_text, name) or {"name": name, "id": "", "supplierId": ""}
-                key = (entity.get("supplierId") or name).lower()
+                if not entity.get("id") or not entity.get("name"):
+                    continue
+                key = (entity.get("supplierId") or entity.get("name", "")).lower()
                 item = {
-                    "name": name,
+                    "name": entity["name"],
                     "text": normalize_supplier_name(raw_text),
                     "entity": entity,
                     "x": raw_item.get("x", 0),
@@ -712,9 +618,26 @@ def click_supplier_choice(page, choice):
             }"""
         )
         page.wait_for_timeout(4500)
-        current = current_supplier_from_header(page)
-        if current and (current == wanted or supplier_matches_query(current, wanted)):
-            print("    Switched to:", current)
+        selected_in_header = page.evaluate(
+            """(entity) => {
+                const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+                const visible = (el) => {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+                };
+                return Array.from(document.querySelectorAll("button,a,[role='button']"))
+                    .filter(visible)
+                    .some((el) => {
+                        const rect = el.getBoundingClientRect();
+                        const text = normalize(el.innerText || el.textContent || '');
+                        return rect.y < 140 && (text.includes(entity.name) || (entity.supplierId && text.includes(entity.supplierId)));
+                    });
+            }""",
+            {"name": wanted, "supplierId": wanted_id},
+        )
+        if selected_in_header:
+            print("    Switched to:", wanted)
             return True
     except Exception as e:
         print("    Supplier click attempt failed:", e)
