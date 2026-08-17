@@ -1,6 +1,6 @@
 # MpHub Project Context
 
-Last verified: 2026-08-17 17:30 MSK from local code, production `ssh wb-site`, PM2, production PostgreSQL and warehouse Windows over Tailscale/OpenSSH.
+Last verified: 2026-08-17 19:45 MSK from local code, production `ssh wb-site`, PM2, production PostgreSQL and warehouse Windows over Tailscale/OpenSSH.
 
 ## Runtime
 
