@@ -1,6 +1,6 @@
 # MpHub Project Context
 
-Last verified: 2026-08-16 19:07 MSK from local code, production `ssh wb-site`, PM2 and production PostgreSQL.
+Last verified: 2026-08-17 15:00 MSK from local code, production `ssh wb-site`, PM2 and production PostgreSQL.
 
 ## Runtime
 
@@ -67,6 +67,7 @@ Last verified: 2026-08-16 19:07 MSK from local code, production `ssh wb-site`, P
 - `shipment_orders` uniqueness is WB `order_uid`, not the old barcode/date/warehouse combination.
 - `/shipment` calculation supports manual supply deductions and warehouse exclusions. User-site cart stock is not seller API data; its “Total” equals the sum of displayed unique warehouses.
 - Finance forecast uses factual current economics. Backpack estimates now use cumulative factual clean sales over the configured lookback/threshold rather than requiring 100 sales in a single day.
+- Foreign WB cabinets may return finance Excel files with Chinese headers and operation values. Both daily realization and weekly reference imports normalize them through `scripts/lib/wb-finance-header-aliases.json`, reject unmapped critical columns, and preserve the Russian operation vocabulary used by finance queries. The shared, non-tenant WB tariff cache is read explicitly as `public.logistics_tariff_cache` by forecast; business rows remain tenant-isolated.
 - Reviews sync runs every 15 minutes; the top archive request runs at most every 30 minutes and preserves WB `429` retry state. Manual full sync remains disabled in PostgreSQL runtime.
 - Codex gateway for complaint generation runs on `codex-cli` and uses `gpt-5.6-sol`; do not expose gateway/auth secrets.
 - In-app knowledge base is `src/app/docs/page.tsx` + `public/data/docs.json`; the JSON is required by release deploy.
