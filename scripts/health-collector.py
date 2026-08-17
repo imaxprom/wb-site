@@ -267,7 +267,7 @@ def count_errors_in_log(log_path: str | None) -> tuple[int, list[dict]]:
     current_timestamp = None
     for line in lines:
         current_timestamp = parse_log_timestamp(line, current_timestamp)
-        if re.search(r"FATAL|ERROR|CRITICAL|Exception|Traceback", line, re.IGNORECASE):
+        if re.search(r"\b(?:FATAL|ERROR|CRITICAL)\b|Exception|Traceback|\"errors\"\s*:\s*\[(?!\])", line, re.IGNORECASE):
             if re.search(r"errors?\s*[=:]\s*0\b|0\s+errors?\b", line, re.IGNORECASE):
                 continue
             if current_timestamp is None or current_timestamp < cutoff:

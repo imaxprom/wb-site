@@ -399,7 +399,7 @@ function checkCronLogs(checks, capabilities) {
     name: "Cron supply-reports",
     logPath: path.join(DATA_DIR, "supply-reports-sync.log"),
     okPattern: /Supply reports sync OK/i,
-    errorPattern: /Supply reports sync OK: .*"errors"\s*:\s*\[(?!\])|ERROR: supply reports sync failed|ERROR|CRITICAL|Traceback/i,
+    errorPattern: /Supply reports sync OK: .*"errors"\s*:\s*\[(?!\])|ERROR: supply reports sync failed|\bERROR\b|CRITICAL|Traceback/i,
     maxOkAgeMin: 36 * 60,
   });
 
