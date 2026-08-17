@@ -59,7 +59,7 @@ async function readCachePg(date: string, cargoType: string): Promise<TariffCache
   try {
     const row = await pgGet<TariffCacheRow>(`
       SELECT date, cargo_type, payload_json, synced_at
-      FROM logistics_tariff_cache
+      FROM public.logistics_tariff_cache
       WHERE date = ? AND cargo_type = ?
     `, [date, cargoType]);
     return row || null;
@@ -73,7 +73,7 @@ async function readLatestCachePg(date: string, cargoType: string): Promise<Tarif
   try {
     const row = await pgGet<TariffCacheRow>(`
       SELECT date, cargo_type, payload_json, synced_at
-      FROM logistics_tariff_cache
+      FROM public.logistics_tariff_cache
       WHERE date <= ? AND cargo_type = ?
       ORDER BY date DESC
       LIMIT 1
@@ -95,7 +95,7 @@ async function writeCachePg(date: string, cargoType: string, payload: unknown): 
   if (isPostgresReadonlyConnection()) return;
 
   await pgGet(`
-    INSERT INTO logistics_tariff_cache (date, cargo_type, payload_json, synced_at)
+    INSERT INTO public.logistics_tariff_cache (date, cargo_type, payload_json, synced_at)
     VALUES (?, ?, ?, ?)
     ON CONFLICT(date, cargo_type) DO UPDATE SET
       payload_json = EXCLUDED.payload_json,
