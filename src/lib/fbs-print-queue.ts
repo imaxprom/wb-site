@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type { PoolClient } from "pg";
 import { fbsStickerNumber } from "@/lib/fbs-label";
+import { normalizeFbsScannerKeyboardText } from "@/lib/fbs-scanner-input";
 import { getActiveOrganizationId } from "@/lib/organization-context";
 import { pgRows, withPgTransaction } from "@/lib/postgres";
 import { getFbsBoxStickers, getFbsOrderStickers, getFbsSupplyBarcode, getFbsSupplyBoxes, type FbsWbSticker } from "@/lib/fbs-wb-api";
@@ -37,15 +38,18 @@ export type FbsPrintJob = {
 };
 
 export async function getFbsPrintAgentSnapshot() {
-  const agents = await pgRows<{ agent_id: string; name: string; printer_name: string; status: string; last_error: string; last_seen_at: string | null }>(`
-    SELECT agent_id,name,printer_name,
-      CASE WHEN last_seen_at<CURRENT_TIMESTAMP-INTERVAL '45 seconds' THEN 'offline' ELSE status END AS status,
-      last_error,last_seen_at
-    FROM fbs_print_agents
-    WHERE enabled=TRUE
-    ORDER BY created_at DESC
-  `);
-  return { printAgents: agents };
+  const [agents, paused] = await Promise.all([
+    pgRows<{ agent_id: string; name: string; printer_name: string; status: string; last_error: string; last_seen_at: string | null }>(`
+      SELECT agent_id,name,printer_name,
+        CASE WHEN last_seen_at<CURRENT_TIMESTAMP-INTERVAL '45 seconds' THEN 'offline' ELSE status END AS status,
+        last_error,last_seen_at
+      FROM fbs_print_agents
+      WHERE enabled=TRUE
+      ORDER BY created_at DESC
+    `),
+    pgRows<{ count: number }>(`SELECT COUNT(*)::int AS count FROM fbs_print_jobs WHERE status='paused'`),
+  ]);
+  return { printAgents: agents, printQueuePaused: Number(paused[0]?.count || 0) > 0 };
 }
 
 function strings(value: unknown): string[] {
@@ -104,7 +108,7 @@ export async function getFbsPrintQueueSnapshot(supplyId = "") {
       `, [jobIds]);
     }
   });
-  const [jobs, agents] = await Promise.all([
+  const [jobs, agentSnapshot] = await Promise.all([
     supplyId
       ? pgRows<FbsPrintJob>(`
           SELECT job_id,supply_id,group_key,nm_id,chrt_id,sku,product_name,size_name,
@@ -116,9 +120,9 @@ export async function getFbsPrintQueueSnapshot(supplyId = "") {
           LIMIT 250
         `, [supplyId])
       : pgRows<FbsPrintJob>(`SELECT job_id,supply_id,group_key,nm_id,chrt_id,sku,product_name,size_name,total_count,printed_count,status,agent_id,last_error,created_at,updated_at FROM fbs_print_jobs WHERE created_at>=CURRENT_TIMESTAMP-INTERVAL '7 days' ORDER BY created_at DESC LIMIT 200`),
-    getFbsPrintAgentSnapshot().then((snapshot) => snapshot.printAgents),
+    getFbsPrintAgentSnapshot(),
   ]);
-  return { printJobs: jobs, printAgents: agents };
+  return { printJobs: jobs, ...agentSnapshot };
 }
 
 export async function createFbsTestPrintJob() {
@@ -472,13 +476,33 @@ export async function authenticateFbsPrintAgent(token: string) {
 
 export async function heartbeatFbsPrintAgent(agentId: string, printerName: string, status = "online", error = "") {
   await withPgTransaction(async (client) => {
-    await client.query(`UPDATE fbs_print_agents SET printer_name=$2,status=$3,last_error=$4,last_seen_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE agent_id=$1`, [agentId, printerName.slice(0, 200), status.slice(0, 30), error.slice(0, 1000)]);
+    const [paused, currentAgent] = await Promise.all([
+      client.query<{ last_error: string }>(`SELECT last_error FROM fbs_print_jobs WHERE status='paused' ORDER BY updated_at DESC LIMIT 1`),
+      client.query<{ status: string }>(`SELECT status FROM fbs_print_agents WHERE agent_id=$1`, [agentId]),
+    ]);
+    const explicitQueueReady = status === "queue_ready";
+    const queuePaused = Boolean(paused.rows[0]) && (["online", "printing"].includes(status) || explicitQueueReady);
+    const pausedStatus = currentAgent.rows[0]?.status === "queue_ready" ? "queue_ready" : "queue_paused";
+    const nextStatus = explicitQueueReady
+      ? paused.rows[0] ? "queue_ready" : "online"
+      : queuePaused ? pausedStatus : status.slice(0, 30);
+    await client.query(`
+      UPDATE fbs_print_agents
+      SET printer_name=$2,status=$3,last_error=$4,last_seen_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+      WHERE agent_id=$1
+    `, [
+      agentId,
+      printerName.slice(0, 200),
+      nextStatus,
+      queuePaused
+        ? nextStatus === "queue_ready" ? "Очередь Windows очищена — подтвердите результат этикетки" : String(paused.rows[0]?.last_error || "Очередь печати требует подтверждения").slice(0, 1000)
+        : error.slice(0, 1000),
+    ]);
   });
 }
 
 export async function claimFbsPrintItem(agentId: string, printerName: string) {
   return withPgTransaction(async (client) => {
-    await client.query(`UPDATE fbs_print_agents SET printer_name=$2,status='online',last_error='',last_seen_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE agent_id=$1`, [agentId, printerName.slice(0, 200)]);
     const expired = await client.query<{ job_id: string }>(`
       UPDATE fbs_print_job_items
       SET status='uncertain',lease_until=NULL
@@ -493,8 +517,19 @@ export async function claimFbsPrintItem(agentId: string, printerName: string) {
         WHERE job_id=ANY($1::text[]) AND status='printing'
       `, [expiredJobIds]);
     }
-    const paused = await client.query(`SELECT 1 FROM fbs_print_jobs WHERE status='paused' LIMIT 1`);
-    if (paused.rows[0]) return null;
+    const paused = await client.query<{ last_error: string }>(`SELECT last_error FROM fbs_print_jobs WHERE status='paused' ORDER BY updated_at DESC LIMIT 1`);
+    if (paused.rows[0]) {
+      await client.query(`
+        UPDATE fbs_print_agents
+        SET printer_name=$2,
+            status=CASE WHEN status='queue_ready' THEN 'queue_ready' ELSE 'queue_paused' END,
+            last_error=CASE WHEN status='queue_ready' THEN 'Очередь Windows очищена — подтвердите результат этикетки' ELSE $3 END,
+            last_seen_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+        WHERE agent_id=$1
+      `, [agentId, printerName.slice(0, 200), String(paused.rows[0].last_error || "Очередь печати требует подтверждения").slice(0, 1000)]);
+      return null;
+    }
+    await client.query(`UPDATE fbs_print_agents SET printer_name=$2,status='online',last_error='',last_seen_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE agent_id=$1`, [agentId, printerName.slice(0, 200)]);
     // A second Windows process may use the same agent token after recovery or
     // logon. Never let it claim the next label while any label is still in
     // flight; printing must remain strictly serial for the whole legal entity.
@@ -636,5 +671,102 @@ export async function resumeFbsPrintJob(jobId: string, lastBarcode = "") {
     const printed = Number(count.rows[0]?.count || 0);
     const complete = printed === Number(total.rows[0]?.total_count || 0);
     await client.query(`UPDATE fbs_print_jobs SET status=$2,printed_count=$3,last_error='',completed_at=CASE WHEN $2='completed' THEN CURRENT_TIMESTAMP ELSE completed_at END,updated_at=CURRENT_TIMESTAMP WHERE job_id=$1`, [jobId, complete ? "completed" : "queued", printed]);
+  });
+}
+
+export async function resolvePausedFbsPrintJob(
+  jobIdInput: string,
+  outcome: "printed" | "retry",
+  scannedBarcode = "",
+) {
+  const jobId = jobIdInput.trim();
+  if (!jobId) throw new Error("Очередь печати не найдена");
+  if (!(["printed", "retry"] as const).includes(outcome)) throw new Error("Не выбран результат печати");
+
+  return withPgTransaction(async (client) => {
+    const locked = await client.query<FbsPrintJob>(`SELECT * FROM fbs_print_jobs WHERE job_id=$1 FOR UPDATE`, [jobId]);
+    const job = locked.rows[0];
+    if (!job) throw new Error("Очередь печати не найдена");
+    if (job.status !== "paused") throw new Error("Эта очередь уже восстановлена");
+    if (job.group_key.startsWith("kiz-archive:")) {
+      throw new Error("Печать КИЗ восстанавливается в разделе «Архив КИЗ»");
+    }
+
+    const uncertain = await client.query<{
+      position: number;
+      order_id: number;
+      sticker_barcode: string;
+      reference_id: string;
+    }>(`
+      SELECT position,order_id,sticker_barcode,reference_id
+      FROM fbs_print_job_items
+      WHERE job_id=$1 AND status IN ('uncertain','printing')
+      ORDER BY position
+      FOR UPDATE
+    `, [jobId]);
+    if (uncertain.rows.length !== 1) {
+      throw new Error(uncertain.rows.length
+        ? "Обнаружено несколько незавершённых этикеток — требуется администратор"
+        : "Незавершённая этикетка не найдена");
+    }
+
+    const item = uncertain.rows[0];
+    const supplyQr = job.group_key.startsWith("supply-qr:");
+    const boxQr = job.group_key.startsWith("box-qr:") || job.group_key.startsWith("box-qr-reprint:");
+    const testPrint = job.group_key.startsWith("test:");
+    const requiresBarcode = !supplyQr && !boxQr && !testPrint;
+
+    if (outcome === "printed" && requiresBarcode) {
+      const normalized = normalizeFbsScannerKeyboardText(scannedBarcode).replace(/[\r\n]+$/g, "").trim();
+      if (!normalized) throw new Error("Отсканируйте физически вышедшую этикетку WB");
+      if (normalized !== item.sticker_barcode) throw new Error("Отсканирована другая этикетка — очередь не изменена");
+    }
+
+    if (outcome === "retry") {
+      await client.query(`UPDATE fbs_print_job_items SET status='pending',lease_until=NULL WHERE job_id=$1 AND position=$2`, [jobId, item.position]);
+      await client.query(`UPDATE fbs_print_jobs SET status='queued',last_error='',updated_at=CURRENT_TIMESTAMP WHERE job_id=$1`, [jobId]);
+      await recordEvent(client, job.supply_id, "print_jam_requeued", `Этикетка ${item.position}/${job.total_count} не вышла и поставлена на повторную печать`, { jobId, position: item.position });
+    } else {
+      await client.query(`UPDATE fbs_print_job_items SET status='printed',printed_at=COALESCE(printed_at,CURRENT_TIMESTAMP),lease_until=NULL WHERE job_id=$1 AND position=$2`, [jobId, item.position]);
+
+      if (supplyQr) {
+        await client.query(`UPDATE fbs_fulfillment_supplies SET qr_printed_at=COALESCE(qr_printed_at,CURRENT_TIMESTAMP),updated_at=CURRENT_TIMESTAMP WHERE supply_id=$1`, [job.supply_id]);
+      } else if (boxQr && item.reference_id) {
+        const supply = await client.query<{ box_stickers_printed_ids: string[]; boxes_count: number }>(`SELECT box_stickers_printed_ids,boxes_count FROM fbs_fulfillment_supplies WHERE supply_id=$1 FOR UPDATE`, [job.supply_id]);
+        const printedIds = Array.from(new Set([...strings(supply.rows[0]?.box_stickers_printed_ids), item.reference_id]));
+        await client.query(`
+          UPDATE fbs_fulfillment_supplies
+          SET box_stickers_printed_ids=$2::jsonb,box_stickers_printed_count=$3,
+              box_stickers_printed_at=CASE WHEN $3 >= boxes_count THEN COALESCE(box_stickers_printed_at,CURRENT_TIMESTAMP) ELSE box_stickers_printed_at END,
+              updated_at=CURRENT_TIMESTAMP
+          WHERE supply_id=$1
+        `, [job.supply_id, JSON.stringify(printedIds), printedIds.length]);
+      } else if (!testPrint) {
+        await client.query(`
+          UPDATE fbs_fulfillment_orders
+          SET picked_at=COALESCE(picked_at,CURRENT_TIMESTAMP),
+              sticker_printed_at=COALESCE(sticker_printed_at,CURRENT_TIMESTAMP),
+              sticker_barcode=$2,updated_at=CURRENT_TIMESTAMP
+          WHERE order_id=$1
+        `, [item.order_id, item.sticker_barcode]);
+      }
+
+      const count = await client.query<{ count: number }>(`SELECT COUNT(*)::int AS count FROM fbs_print_job_items WHERE job_id=$1 AND status='printed'`, [jobId]);
+      const printed = Number(count.rows[0]?.count || 0);
+      const complete = printed === Number(job.total_count);
+      await client.query(`
+        UPDATE fbs_print_jobs
+        SET printed_count=$2,status=$3,last_error='',updated_at=CURRENT_TIMESTAMP,
+            completed_at=CASE WHEN $3='completed' THEN CURRENT_TIMESTAMP ELSE completed_at END
+        WHERE job_id=$1
+      `, [jobId, printed, complete ? "completed" : "queued"]);
+      await recordEvent(client, job.supply_id, "print_jam_confirmed", `Подтверждена физически вышедшая этикетка ${item.position}/${job.total_count}`, { jobId, position: item.position, complete });
+    }
+
+    const anotherPaused = await client.query(`SELECT 1 FROM fbs_print_jobs WHERE status='paused' LIMIT 1`);
+    if (!anotherPaused.rows[0] && job.agent_id) {
+      await client.query(`UPDATE fbs_print_agents SET status='online',last_error='',updated_at=CURRENT_TIMESTAMP WHERE agent_id=$1`, [job.agent_id]);
+    }
+    return { resumed: true, outcome, position: item.position };
   });
 }

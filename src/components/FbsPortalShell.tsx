@@ -25,6 +25,7 @@ export function FbsPortalShell({ children }: { children: React.ReactNode }) {
   const [hovered, setHovered] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [printAgents, setPrintAgents] = useState<FbsPrintAgent[] | null>(null);
+  const [printQueuePaused, setPrintQueuePaused] = useState(false);
   const expanded = pinned || hovered || mobileOpen;
 
   useEffect(() => {
@@ -70,18 +71,26 @@ export function FbsPortalShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!active?.canAssembly) {
       setPrintAgents(null);
+      setPrintQueuePaused(false);
       return;
     }
     let cancelled = false;
     const refresh = () => fetch("/api/fbs?printerStatus=1", { cache: "no-store" })
       .then((response) => response.ok ? response.json() : null)
       .then((result) => {
-        if (!cancelled && result) setPrintAgents(Array.isArray(result.printAgents) ? result.printAgents : []);
+        if (!cancelled && result) {
+          setPrintAgents(Array.isArray(result.printAgents) ? result.printAgents : []);
+          setPrintQueuePaused(Boolean(result.printQueuePaused));
+        }
       })
       .catch(() => undefined);
     const statusChanged = (event: Event) => {
-      const agents = (event as CustomEvent<FbsPrintAgent[]>).detail;
-      if (Array.isArray(agents)) setPrintAgents(agents);
+      const detail = (event as CustomEvent<FbsPrintAgent[] | { printAgents?: FbsPrintAgent[]; printQueuePaused?: boolean }>).detail;
+      if (Array.isArray(detail)) setPrintAgents(detail);
+      else if (detail) {
+        if (Array.isArray(detail.printAgents)) setPrintAgents(detail.printAgents);
+        setPrintQueuePaused(Boolean(detail.printQueuePaused));
+      }
     };
     void refresh();
     const timer = window.setInterval(() => void refresh(), 15_000);
@@ -93,7 +102,7 @@ export function FbsPortalShell({ children }: { children: React.ReactNode }) {
     };
   }, [active?.canAssembly, active?.id]);
 
-  const printerIndicator = getFbsPrinterIndicator(printAgents);
+  const printerIndicator = getFbsPrinterIndicator(printAgents, printQueuePaused);
   const printerColor = printerIndicator.tone === "ready"
     ? "text-emerald-500"
     : printerIndicator.tone === "warning"

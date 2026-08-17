@@ -1247,14 +1247,8 @@ export default function FbsPage() {
   }
 
   async function continuePrint(job: PrintJob) {
-    if (!printAgentReady) {
-      setError(`Сначала восстановите печать в разделе «Принтер». Код ${currentPrinterProblem.code}.`);
-      return;
-    }
-    const lastBarcode = window.prompt("Если последняя этикетка вышла нормально — отсканируйте её ШК. Если не вышла, оставьте поле пустым.", "");
-    if (lastBarcode === null) return;
-    await action("continue_print", { action: "resume_print_job", jobId: job.job_id, lastBarcode });
-    setNotice("Печать продолжена.");
+    void job;
+    window.location.assign("/printer");
   }
 
   async function printSupplyQrViaAgent() {
@@ -1271,12 +1265,8 @@ export default function FbsPage() {
   }
 
   async function continueSupplyQrPrint(job: PrintJob) {
-    if (!printAgentReady) {
-      setError(`Сначала восстановите печать в разделе «Принтер». Код ${currentPrinterProblem.code}.`);
-      return;
-    }
-    await action("supply_qr_resume", { action: "resume_print_job", jobId: job.job_id, lastBarcode: "" });
-    setNotice("Печать QR поставки продолжена.");
+    void job;
+    window.location.assign("/printer");
   }
 
   async function createPickupPointBoxes() {
@@ -1309,12 +1299,8 @@ export default function FbsPage() {
   }
 
   async function continuePickupPointBoxes(job: PrintJob) {
-    if (!printAgentReady) {
-      setError(`Сначала восстановите печать в разделе «Принтер». Код ${currentPrinterProblem.code}.`);
-      return;
-    }
-    await action("boxes_print_resume", { action: "resume_print_job", jobId: job.job_id, lastBarcode: "" });
-    setNotice("Печать QR грузомест продолжена.");
+    void job;
+    window.location.assign("/printer");
   }
 
   async function deletePickupPointBoxes() {
@@ -1579,7 +1565,7 @@ export default function FbsPage() {
                 <div className="h-full w-px bg-[var(--border)]" />
                 <button type="button" onClick={() => setTaskGroupKey(group.key)} className="w-full rounded-lg p-2 text-center transition hover:bg-[var(--accent)]/10" aria-label={`Открыть ${group.orders.length} этикеток WB`}><div className="text-lg font-semibold">{group.orders.length}</div><div className="text-xs font-medium text-[var(--accent)]">Открыть список →</div></button>
                 <div className="text-center font-mono text-sm">{group.sku || "не получен"}</div>
-                <div className="flex w-[250px] items-center justify-end">{complete ? <div className="flex min-h-[58px] w-full items-center justify-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 font-medium text-emerald-500"><CheckCircle2 size={18} />Готово</div> : checking ? <div className="flex min-h-[58px] w-full items-center justify-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 font-medium text-amber-500"><Loader2 size={18} className="animate-spin" />Проверяется WB</div> : needsRecovery && job ? <button type="button" onClick={() => void continuePrint(job)} disabled={!printAgentReady} className="w-full rounded-lg bg-amber-500 px-4 py-2.5 font-medium text-white disabled:cursor-not-allowed disabled:opacity-35">Продолжить печать</button> : labelsComplete && groupSgtinScanRemaining > 0 ? <button type="button" onClick={() => openAssemblyMarkingBatch(group)} className="flex w-full flex-col items-center justify-center rounded-xl bg-amber-500 px-4 py-2.5 text-[21px] font-semibold leading-tight text-white transition hover:brightness-110"><span>{groupSgtinScanRemaining === 1 ? "Остался" : "Осталось"}</span><span>{groupSgtinScanRemaining} {groupSgtinScanRemaining === 1 ? "товар" : groupSgtinScanRemaining >= 2 && groupSgtinScanRemaining <= 4 ? "товара" : "товаров"}</span></button> : <button type="button" onClick={() => void printBatch(group)} disabled={!printAgentReady || !group.sku || Boolean(job) || Boolean(busy)} className="group flex min-h-[88px] w-full flex-col justify-center gap-1 rounded-xl bg-[var(--accent)] px-5 py-2.5 text-white transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[var(--accent)]/25 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-35"><span className="flex items-center justify-center gap-2 text-base font-medium">{job ? <Loader2 size={22} className="shrink-0 animate-spin" /> : <Printer size={22} className="shrink-0 transition-transform group-hover:scale-110" />}<span>{job ? "Печатается" : "Печать"}</span></span><span className="text-4xl font-black leading-none tabular-nums">{job ? Math.max(0, job.total_count - job.printed_count) : group.orders.length - printedCount}</span></button>}</div>
+                <div className="flex w-[250px] items-center justify-end">{complete ? <div className="flex min-h-[58px] w-full items-center justify-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 font-medium text-emerald-500"><CheckCircle2 size={18} />Готово</div> : checking ? <div className="flex min-h-[58px] w-full items-center justify-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 font-medium text-amber-500"><Loader2 size={18} className="animate-spin" />Проверяется WB</div> : needsRecovery && job ? <button type="button" onClick={() => void continuePrint(job)} className="w-full rounded-lg bg-red-500 px-4 py-2.5 font-medium text-white">Исправить печать</button> : labelsComplete && groupSgtinScanRemaining > 0 ? <button type="button" onClick={() => openAssemblyMarkingBatch(group)} className="flex w-full flex-col items-center justify-center rounded-xl bg-amber-500 px-4 py-2.5 text-[21px] font-semibold leading-tight text-white transition hover:brightness-110"><span>{groupSgtinScanRemaining === 1 ? "Остался" : "Осталось"}</span><span>{groupSgtinScanRemaining} {groupSgtinScanRemaining === 1 ? "товар" : groupSgtinScanRemaining >= 2 && groupSgtinScanRemaining <= 4 ? "товара" : "товаров"}</span></button> : <button type="button" onClick={() => void printBatch(group)} disabled={!printAgentReady || !group.sku || Boolean(job) || Boolean(busy)} className="group flex min-h-[88px] w-full flex-col justify-center gap-1 rounded-xl bg-[var(--accent)] px-5 py-2.5 text-white transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[var(--accent)]/25 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-35"><span className="flex items-center justify-center gap-2 text-base font-medium">{job ? <Loader2 size={22} className="shrink-0 animate-spin" /> : <Printer size={22} className="shrink-0 transition-transform group-hover:scale-110" />}<span>{job ? "Печатается" : "Печать"}</span></span><span className="text-4xl font-black leading-none tabular-nums">{job ? Math.max(0, job.total_count - job.printed_count) : group.orders.length - printedCount}</span></button>}</div>
               </div>;
                   })}
                 </div>)}
@@ -1676,7 +1662,7 @@ export default function FbsPage() {
         <p className="mb-4 text-sm text-[var(--text-muted)]">MpHub повторно сверит статусы, сборку, этикетки и обязательную маркировку. Передача в доставку необратима.</p>
         {activeSupply.delivery_mode === "pvz" && <div className="mb-4 rounded-xl border border-[var(--border)] p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div><div className="font-medium">Грузоместа для ПВЗ</div><div className="text-sm text-[var(--text-muted)]">Создано {activeSupply.boxes_count} · подтверждённо напечатано {activeSupply.box_stickers_printed_count || 0}</div></div>{activeSupply.boxes_count > 0 && <button type="button" onClick={() => void deletePickupPointBoxes()} disabled={Boolean(busy) || Boolean(activeBoxQrJob)} className="rounded-lg border border-red-500/40 px-3 py-2 text-sm text-red-500 disabled:opacity-35">Удалить и создать заново</button>}</div>
-          <div className="flex flex-wrap gap-2"><button type="button" onClick={() => void createPickupPointBoxes()} disabled={Boolean(busy) || activeSupply.done || Boolean(activeBoxQrJob)} className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-4 py-2 disabled:opacity-40"><Box size={18} />Добавить грузоместа</button><button type="button" onClick={() => activeBoxQrJob?.status === "paused" ? void continuePickupPointBoxes(activeBoxQrJob) : void printPickupPointBoxes()} disabled={!activeSupply.boxes_count || !printAgentReady || Boolean(busy) || Boolean(activeBoxQrJob && activeBoxQrJob.status !== "paused") || (!activeBoxQrJob && activeSupply.box_stickers_printed_count >= activeSupply.boxes_count)} className="flex items-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-2 font-medium text-white disabled:opacity-40"><Printer size={18} />{activeBoxQrJob?.status === "paused" ? "Продолжить QR" : activeBoxQrJob ? `Печатается ${activeBoxQrJob.printed_count}/${activeBoxQrJob.total_count}` : activeSupply.box_stickers_printed_count >= activeSupply.boxes_count ? "Все QR напечатаны" : "Печать всех QR"}</button></div>
+          <div className="flex flex-wrap gap-2"><button type="button" onClick={() => void createPickupPointBoxes()} disabled={Boolean(busy) || activeSupply.done || Boolean(activeBoxQrJob)} className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-4 py-2 disabled:opacity-40"><Box size={18} />Добавить грузоместа</button><button type="button" onClick={() => activeBoxQrJob?.status === "paused" ? void continuePickupPointBoxes(activeBoxQrJob) : void printPickupPointBoxes()} disabled={!activeSupply.boxes_count || (activeBoxQrJob?.status !== "paused" && !printAgentReady) || Boolean(busy) || Boolean(activeBoxQrJob && activeBoxQrJob.status !== "paused") || (!activeBoxQrJob && activeSupply.box_stickers_printed_count >= activeSupply.boxes_count)} className={`flex items-center gap-2 rounded-lg px-4 py-2 font-medium text-white disabled:opacity-40 ${activeBoxQrJob?.status === "paused" ? "bg-red-500" : "bg-[var(--accent)]"}`}><Printer size={18} />{activeBoxQrJob?.status === "paused" ? "Исправить печать QR" : activeBoxQrJob ? `Печатается ${activeBoxQrJob.printed_count}/${activeBoxQrJob.total_count}` : activeSupply.box_stickers_printed_count >= activeSupply.boxes_count ? "Все QR напечатаны" : "Печать всех QR"}</button></div>
           {activeSupply.box_ids?.length > 0 && <div className="mt-3 space-y-2">{activeSupply.box_ids.map((boxId, index) => { const printed = activeSupply.box_stickers_printed_ids?.includes(boxId); return <div key={boxId} className="flex items-center justify-between gap-3 rounded-lg bg-[var(--bg)] px-3 py-2"><div className="min-w-0"><div className="text-xs text-[var(--text-muted)]">Грузоместо {index + 1}</div><div className="truncate font-mono text-sm">{boxId}</div></div><div className="flex shrink-0 items-center gap-2"><span className={`text-sm ${printed ? "text-emerald-500" : "text-amber-500"}`}>{printed ? "Напечатано" : "Не печаталось"}</span>{printed && <button type="button" onClick={() => void printPickupPointBoxes(boxId)} disabled={!printAgentReady || Boolean(busy) || Boolean(activeBoxQrJob)} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-35"><Printer size={16} /></button>}</div></div>; })}</div>}
           <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-lg border border-[var(--border)] p-3"><input type="checkbox" checked={Boolean(activeSupply.pvz_rules_confirmed_at)} onChange={(event) => { if (event.target.checked) void confirmPickupPointRules(); }} disabled={!activeSupply.boxes_count || Boolean(activeSupply.pvz_rules_confirmed_at) || Boolean(busy)} className="mt-1" /><span className="text-sm">Короба закрыты, каждый не тяжелее 5 кг и соответствует габаритам WB; товаров больше одного на короб. ПВЗ выбран на карте WB и находится в зоне нашего склада.</span></label>
         </div>}
@@ -1686,10 +1672,10 @@ export default function FbsPage() {
           {activeSupply.done && <button
             type="button"
             onClick={() => activeSupplyQrJob?.status === "paused" ? void continueSupplyQrPrint(activeSupplyQrJob) : void printSupplyQrViaAgent()}
-            disabled={!printAgentReady || Boolean(busy) || Boolean(activeSupplyQrJob && activeSupplyQrJob.status !== "paused")}
-            title={!printAgentReady ? "Сначала восстановите принтер" : undefined}
-            className="flex items-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-2 font-medium text-white disabled:cursor-not-allowed disabled:opacity-45"
-          ><Printer size={18} />{activeSupplyQrJob?.status === "paused" ? "Продолжить печать QR" : activeSupplyQrJob ? "QR печатается…" : "Печать QR поставки"}</button>}
+            disabled={(activeSupplyQrJob?.status !== "paused" && !printAgentReady) || Boolean(busy) || Boolean(activeSupplyQrJob && activeSupplyQrJob.status !== "paused")}
+            title={activeSupplyQrJob?.status === "paused" ? "Откройте безопасное восстановление печати" : !printAgentReady ? "Сначала восстановите принтер" : undefined}
+            className={`flex items-center gap-2 rounded-lg px-4 py-2 font-medium text-white disabled:cursor-not-allowed disabled:opacity-45 ${activeSupplyQrJob?.status === "paused" ? "bg-red-500" : "bg-[var(--accent)]"}`}
+          ><Printer size={18} />{activeSupplyQrJob?.status === "paused" ? "Исправить печать QR" : activeSupplyQrJob ? "QR печатается…" : "Печать QR поставки"}</button>}
         </div>
         {preflight && <div className={`mt-4 rounded-lg p-4 ${preflight.ready ? "bg-emerald-500/10 text-emerald-500" : "bg-amber-500/10 text-amber-500"}`}>{preflight.ready ? <div className="flex items-center gap-2 font-medium"><CheckCircle2 size={19} />Все этикетки готовы к передаче</div> : <><div className="mb-2 font-medium">Исправьте перед передачей:</div><ul className="list-disc space-y-1 pl-5 text-sm">{preflight.errors.slice(0, 20).map((row) => <li key={row}>{row}</li>)}</ul></>}</div>}
       </section>

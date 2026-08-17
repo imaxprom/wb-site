@@ -20,6 +20,7 @@ export interface OrganizationOption {
 export interface OrganizationsPayload {
   activeOrganizationId: number;
   isSystemAdmin: boolean;
+  kizArchiveEnabled: boolean;
   organizations: OrganizationOption[];
 }
 

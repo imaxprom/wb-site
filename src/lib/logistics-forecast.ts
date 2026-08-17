@@ -97,25 +97,44 @@ function familyOwnerRank(name: string): number {
 }
 
 export function buildWarehouseTariffIndex(
-  payload: RawWarehouseTariff[],
+  payload: RawWarehouseTariff[] | unknown,
   tariffDate: string,
+  preferMarketplace = false,
 ): WarehouseTariffIndex {
   const exact = new Map<string, WarehouseDeliveryTariff>();
   const family = new Map<string, WarehouseDeliveryTariff>();
 
-  for (const raw of payload) {
-    if (String(raw.date || "").slice(0, 10) !== tariffDate) continue;
-    if (Number(raw.boxTypeID) !== 2) continue;
+  const stockData = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? (payload as { response?: { data?: { warehouseList?: unknown[] } } }).response?.data
+    : null;
+  const stockRows = Array.isArray(stockData?.warehouseList) ? stockData.warehouseList : null;
+  const rows: unknown[] = stockRows || (Array.isArray(payload) ? payload : []);
+
+  for (const source of rows) {
+    const raw = source && typeof source === "object" ? source as Record<string, unknown> : {};
+    if (!stockRows) {
+      if (String(raw.date || "").slice(0, 10) !== tariffDate) continue;
+      if (Number(raw.boxTypeID) !== 2) continue;
+    }
 
     const warehouseName = typeof raw.warehouseName === "string" ? raw.warehouseName.trim() : "";
-    const coefficientPercent = numberOrNull(raw.deliveryCoef);
+    const coefficientPercent = stockRows
+      ? numberOrNull(preferMarketplace ? raw.boxDeliveryMarketplaceCoefExpr : raw.boxDeliveryCoefExpr)
+        ?? numberOrNull(raw.boxDeliveryCoefExpr)
+      : numberOrNull(raw.deliveryCoef);
     if (!warehouseName || coefficientPercent === null || coefficientPercent <= 0) continue;
 
     const tariff: WarehouseDeliveryTariff = {
       warehouseName,
       coefficientPercent,
-      deliveryBase: numberOrNull(raw.deliveryBaseLiter),
-      deliveryAdditionalLiter: numberOrNull(raw.deliveryAdditionalLiter),
+      deliveryBase: stockRows
+        ? numberOrNull(preferMarketplace ? raw.boxDeliveryMarketplaceBase : raw.boxDeliveryBase)
+          ?? numberOrNull(raw.boxDeliveryValueBase)
+        : numberOrNull(raw.deliveryBaseLiter),
+      deliveryAdditionalLiter: stockRows
+        ? numberOrNull(preferMarketplace ? raw.boxDeliveryMarketplaceLiter : raw.boxDeliveryLiter)
+          ?? numberOrNull(raw.boxDeliveryValueLiter)
+        : numberOrNull(raw.deliveryAdditionalLiter),
     };
 
     const exactKey = normalizeForecastWarehouseName(warehouseName);

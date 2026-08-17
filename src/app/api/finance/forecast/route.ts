@@ -3,6 +3,7 @@ import { activateAuthenticatedRequestContext, requireAdmin } from "@/lib/api-aut
 import { apiError } from "@/lib/api-utils";
 import { getPgExcludeDailyFilter } from "@/modules/analytics/lib/db";
 import { pgGet, pgRows } from "@/lib/postgres";
+import { getOrganizationCapabilities } from "@/lib/organization-capabilities";
 import {
   buildWarehouseTariffIndex,
   estimateWarehouseLogistics,
@@ -614,25 +615,30 @@ export async function GET(request: NextRequest) {
     // структуре складов заказов. Берём последний доступный тариф WB не позже
     // конца периода. deliveryBaseLiter/deliveryAdditionalLiter в ответе WB уже
     // содержат коэффициент склада, поэтому повторно его не умножаем.
-    const tariffCache = await get<{ date: string; payload_json: string }>(`
-      SELECT date, payload_json
+    const tariffCache = await get<{ date: string; cargo_type: string; payload_json: string }>(`
+      SELECT date, cargo_type, payload_json
       FROM public.logistics_tariff_cache
-      WHERE cargo_type = 'box' AND date <= ?
-      ORDER BY date DESC
+      WHERE cargo_type IN ('box_stock', 'box') AND date <= ?
+      ORDER BY date DESC, CASE WHEN cargo_type = 'box_stock' THEN 0 ELSE 1 END
       LIMIT 1
     `, [dateTo]);
-    let tariffPayload: RawWarehouseTariff[] = [];
+    let tariffPayload: RawWarehouseTariff[] | unknown = [];
     if (tariffCache?.payload_json) {
       try {
         const parsed = typeof tariffCache.payload_json === "string"
           ? JSON.parse(tariffCache.payload_json)
           : tariffCache.payload_json;
-        tariffPayload = Array.isArray(parsed) ? parsed : [];
+        tariffPayload = parsed;
       } catch {
         tariffPayload = [];
       }
     }
-    const tariffIndex = buildWarehouseTariffIndex(tariffPayload, tariffCache?.date || "");
+    const capabilities = await getOrganizationCapabilities();
+    const tariffIndex = buildWarehouseTariffIndex(
+      tariffPayload,
+      tariffCache?.date || "",
+      !capabilities.fbo,
+    );
     const orderWarehouseRows = await all<{ nm_id: number; warehouse: string; orders: number }>(`
       SELECT article_wb as nm_id, TRIM(COALESCE(warehouse, '')) as warehouse, COUNT(*) as orders
       FROM shipment_orders

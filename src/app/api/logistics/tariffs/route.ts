@@ -69,6 +69,28 @@ async function readCachePg(date: string, cargoType: string): Promise<TariffCache
   }
 }
 
+async function readLatestCachePg(date: string, cargoType: string): Promise<TariffCacheRow | null> {
+  try {
+    const row = await pgGet<TariffCacheRow>(`
+      SELECT date, cargo_type, payload_json, synced_at
+      FROM logistics_tariff_cache
+      WHERE date <= ? AND cargo_type = ?
+      ORDER BY date DESC
+      LIMIT 1
+    `, [date, cargoType]);
+    return row || null;
+  } catch (error) {
+    if (error instanceof Error && /relation .* does not exist/i.test(error.message)) return null;
+    throw error;
+  }
+}
+
+function parseCachedPayload<T>(row: TariffCacheRow): T {
+  return (typeof row.payload_json === "string"
+    ? JSON.parse(row.payload_json)
+    : row.payload_json) as T;
+}
+
 async function writeCachePg(date: string, cargoType: string, payload: unknown): Promise<void> {
   if (isPostgresReadonlyConnection()) return;
 
@@ -401,7 +423,15 @@ function normalizeAcceptancePayload(payload: WbAcceptanceRow[], date: string, ca
   };
 }
 
-function normalizeStockPayload(payload: WbTariffsResponse, date: string, cargoType: "box" | "pallet", source: string, syncedAt: string | undefined, salesByWarehouse: SalesMaps) {
+function normalizeStockPayload(
+  payload: WbTariffsResponse,
+  requestedDate: string,
+  effectiveDate: string,
+  cargoType: "box" | "pallet",
+  source: string,
+  syncedAt: string | undefined,
+  salesByWarehouse: SalesMaps,
+) {
   const data = payload.response?.data || {};
   const warehouses = Array.isArray(data.warehouseList)
     ? withSalesRanking(data.warehouseList
@@ -410,7 +440,8 @@ function normalizeStockPayload(payload: WbTariffsResponse, date: string, cargoTy
     : [];
 
   return {
-    date,
+    date: requestedDate,
+    effectiveDate,
     cargoType,
     source,
     tariffKind: "stock",
@@ -431,6 +462,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const date = searchParams.get("date") || todayMsk();
     const cargoType = searchParams.get("cargoType") === "pallet" ? "pallet" : "box";
+    const stockCacheType = `${cargoType}_stock`;
     const refresh = searchParams.get("refresh") === "1";
     const salesByWarehouse = await getSalesByWarehousePg();
 
@@ -438,45 +470,84 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "date must be YYYY-MM-DD" }, { status: 400 });
     }
 
-    const cached = refresh ? null : await readCachePg(date, cargoType);
+    const cached = refresh ? null : await readCachePg(date, stockCacheType);
     if (cached) {
-      return NextResponse.json(normalizeAcceptancePayload(JSON.parse(cached.payload_json), date, cargoType, "cache", cached.synced_at, salesByWarehouse));
+      const payload = parseCachedPayload<WbTariffsResponse>(cached);
+      const effectiveDate = payload.response?.data?.dtTillMax || cached.date;
+      return NextResponse.json(normalizeStockPayload(payload, date, effectiveDate, cargoType, "cache", cached.synced_at, salesByWarehouse));
     }
 
     if (isPostgresReadonlyConnection()) {
-      return NextResponse.json(
-        { error: "WB tariff live fetch is disabled in local PostgreSQL readonly mode. Localhost reads cached production data only." },
-        { status: 403 }
-      );
+      const fallback = await readLatestCachePg(date, stockCacheType) || await readLatestCachePg(date, cargoType);
+      if (fallback) {
+        if (fallback.cargo_type === stockCacheType) {
+          const payload = parseCachedPayload<WbTariffsResponse>(fallback);
+          const effectiveDate = payload.response?.data?.dtTillMax || fallback.date;
+          return NextResponse.json(normalizeStockPayload(payload, date, effectiveDate, cargoType, "cache", fallback.synced_at, salesByWarehouse));
+        }
+        return NextResponse.json(normalizeAcceptancePayload(parseCachedPayload<WbAcceptanceRow[]>(fallback), fallback.date, cargoType, "cache", fallback.synced_at, salesByWarehouse));
+      }
+      return NextResponse.json({ error: "Для выбранной даты нет сохранённых тарифов WB" }, { status: 404 });
     }
 
     const apiKey = getWbApiKey();
     if (!apiKey) {
-      const fallback = await readCachePg(date, cargoType);
+      const fallback = await readLatestCachePg(date, stockCacheType) || await readLatestCachePg(date, cargoType);
       if (fallback) {
-        return NextResponse.json(normalizeAcceptancePayload(JSON.parse(fallback.payload_json), date, cargoType, "cache", fallback.synced_at, salesByWarehouse));
+        if (fallback.cargo_type === stockCacheType) {
+          const payload = parseCachedPayload<WbTariffsResponse>(fallback);
+          const effectiveDate = payload.response?.data?.dtTillMax || fallback.date;
+          return NextResponse.json(normalizeStockPayload(payload, date, effectiveDate, cargoType, "cache", fallback.synced_at, salesByWarehouse));
+        }
+        return NextResponse.json(normalizeAcceptancePayload(parseCachedPayload<WbAcceptanceRow[]>(fallback), fallback.date, cargoType, "cache", fallback.synced_at, salesByWarehouse));
       }
       return NextResponse.json({ error: "WB API key missing" }, { status: 401 });
     }
 
-    const res = await fetch("https://common-api.wildberries.ru/api/tariffs/v1/acceptance/coefficients", {
-      headers: { Authorization: apiKey },
-      cache: "no-store",
-    });
+    const fetchStockTariffs = async (targetDate: string) => {
+      const response = await fetch(`https://common-api.wildberries.ru/api/v1/tariffs/${cargoType}?date=${encodeURIComponent(targetDate)}`, {
+        headers: { Authorization: apiKey },
+        cache: "no-store",
+      });
+      const payload = response.ok ? await response.json() as WbTariffsResponse : null;
+      return { response, payload };
+    };
 
-    if (!res.ok) {
-      const fallback = await readCachePg(date, cargoType);
-      if (fallback) {
-        const normalized = normalizeAcceptancePayload(JSON.parse(fallback.payload_json), date, cargoType, "cache", fallback.synced_at, salesByWarehouse);
-        return NextResponse.json({ ...normalized, warning: `WB API ${res.status}` });
+    let effectiveDate = date;
+    let { response: res, payload } = await fetchStockTariffs(date);
+    const initialData = payload?.response?.data;
+    if (res.ok && payload && (!Array.isArray(initialData?.warehouseList) || initialData.warehouseList.length === 0)) {
+      const lastAvailableDate = cargoType === "box"
+        ? initialData?.dtTillMax
+        : initialData?.dtTillMax;
+      if (lastAvailableDate && /^\d{4}-\d{2}-\d{2}$/.test(lastAvailableDate) && lastAvailableDate < date) {
+        effectiveDate = lastAvailableDate;
+        ({ response: res, payload } = await fetchStockTariffs(lastAvailableDate));
       }
-      const body = await res.text().catch(() => "");
-      return NextResponse.json({ error: `WB API ${res.status}: ${body}` }, { status: res.status });
     }
 
-    const payload = await res.json() as WbAcceptanceRow[];
-    await writeCachePg(date, cargoType, payload);
-    return NextResponse.json(normalizeAcceptancePayload(payload, date, cargoType, "wb", undefined, salesByWarehouse));
+    const warehouseList = payload?.response?.data?.warehouseList;
+    if (!res.ok || !payload || !Array.isArray(warehouseList) || warehouseList.length === 0) {
+      const fallback = await readLatestCachePg(date, stockCacheType) || await readLatestCachePg(date, cargoType);
+      if (fallback) {
+        if (fallback.cargo_type === stockCacheType) {
+          const cachedPayload = parseCachedPayload<WbTariffsResponse>(fallback);
+          const fallbackDate = cachedPayload.response?.data?.dtTillMax || fallback.date;
+          const normalized = normalizeStockPayload(cachedPayload, date, fallbackDate, cargoType, "cache", fallback.synced_at, salesByWarehouse);
+          return NextResponse.json({ ...normalized, warning: `WB API ${res.status || 200}: использованы последние сохранённые тарифы` });
+        }
+        const normalized = normalizeAcceptancePayload(parseCachedPayload<WbAcceptanceRow[]>(fallback), fallback.date, cargoType, "cache", fallback.synced_at, salesByWarehouse);
+        return NextResponse.json({ ...normalized, requestedDate: date, warning: `WB API ${res.status || 200}: использованы последние сохранённые тарифы` });
+      }
+      const body = res.ok ? "WB вернул пустой список тарифов" : await res.text().catch(() => "");
+      return NextResponse.json({ error: `WB API ${res.status}: ${body}` }, { status: res.ok ? 503 : res.status });
+    }
+
+    await writeCachePg(date, stockCacheType, payload);
+    const normalized = normalizeStockPayload(payload, date, effectiveDate, cargoType, "wb", undefined, salesByWarehouse);
+    return NextResponse.json(effectiveDate === date
+      ? normalized
+      : { ...normalized, warning: `WB пока не опубликовал тарифы на ${date}; используются последние доступные за ${effectiveDate}` });
   } catch (error) {
     return apiError(error);
   }

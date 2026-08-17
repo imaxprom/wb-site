@@ -216,7 +216,7 @@ async function checkPgData(checks, capabilities) {
     checks,
     "fresh_realization_yesterday",
     `Реализация за ${yd}`,
-    realization.cnt > 100 ? "ok" : realization.cnt > 0 ? "warn" : "error",
+    realization.cnt > 0 ? "ok" : "error",
     `${realization.cnt} строк`,
     realization.cnt === 0 ? "Ежедневный отчёт не загружен за вчера" : undefined
   );

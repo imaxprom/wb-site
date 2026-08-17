@@ -1,17 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthenticatedRequestContext, requireSystemAdmin } from "@/lib/api-auth";
+import { activateAuthenticatedRequestContext, getAuthenticatedRequestContext, requireSystemAdmin } from "@/lib/api-auth";
 import { getUserOrganizations } from "@/lib/organization-db";
 import { withPgTransaction } from "@/lib/postgres";
+import { getFbsKizArchiveEnabled } from "@/lib/fbs-kiz-archive-access";
 import crypto from "node:crypto";
 
 export async function GET(request: NextRequest) {
   const context = await getAuthenticatedRequestContext(request);
   if (!context) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  activateAuthenticatedRequestContext(request);
 
-  const organizations = await getUserOrganizations(context.userId);
+  const [organizations, kizArchiveEnabled] = await Promise.all([
+    getUserOrganizations(context.userId),
+    getFbsKizArchiveEnabled(),
+  ]);
   return NextResponse.json({
     activeOrganizationId: context.organizationId,
     isSystemAdmin: context.userRole === "admin",
+    kizArchiveEnabled,
     organizations: organizations.map((organization) => ({
       id: organization.id,
       slug: organization.slug,

@@ -126,6 +126,7 @@ interface LocalizationMeta {
 
 interface TariffsResponse {
   date: string;
+  effectiveDate?: string;
   cargoType: "box" | "pallet";
   source: "wb" | "cache";
   syncedAt: string;
@@ -568,6 +569,12 @@ export default function LogisticsPage() {
       {error && (
         <div className="rounded-xl border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-4 py-3 text-sm text-[var(--danger)]">
           {error}
+        </div>
+      )}
+
+      {!error && tariffsData?.warning && (
+        <div className="rounded-xl border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-4 py-3 text-sm text-[var(--warning)]">
+          {tariffsData.warning}
         </div>
       )}
 

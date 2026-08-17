@@ -16,9 +16,17 @@ import {
   resolveFbsPrinter,
   type FbsPrintAgent,
 } from "@/lib/fbs-printer-status";
+import { captureFbsScannerKey, normalizeFbsScannerFieldValue } from "@/lib/fbs-scanner-input-client";
 
 type PrintJob = {
   job_id: string;
+  supply_id: string;
+  group_key: string;
+  product_name: string;
+  size_name: string;
+  total_count: number;
+  printed_count: number;
+  agent_id: string | null;
   status: "queued" | "printing" | "paused" | "completed" | "cancelled" | "error";
   last_error: string;
 };
@@ -26,9 +34,10 @@ type PrintJob = {
 type PrinterSnapshot = {
   printAgents: FbsPrintAgent[];
   printJobs: PrintJob[];
+  printQueuePaused: boolean;
 };
 
-const EMPTY: PrinterSnapshot = { printAgents: [], printJobs: [] };
+const EMPTY: PrinterSnapshot = { printAgents: [], printJobs: [], printQueuePaused: false };
 
 function formatLastSeen(value: string | null | undefined) {
   if (!value) return "связи ещё не было";
@@ -54,6 +63,8 @@ export default function PrinterPage() {
   const [repairStarted, setRepairStarted] = useState(false);
   const [testJobId, setTestJobId] = useState("");
   const [testOutcome, setTestOutcome] = useState<"" | "waiting" | "confirm">("");
+  const [confirmPrintedJobId, setConfirmPrintedJobId] = useState("");
+  const [printedBarcode, setPrintedBarcode] = useState("");
 
   const load = useCallback(async (quiet = false) => {
     try {
@@ -63,10 +74,11 @@ export default function PrinterPage() {
       const snapshot = {
         printAgents: Array.isArray(payload.printAgents) ? payload.printAgents : [],
         printJobs: Array.isArray(payload.printJobs) ? payload.printJobs : [],
+        printQueuePaused: Boolean(payload.printQueuePaused),
       } as PrinterSnapshot;
       setData(snapshot);
       if (!quiet) setError("");
-      window.dispatchEvent(new CustomEvent("fbs-printer-status-changed", { detail: snapshot.printAgents }));
+      window.dispatchEvent(new CustomEvent("fbs-printer-status-changed", { detail: snapshot }));
       return snapshot;
     } catch (cause) {
       if (!quiet) setError(cause instanceof Error ? cause.message : "Не удалось проверить принтер");
@@ -83,8 +95,11 @@ export default function PrinterPage() {
   }, [load]);
 
   useEffect(() => {
+    const isFbsPortal = window.location.hostname.toLowerCase() === "fbs.imaxprom.site";
     Promise.all([
-      fetch("/api/fbs-portal/organizations", { cache: "no-store" }).then((response) => response.ok ? response.json() : null).catch(() => null),
+      isFbsPortal
+        ? fetch("/api/fbs-portal/organizations", { cache: "no-store" }).then((response) => response.ok ? response.json() : null).catch(() => null)
+        : Promise.resolve(null),
       fetch("/api/auth/me", { cache: "no-store" }).then((response) => response.ok ? response.json() : null).catch(() => null),
     ]).then(([portal, mphub]) => {
       setIsAdmin(Boolean(portal?.user?.isAdmin || ["owner", "admin"].includes(String(mphub?.organizationRole || ""))));
@@ -104,7 +119,10 @@ export default function PrinterPage() {
   const pairingReady = Boolean(pairingAgent && ["online", "printing"].includes(pairingAgent.status));
   const testStatus = testJob?.status || "";
   const activeJobs = useMemo(() => data.printJobs.filter((job) => ["queued", "printing", "paused"].includes(job.status)), [data.printJobs]);
-  const pausedJobs = activeJobs.filter((job) => job.status === "paused").length;
+  const pausedJobList = useMemo(() => activeJobs.filter((job) => job.status === "paused"), [activeJobs]);
+  const pausedJobs = pausedJobList.length;
+  const queueBlocked = data.printQueuePaused || pausedJobs > 0;
+  const windowsQueueReady = data.printAgents.some((agent) => agent.status === "queue_ready");
 
   useEffect(() => {
     if (!repairStarted && testOutcome !== "waiting") return;
@@ -113,10 +131,25 @@ export default function PrinterPage() {
   }, [load, repairStarted, testOutcome]);
 
   useEffect(() => {
-    if (!repairStarted || !ready) return;
+    if (!repairStarted || !ready || queueBlocked) return;
     setRepairStarted(false);
     setNotice("Принтер снова подключён. Напечатайте тестовую этикетку.");
-  }, [ready, repairStarted]);
+  }, [queueBlocked, ready, repairStarted]);
+
+  useEffect(() => {
+    if (!repairStarted || !windowsQueueReady) return;
+    setRepairStarted(false);
+    setNotice("Очередь Windows очищена. Теперь подтвердите результат последней этикетки.");
+  }, [repairStarted, windowsQueueReady]);
+
+  useEffect(() => {
+    if (!repairStarted || windowsQueueReady) return;
+    const timer = window.setTimeout(() => {
+      setRepairStarted(false);
+      setError("Очистка Windows не подтвердилась. Если окно восстановления уже завершилось, нажмите «Восстановить после замятия» ещё раз — старый помощник мог сначала обновить себя.");
+    }, 30_000);
+    return () => window.clearTimeout(timer);
+  }, [repairStarted, windowsQueueReady]);
 
   useEffect(() => {
     if (!testJobId || !testStatus) return;
@@ -157,9 +190,12 @@ export default function PrinterPage() {
     try {
       const snapshot = await load(true);
       const state = resolveFbsPrinter(snapshot?.printAgents || []);
-      if (state.ready) {
+      if (state.ready && !snapshot?.printQueuePaused) {
         setRepairStarted(false);
         setNotice("Принтер подключён и готов к печати.");
+      } else if (state.connected && snapshot?.printQueuePaused) {
+        setRepairStarted(false);
+        setNotice("Связь с Zebra восстановлена. Ниже подтвердите, вышла ли последняя этикетка.");
       } else {
         const currentProblem = getFbsPrinterProblem(state.connected);
         setError(`${currentProblem.title}. Код ${currentProblem.code}.`);
@@ -176,7 +212,7 @@ export default function PrinterPage() {
     }
     setRepairStarted(true);
     setNotice("В окне Windows нажмите «Открыть». Дождитесь завершения восстановления.");
-    window.location.assign(`mphub-print://repair?code=${problem.code}`);
+    window.location.assign(`mphub-print://repair?code=${queueBlocked ? "PRN-011" : problem.code}`);
   }
 
   async function printTestLabel() {
@@ -198,6 +234,31 @@ export default function PrinterPage() {
     setNotice("Ключ нового компьютера создан. Скопируйте команду установки — повторно ключ не показывается.");
   }
 
+  async function resolvePausedJob(job: PrintJob, outcome: "printed" | "retry") {
+    const requiresScan = !job.group_key.startsWith("supply-qr:")
+      && !job.group_key.startsWith("box-qr:")
+      && !job.group_key.startsWith("box-qr-reprint:")
+      && !job.group_key.startsWith("test:");
+    if (outcome === "printed" && requiresScan && confirmPrintedJobId !== job.job_id) {
+      setConfirmPrintedJobId(job.job_id);
+      setPrintedBarcode("");
+      window.setTimeout(() => document.getElementById(`paused-label-${job.job_id}`)?.focus({ preventScroll: true }), 30);
+      return;
+    }
+    await action(`resolve_${job.job_id}`, {
+      action: "resolve_print_pause",
+      jobId: job.job_id,
+      outcome,
+      scannedBarcode: outcome === "printed" ? printedBarcode : "",
+    });
+    setConfirmPrintedJobId("");
+    setPrintedBarcode("");
+    setRepairStarted(false);
+    setNotice(outcome === "printed"
+      ? "Вышедшая этикетка учтена. Печать продолжена со следующей."
+      : "Незавершённая этикетка поставлена на повторную печать.");
+  }
+
   const installCommand = printAgentToken
     ? `powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\\install-fbs-print-agent-windows.ps1" -ServerUrl "https://hub.imaxprom.site" -Token "${printAgentToken}"`
     : "";
@@ -215,7 +276,41 @@ export default function PrinterPage() {
       {notice && <div role="status" className="pointer-events-auto flex w-full items-start gap-3 rounded-xl border border-emerald-500/40 bg-[var(--bg-card)] p-4 text-emerald-500 shadow-2xl"><CheckCircle2 className="mt-0.5 shrink-0" size={20} /><span className="min-w-0 flex-1">{notice}</span><button type="button" onClick={() => setNotice("")} className="rounded px-2 text-xl leading-none" aria-label="Закрыть">×</button></div>}
     </div>}
 
-    {ready ? <section className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 p-5">
+    {queueBlocked ? <section className="rounded-xl border-2 border-red-500/45 bg-red-500/5 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0"><div className="flex items-center gap-2 text-xl font-bold text-red-500"><AlertTriangle size={24} />Замятие печати</div><p className="mt-1 text-base text-[var(--text-muted)]">Печать специально остановлена, чтобы Zebra не выдала дубликаты после перезагрузки.</p><div className="mt-2 font-mono text-sm font-semibold text-red-500">Код: PRN-011</div></div>
+        {connected?.printer_name && <div className="rounded-lg bg-[var(--bg-card)] px-3 py-2 text-sm text-[var(--text-muted)]">{connected.printer_name}</div>}
+      </div>
+      <ol className="mt-5 grid gap-3 text-base md:grid-cols-3">
+        <li className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-3"><strong>1.</strong> Уберите зажёванную этикетку, закройте Zebra и дождитесь зелёного индикатора.</li>
+        <li className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-3"><strong>2.</strong> Нажмите «Восстановить после замятия» и разрешите Windows открыть программу.</li>
+        <li className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-3"><strong>3.</strong> Ниже укажите, вышла последняя этикетка или нет.</li>
+      </ol>
+      <button type="button" onClick={startRepair} disabled={repairStarted || !configured} className="mt-4 flex items-center gap-2 rounded-lg bg-amber-500 px-5 py-3 font-semibold text-white disabled:opacity-45">{repairStarted ? <Loader2 size={19} className="animate-spin" /> : <Wrench size={19} />}{repairStarted ? "Восстанавливаем…" : "Восстановить после замятия"}</button>
+      {repairStarted && <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-600">Дождитесь зелёной надписи в окне Windows. Программа удалит только зависшие задания MpHub и перезапустит печать.</div>}
+
+      <div className="mt-5 space-y-3">
+        {pausedJobList.length === 0 && <div className="rounded-xl border border-red-500/30 bg-[var(--bg-card)] p-4">Очередь остановлена, но её карточка не загрузилась. Нажмите «Проверить снова» или сообщите администратору код PRN-011.</div>}
+        {pausedJobList.map((job) => {
+          const kizArchive = job.group_key.startsWith("kiz-archive:");
+          const requiresScan = !job.group_key.startsWith("supply-qr:")
+            && !job.group_key.startsWith("box-qr:")
+            && !job.group_key.startsWith("box-qr-reprint:")
+            && !job.group_key.startsWith("test:");
+          const jobAgent = job.agent_id ? data.printAgents.find((agent) => agent.agent_id === job.agent_id) : connected;
+          const recoveryReady = jobAgent?.status === "queue_ready";
+          return <div key={job.job_id} className="rounded-xl border border-red-500/30 bg-[var(--bg-card)] p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="font-semibold">{job.product_name || (job.group_key.startsWith("supply-qr:") ? "QR поставки" : "Этикетка WB")}{job.size_name ? ` · ${job.size_name}` : ""}</div><div className="mt-1 text-sm text-[var(--text-muted)]">Подтверждено {job.printed_count} из {job.total_count}. Неясен результат следующей этикетки.</div></div><span className="rounded-full bg-red-500/10 px-3 py-1 text-sm font-semibold text-red-500">Печать остановлена</span></div>
+            {kizArchive ? <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-amber-500/10 p-3 text-amber-600"><span>Для КИЗ нужно подтвердить последнюю физически вышедшую позицию в его защищённом архиве.</span><a href="/fbs/kiz-archive" className="rounded-lg bg-amber-500 px-4 py-2 font-semibold text-white">Открыть Архив КИЗ</a></div> : <>
+              {confirmPrintedJobId === job.job_id && requiresScan && <form className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3" onSubmit={(event) => { event.preventDefault(); void resolvePausedJob(job, "printed"); }}><label htmlFor={`paused-label-${job.job_id}`} className="font-semibold">Отсканируйте этикетку, которая действительно вышла</label><div className="mt-2 flex flex-col gap-2 sm:flex-row"><input id={`paused-label-${job.job_id}`} value={printedBarcode} onKeyDown={(event) => { captureFbsScannerKey(event, setPrintedBarcode); }} onChange={(event) => setPrintedBarcode(normalizeFbsScannerFieldValue(event.target.value))} autoComplete="off" className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-4 py-3 font-mono outline-none focus:border-emerald-500" placeholder="ШК этикетки WB" /><button type="submit" disabled={!printedBarcode.trim() || Boolean(busy)} className="rounded-lg bg-emerald-500 px-5 py-3 font-semibold text-white disabled:opacity-40">Подтвердить</button><button type="button" onClick={() => { setConfirmPrintedJobId(""); setPrintedBarcode(""); }} className="rounded-lg border border-[var(--border)] px-4 py-3">Отмена</button></div></form>}
+              <div className="mt-4 grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => void resolvePausedJob(job, "retry")} disabled={!recoveryReady || Boolean(busy)} className="rounded-lg bg-[var(--accent)] px-4 py-3 font-semibold text-white disabled:opacity-40">Этикетка не вышла — повторить</button><button type="button" onClick={() => void resolvePausedJob(job, "printed")} disabled={!recoveryReady || Boolean(busy)} className="rounded-lg border border-emerald-500/40 px-4 py-3 font-semibold text-emerald-500 disabled:opacity-40">Этикетка вышла — продолжить</button></div>
+              {!recoveryReady && <div className="mt-2 text-sm font-medium text-amber-600">Сначала выполните шаг 2 — после очистки Windows эти две кнопки станут активными.</div>}
+            </>}
+            {job.last_error && <div className="mt-3 text-sm text-[var(--text-muted)]">Причина: {job.last_error}</div>}
+          </div>;
+        })}
+      </div>
+    </section> : ready ? <section className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 p-5">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500 text-white"><Printer size={29} /></span>

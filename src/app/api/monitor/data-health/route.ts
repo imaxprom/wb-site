@@ -205,7 +205,7 @@ export async function GET(req: NextRequest) {
         checks.push({
           id: "realization",
           name: `Realization (${yd})`,
-          status: row.cnt > 100 ? "ok" : row.cnt > 0 ? "warn" : "error",
+          status: row.cnt > 0 ? "ok" : "error",
           value: `${row.cnt} строк`,
           detail: row.cnt === 0 ? "Нет данных за вчера" : undefined,
         });

@@ -1,6 +1,6 @@
 # MpHub Project Context
 
-Last verified: 2026-08-17 15:00 MSK from local code, production `ssh wb-site`, PM2 and production PostgreSQL.
+Last verified: 2026-08-17 16:10 MSK from local code, production `ssh wb-site`, PM2 and production PostgreSQL.
 
 ## Runtime
 
@@ -45,8 +45,8 @@ Last verified: 2026-08-17 15:00 MSK from local code, production `ssh wb-site`, P
 - FBS API tokens are organization-specific and stored under `data/organizations/<id>/wb-fbs-api-key.txt`. Never print them.
 - FBS workflow has four stages: new orders, assembly/printing, marking control, shipping. Batch printing is the default assembly mode; individual reprint is available only after initial batch print.
 - Required marking is organization-configurable. Honest Mark codes are queued and verified by WB in the background; shipping preflight blocks unverified required marking. WB `deadlineExceeded` is retried automatically without rescanning: the exact live SGTIN is hash-checked, deleted and attached again, with 3 total upload attempts. A third timeout becomes the terminal red status `Не проверено WB`.
-- Windows Zebra printing uses the durable print agent and PostgreSQL queue. Agent registration is organization-aware, but one physical agent may serve both legal entities after it has been linked correctly.
-- Printer troubleshooting belongs in `/printer`; print jobs remain durable across page reloads and computer restarts. Physical jams still require a person at the printer.
+- Windows Zebra printing uses the durable print agent and PostgreSQL queue. Agent registration is organization-aware, but one physical agent may serve both legal entities after it has been linked correctly. A paused queue is a red `queue_paused` state even while heartbeat remains alive; it must never be shown as a green ready printer.
+- Printer troubleshooting belongs in `/printer`; print jobs remain durable across page reloads and computer restarts. For a jam, the Windows helper removes only `MpHub-*` spool documents and reports `queue_ready`. Only then can the employee confirm “not printed — retry” or “printed — continue”; an ordinary WB label claimed as printed must match its scanned barcode. KIZ recovery remains isolated in `/fbs/kiz-archive` by physical position. Physical jams still require a person at the printer.
 - FBS photos should be cached from official WB card data; generated CDN paths remain fallback only.
 - Open-supply membership is reconciled against live WB on sync. After create/add, the app re-reads actual WB membership and persists only attached orders. Partial success is shown explicitly; rejected orders remain in “New”.
 - Verified incident fixed 2026-08-12: supply `WB-GI-264192275` (Yekaterinburg, organization 1) now contains order `5472246019`; local count is 1 and live status is `confirm/waiting`.
@@ -68,6 +68,9 @@ Last verified: 2026-08-17 15:00 MSK from local code, production `ssh wb-site`, P
 - `/shipment` calculation supports manual supply deductions and warehouse exclusions. User-site cart stock is not seller API data; its “Total” equals the sum of displayed unique warehouses.
 - Finance forecast uses factual current economics. Backpack estimates now use cumulative factual clean sales over the configured lookback/threshold rather than requiring 100 sales in a single day.
 - Foreign WB cabinets may return finance Excel files with Chinese headers and operation values. Both daily realization and weekly reference imports normalize them through `scripts/lib/wb-finance-header-aliases.json`, reject unmapped critical columns, and preserve the Russian operation vocabulary used by finance queries. The shared, non-tenant WB tariff cache is read explicitly as `public.logistics_tariff_cache` by forecast; business rows remain tenant-isolated.
+- Organization 2 finance realization was backfilled on 2026-08-17 for the missing 08.08, 10.08 and 13–15.08 reports: production now has 143 realization rows for 08–16.08, including 70 sales and 73 deliveries.
+- Logistics tariffs use the official WB stock tariff endpoints `/api/v1/tariffs/box|pallet`; if the requested future date has no rows, the API uses `dtTillMax`/the latest cached stock tariff and displays the effective date. FBS-only forecast prefers marketplace delivery fields. The old acceptance-coefficients payload remains cache fallback only.
+- Organization 2 logistics can safely map generic `Склад WB РФ` orders only when the same 13-week window has exactly one identifiable seller warehouse zone; otherwise such rows remain explicitly unmapped. Warehouse Google Sheets sync returns a successful `skipped` result for an organization without its own spreadsheet config instead of producing a false monitor error.
 - Reviews sync runs every 15 minutes; the top archive request runs at most every 30 minutes and preserves WB `429` retry state. Manual full sync remains disabled in PostgreSQL runtime.
 - Codex gateway for complaint generation runs on `codex-cli` and uses `gpt-5.6-sol`; do not expose gateway/auth secrets.
 - In-app knowledge base is `src/app/docs/page.tsx` + `public/data/docs.json`; the JSON is required by release deploy.

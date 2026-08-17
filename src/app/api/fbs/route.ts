@@ -28,7 +28,7 @@ import {
   verifyFbsMetadata,
 } from "@/lib/fbs-fulfillment";
 import type { FbsMetaType } from "@/lib/fbs-wb-api";
-import { createFbsBatchPrintJob, createFbsBatchReprintJob, createFbsBoxQrPrintJob, createFbsPrintAgent, createFbsPrinterSupportRequest, createFbsSingleBoxQrPrintJob, createFbsSinglePrintJob, createFbsSupplyQrPrintJob, createFbsTestPrintJob, getFbsPrintAgentSnapshot, getFbsPrintQueueSnapshot, resumeFbsPrintJob } from "@/lib/fbs-print-queue";
+import { createFbsBatchPrintJob, createFbsBatchReprintJob, createFbsBoxQrPrintJob, createFbsPrintAgent, createFbsPrinterSupportRequest, createFbsSingleBoxQrPrintJob, createFbsSinglePrintJob, createFbsSupplyQrPrintJob, createFbsTestPrintJob, getFbsPrintAgentSnapshot, getFbsPrintQueueSnapshot, resolvePausedFbsPrintJob, resumeFbsPrintJob } from "@/lib/fbs-print-queue";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -220,6 +220,13 @@ export async function POST(request: NextRequest) {
       case "resume_print_job":
         await resumeFbsPrintJob(String(body.jobId || ""), String(body.lastBarcode || ""));
         result = { resumed: true };
+        break;
+      case "resolve_print_pause":
+        result = await resolvePausedFbsPrintJob(
+          String(body.jobId || ""),
+          body.outcome === "printed" ? "printed" : "retry",
+          String(body.scannedBarcode || ""),
+        );
         break;
       case "pass_data":
         result = await getFbsPassData();

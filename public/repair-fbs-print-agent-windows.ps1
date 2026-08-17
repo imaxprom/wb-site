@@ -82,6 +82,28 @@ try {
   $printer = Get-Printer -Name $printerName -ErrorAction Stop
   Write-RecoveryLog "Printer found: $($printer.Name), status: $($printer.PrinterStatus)"
 
+  # A jammed Windows spooler document can survive the browser, the print-agent
+  # and even a workstation reboot. Remove only MpHub documents; never touch
+  # labels or documents created by other programs.
+  $mphubJobs = @(Get-PrintJob -PrinterName $printerName -ErrorAction Stop | Where-Object {
+    [string]$_.DocumentName -like "MpHub-*"
+  })
+  foreach ($printJob in $mphubJobs) {
+    try {
+      Remove-PrintJob -PrinterName $printerName -ID ([int]$printJob.ID) -ErrorAction Stop
+      Write-RecoveryLog "Removed stale MpHub spool job $($printJob.ID): $($printJob.DocumentName)"
+    } catch {
+      Write-RecoveryLog "Could not remove MpHub spool job $($printJob.ID): $($_.Exception.Message)"
+    }
+  }
+  if ($mphubJobs.Count -gt 0) { Start-Sleep -Seconds 2 }
+  $remainingMpHubJobs = @(Get-PrintJob -PrinterName $printerName -ErrorAction Stop | Where-Object {
+    [string]$_.DocumentName -like "MpHub-*"
+  })
+  if ($remainingMpHubJobs.Count -gt 0) {
+    throw "PRN-012: Windows did not remove the stalled MpHub print job"
+  }
+
   $temporaryAgent = "$agentPath.download"
   Invoke-WebRequest -UseBasicParsing -Uri "$ServerUrl/fbs-print-agent-windows.ps1" -OutFile $temporaryAgent
   Move-Item -LiteralPath $temporaryAgent -Destination $agentPath -Force
@@ -112,7 +134,7 @@ while ($true) {
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Description "MpHub resilient silent FBS printing for Zebra" -Force | Out-Null
     $task = Get-ScheduledTask -TaskName $taskName
   }
-  $restartRequested = $RequestUri -match "PRN-(002|005|007|009)"
+  $restartRequested = $RequestUri -match "PRN-(002|005|007|009|011|012)"
   if ($task.State -eq "Running" -and $restartRequested) {
     Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
@@ -128,6 +150,7 @@ while ($true) {
   Invoke-WebRequest -UseBasicParsing -Uri "$ServerUrl/repair-fbs-print-agent-windows.ps1" -OutFile "$repairPath.download"
   Move-Item -LiteralPath "$repairPath.download" -Destination $repairPath -Force
   Register-RecoveryTools
+  Send-RecoveryStatus -Config $config -Status "queue_ready" -Message "Windows MpHub print queue cleared"
   Write-RecoveryLog "Recovery completed; task started"
 
   Write-Host ""

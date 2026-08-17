@@ -287,6 +287,10 @@ function getWarehouseDistrict(warehouse: string): string | null {
   return null;
 }
 
+function isGenericWbWarehouse(warehouse: string): boolean {
+  return /^склад\s+wb(?:\s+рф)?$/i.test(warehouse.trim());
+}
+
 function ktrByLocalizationShare(share: number): number {
   if (share >= 95) return 0.5;
   if (share >= 90) return 0.6;
@@ -402,6 +406,20 @@ async function calculateLocalizationMetricsPg() {
       AND TRIM(COALESCE(CAST(article_wb AS TEXT), '')) != ''
   `, [window.startDate, window.endDate]);
 
+  // Some foreign/FBS cabinets return the placeholder "Склад WB РФ" instead
+  // of the actual seller warehouse. When the same period contains exactly one
+  // identifiable origin zone, it is safe to use that sole zone for the
+  // placeholder rows. With two or more possible zones we keep them unmapped.
+  const identifiableWarehouseZones = new Set(
+    rows
+      .filter((row) => !isGenericWbWarehouse(clean(row.warehouse)))
+      .map((row) => getWarehouseLocalizationZone(clean(row.warehouse)))
+      .filter((zone): zone is string => Boolean(zone)),
+  );
+  const soleWarehouseZone = identifiableWarehouseZones.size === 1
+    ? Array.from(identifiableWarehouseZones)[0]
+    : null;
+
   const reportDraft = new Map<string, { orderQty: number; localOrderQty: number; unmappedWarehouseQty: number }>();
   const tariffDraft = new Map<string, { orderQty: number; localOrderQty: number; unmappedWarehouseQty: number }>();
   let reportTotalOrders = 0;
@@ -411,6 +429,7 @@ async function calculateLocalizationMetricsPg() {
   let tariffTotalLocalOrders = 0;
   let tariffUnmappedWarehouseOrders = 0;
   let unmappedBuyerOrders = 0;
+  let inferredWarehouseOrders = 0;
 
   for (const row of rows) {
     const article = clean(row.article_wb);
@@ -421,7 +440,13 @@ async function calculateLocalizationMetricsPg() {
       continue;
     }
 
-    const warehouseZone = getWarehouseLocalizationZone(clean(row.warehouse));
+    const warehouseName = clean(row.warehouse);
+    const directWarehouseZone = getWarehouseLocalizationZone(warehouseName);
+    const inferredWarehouseZone = !directWarehouseZone && soleWarehouseZone && isGenericWbWarehouse(warehouseName)
+      ? soleWarehouseZone
+      : null;
+    const warehouseZone = directWarehouseZone || inferredWarehouseZone;
+    if (inferredWarehouseZone) inferredWarehouseOrders++;
     const isLocal = Boolean(warehouseZone && warehouseZone === buyerZone);
     const reportItem = reportDraft.get(article) || { orderQty: 0, localOrderQty: 0, unmappedWarehouseQty: 0 };
     reportItem.orderQty++;
@@ -497,6 +522,7 @@ async function calculateLocalizationMetricsPg() {
       unmappedWarehouseOrderQty: reportUnmappedWarehouseOrders,
       tariffUnmappedWarehouseOrderQty: tariffUnmappedWarehouseOrders,
       excludedForeignOrderQty: unmappedBuyerOrders,
+      inferredWarehouseOrderQty: inferredWarehouseOrders,
       exceptionOrderQty: 0,
       model: "report_locality_all_regions_tariff_indices_rf_only_13_full_weeks_without_current_week_or_exception_categories",
       ktrSource: "WB table copied from Tariffs -> Warehouse tariffs -> Localization index",

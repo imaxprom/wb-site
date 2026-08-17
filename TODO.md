@@ -1,6 +1,6 @@
 # MpHub TODO
 
-Last updated: 2026-08-16 19:07 MSK.
+Last updated: 2026-08-17 16:10 MSK.
 
 ## High Priority
 
@@ -18,6 +18,7 @@ Last updated: 2026-08-16 19:07 MSK.
 - Monitor future partial WB add failures: actual live membership must be persisted, attached orders move to assembly, rejected orders stay in New, and sync must reconcile open supplies.
 - If the user approves remote Windows administration, configure Tailscale + Windows OpenSSH + dedicated key-only admin account on the warehouse computer, then test access after reboot. This is not installed yet.
 - For printer failures, inspect print-agent status/log, PostgreSQL print job, Windows spooler and Zebra state before resetting any queue. Never reprint blindly when physical output is unknown.
+- После deployment нового jam recovery на текущем Windows один раз обновить локальный helper (первый запуск старой версии может только скачать новую; интерфейс попросит повторить), затем рядом с сотрудником проверить контролируемый сценарий на тестовой этикетке: `queue_paused` → очистка только `MpHub-*` → `queue_ready` → точный выбор результата → продолжение очереди без дубля.
 
 ## Production Checks
 
@@ -26,6 +27,7 @@ Last updated: 2026-08-16 19:07 MSK.
 - Не возвращать в deploy runtime data/env, generated reports, Android build/APK/debug.keystore, `.codex` и локальные visual test routes.
 - Production snapshot at 23:44 MSK: shipment products 69, stock 922, orders 263364; reviews 159734; use a fresh snapshot for later factual answers.
 - Continue monitoring `warehouse_remains` shipment sync, reviews retry windows, supply reports and data-health. Do not restore file-DB fallbacks or old `supplier/stocks` logic.
+- Проверить после release организацию 2: finance articles/forecast видят backfill 08–16.08; logistics tariffs возвращают stock payload и effective date; generic `Склад WB РФ` локализуется только при единственной доказанной зоне; warehouse sync без spreadsheet-config отвечает `ok/skipped`, а не 500.
 - Keep release `data/deploy.lock` cleared after deploy/rollback and retain shared data/env/node_modules outside release deletion.
 
 ## Medium Priority

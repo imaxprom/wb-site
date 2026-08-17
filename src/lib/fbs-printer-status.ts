@@ -31,15 +31,18 @@ export function getFbsPrinterProblem(agent: FbsPrintAgent | null): FbsPrinterPro
   const normalized = error.toLowerCase();
   if (agent.status === "offline") return { code: "PRN-002", title: "Нет связи с программой печати", detail: "Проверьте компьютер, Zebra и USB-кабель, затем запустите автоматическое восстановление." };
   if (agent.status === "repairing") return { code: "PRN-008", title: "Печать восстанавливается", detail: "Дождитесь завершения программы восстановления и нажмите «Проверить снова»." };
+  if (agent.status === "queue_paused") return { code: "PRN-011", title: "Замятие печати", detail: "Устраните замятие, запустите восстановление и подтвердите, вышла ли последняя этикетка." };
+  if (agent.status === "queue_ready") return { code: "PRN-011", title: "Очередь Windows очищена", detail: "Подтвердите, вышла ли последняя этикетка, чтобы продолжить печать." };
   if (/paperout|paper out|бумаг/.test(normalized)) return { code: "PRN-004", title: "В Zebra закончилась бумага", detail: "Установите рулон, закройте крышку и нажмите «Проверить снова»." };
   if (/offline|не доступ|not found|cannot access/.test(normalized)) return { code: "PRN-005", title: "Windows не видит Zebra", detail: "Проверьте питание и USB-кабель принтера." };
   if (/userintervention|attention|blocked|вниман/.test(normalized)) return { code: "PRN-006", title: "Zebra требует внимания", detail: "Проверьте бумагу, крышку и индикатор на принтере." };
   return { code: "PRN-007", title: "Печать остановлена", detail: error || "Выполните проверку и автоматическое восстановление." };
 }
 
-export function getFbsPrinterIndicator(agents: FbsPrintAgent[] | null): FbsPrinterIndicator {
+export function getFbsPrinterIndicator(agents: FbsPrintAgent[] | null, printQueuePaused = false): FbsPrinterIndicator {
   if (agents === null) return { tone: "unknown", label: "Проверяем принтер" };
   const { connected, ready } = resolveFbsPrinter(agents);
+  if (printQueuePaused || connected?.status === "queue_paused") return { tone: "error", label: "Замятие печати" };
   if (ready) return { tone: "ready", label: "Принтер готов" };
   if (connected?.status === "repairing") return { tone: "warning", label: "Принтер восстанавливается" };
   if (!connected) return { tone: "unknown", label: "Принтер не настроен" };
