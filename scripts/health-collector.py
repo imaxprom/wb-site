@@ -15,7 +15,12 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent
 PROJECT_DIR = SCRIPT_DIR.parent
 REGISTRY_PATH = PROJECT_DIR / "public" / "data" / "monitor" / "monitor-registry.json"
-OUTPUT_PATH = PROJECT_DIR / "public" / "data" / "monitor" / "status.json"
+ORGANIZATION_ID = int(os.environ.get("MPHUB_ORGANIZATION_ID", "1"))
+if ORGANIZATION_ID <= 0:
+    raise RuntimeError("MPHUB_ORGANIZATION_ID must be a positive integer")
+ORGANIZATION_DATA_DIR = PROJECT_DIR / "data" / "organizations" / str(ORGANIZATION_ID)
+OUTPUT_PATH = ORGANIZATION_DATA_DIR / "monitor-status.json"
+LEGACY_OUTPUT_PATH = PROJECT_DIR / "public" / "data" / "monitor" / "status.json"
 
 TZ_MSK = timezone(timedelta(hours=3))
 NOW = datetime.now(TZ_MSK)
@@ -113,7 +118,7 @@ def parse_cron_pattern(pattern: str) -> dict:
     if minute_p.isdigit() and hour_p == "*" and day_p == "*" and month_p == "*" and weekday_p == "*":
         minute = int(minute_p)
         desc = "каждый час" if minute == 0 else f"каждый час в :{minute:02d}"
-        return {"type": "interval", "intervalMin": 60, "description": desc}
+        return {"type": "interval", "intervalMin": 60, "minute": minute, "description": desc}
 
     # Один запуск в конкретное время: 0 1 * * * или 0 19 * * 1-5.
     if minute_p.isdigit() and hour_p.isdigit() and day_p == "*" and month_p == "*":
@@ -181,6 +186,11 @@ def calc_next_run(schedule: dict) -> str | None:
     if stype == "interval":
         imin = schedule.get("intervalMin", 0)
         if imin > 0:
+            if imin == 60 and "minute" in schedule:
+                target = NOW.replace(minute=int(schedule["minute"]), second=0, microsecond=0)
+                if target <= NOW:
+                    target += timedelta(hours=1)
+                return target.isoformat()
             now_min = NOW_EPOCH // 60
             next_min = ((now_min // imin) + 1) * imin
             return datetime.fromtimestamp(next_min * 60, TZ_MSK).isoformat()
@@ -216,21 +226,54 @@ def calc_runs_today(schedule: dict) -> tuple[int, int]:
 
 # ── Log helpers ──────────────────────────────────────────────
 
+def parse_log_timestamp(line: str, fallback: datetime | None = None) -> datetime | None:
+    match = re.search(r"\[(\d{4}-\d{2}-\d{2}[T ][^\]]+)\]", line)
+    if not match:
+        return fallback
+    raw = match.group(1).strip().replace(" ", "T", 1)
+    try:
+        if raw.endswith("Z"):
+            return datetime.fromisoformat(raw[:-1] + "+00:00").astimezone(TZ_MSK)
+        parsed = datetime.fromisoformat(raw)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(TZ_MSK)
+    except Exception:
+        return fallback
+
+
+def sanitize_log_line(line: str) -> str:
+    value = re.sub(r"https://api\.telegram\.org/bot[^/\s]+", "https://api.telegram.org/bot[redacted]", line, flags=re.I)
+    value = re.sub(r"\bBearer\s+[^\s,}\]]+", "Bearer [redacted]", value, flags=re.I)
+    value = re.sub(
+        r"((?:token|cookie|authorization|api[_ -]?key|secret)\s*[=:]\s*[\"']?)[^\s,\"'}\]]+",
+        r"\1[redacted]",
+        value,
+        flags=re.I,
+    )
+    return value
+
+
 def count_errors_in_log(log_path: str | None) -> tuple[int, list[dict]]:
     if not log_path or log_path == "null" or not os.path.isfile(log_path):
         return 0, []
     try:
-        lines = run_cmd(f'tail -n 200 "{log_path}" 2>/dev/null').splitlines()
+        with open(log_path, "r", errors="replace") as handle:
+            lines = handle.readlines()[-5000:]
     except Exception:
         return 0, []
+    cutoff = NOW - timedelta(hours=24)
     errors = []
+    current_timestamp = None
     for line in lines:
+        current_timestamp = parse_log_timestamp(line, current_timestamp)
         if re.search(r"ERROR|CRITICAL|Exception|Traceback", line, re.IGNORECASE):
             if re.search(r"errors?\s*[=:]\s*0\b|0\s+errors?\b", line, re.IGNORECASE):
                 continue
-            time_match = re.search(r"(\d{2}:\d{2})", line)
-            time_str = time_match.group(1) if time_match else ""
-            errors.append({"time": time_str, "message": line[:200].strip()})
+            if current_timestamp is None or current_timestamp < cutoff:
+                continue
+            time_str = current_timestamp.astimezone(TZ_MSK).strftime("%d.%m %H:%M")
+            errors.append({"time": time_str, "message": sanitize_log_line(line[:500].strip())[:200]})
     return len(errors), errors[-5:]
 
 
@@ -344,11 +387,72 @@ def data_health_status(log_path: str | None) -> tuple[str | None, int | None, li
     return None, None, None, data.get("timestamp")
 
 
+_DISABLED_SERVICE_IDS: set[str] | None = None
+_HEALTH_SERVICE_STATUSES: dict[str, str] | None = None
+
+
+def get_disabled_service_ids() -> set[str]:
+    global _DISABLED_SERVICE_IDS
+    if _DISABLED_SERVICE_IDS is not None:
+        return _DISABLED_SERVICE_IDS
+
+    mapping = {
+        "cron_paid_storage": "paid-storage-sync",
+        "cron_warehouse_remains": "warehouse-remains-sync",
+        "cron_warehouse_measurements": "warehouse-measurements-sync",
+        "cron_reviews_sync": "reviews-sync",
+        "cron_reviews_complaints": "reviews-complaints",
+    }
+    disabled: set[str] = set()
+    snapshot_path = ORGANIZATION_DATA_DIR / "data-health-cron.json"
+    try:
+        payload = json.loads(snapshot_path.read_text())
+        for check in payload.get("checks", []):
+            if check.get("status") == "disabled" and check.get("id") in mapping:
+                disabled.add(mapping[check["id"]])
+    except Exception:
+        pass
+    _DISABLED_SERVICE_IDS = disabled
+    return disabled
+
+
+def get_health_service_statuses() -> dict[str, str]:
+    global _HEALTH_SERVICE_STATUSES
+    if _HEALTH_SERVICE_STATUSES is not None:
+        return _HEALTH_SERVICE_STATUSES
+    mapping = {
+        "cron_daily_sync": "daily-sync",
+        "cron_weekly_sync": "weekly-sync",
+        "cron_shipment_sync": "shipment-sync",
+        "cron_supply_reports_sync": "supply-reports-sync",
+        "cron_reviews_sync": "reviews-sync",
+        "cron_reviews_complaints": "reviews-complaints",
+        "cron_paid_storage": "paid-storage-sync",
+        "cron_auth_check": "auth-check",
+        "cron_warehouse_remains": "warehouse-remains-sync",
+        "cron_warehouse_measurements": "warehouse-measurements-sync",
+    }
+    statuses: dict[str, str] = {}
+    snapshot_path = ORGANIZATION_DATA_DIR / "data-health-cron.json"
+    try:
+        payload = json.loads(snapshot_path.read_text())
+        for check in payload.get("checks", []):
+            service_id = mapping.get(check.get("id"))
+            if service_id:
+                statuses[service_id] = str(check.get("status", ""))
+    except Exception:
+        pass
+    _HEALTH_SERVICE_STATUSES = statuses
+    return statuses
+
+
 # ── Main ─────────────────────────────────────────────────────
 
 def build_service(svc: dict) -> dict:
     svc_id = svc.get("id", "")
     log_path = svc.get("logPath")
+    if log_path and svc_id not in ("mphub-website", "mphub-watchdog"):
+        log_path = str(ORGANIZATION_DATA_DIR / Path(log_path).name)
     script_path = svc.get("scriptPath")
     lifecycle = svc.get("lifecycle", "active")
     cron_pattern = svc.get("cronPattern")
@@ -366,6 +470,18 @@ def build_service(svc: dict) -> dict:
         "logPath": log_path,
         "lifecycle": lifecycle,
     }
+
+    disabled_service_ids = get_disabled_service_ids()
+    if svc_id in disabled_service_ids:
+        base.update({
+            "status": "disabled", "pid": None, "uptime": "", "uptimeSeconds": 0,
+            "lastRun": None, "nextRun": None,
+            "schedule": {"type": "none", "description": "не используется этим юрлицом"},
+            "runsToday": 0, "runsTotal": -1,
+            "errorsLast24h": 0, "lastErrors": [],
+            "fileHash": get_file_hash(script_path), "lastModified": get_last_modified(script_path),
+        })
+        return base
 
     if lifecycle in ("archived", "deleted"):
         base.update({
@@ -407,6 +523,10 @@ def build_service(svc: dict) -> dict:
             status = "stopped"
     elif cron_pattern:
         status = status_from_log(log_path, schedule)
+
+    health_status = get_health_service_statuses().get(svc_id)
+    if health_status == "error":
+        status = "error"
 
     next_run = calc_next_run(schedule)
     runs_today, runs_total = calc_runs_today(schedule)
@@ -452,11 +572,16 @@ def main():
     result = {
         "timestamp": NOW.isoformat(),
         "machine": "VPS wb-site",
+        "organizationId": ORGANIZATION_ID,
         "services": services,
     }
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(OUTPUT_PATH, "w") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
+    if ORGANIZATION_ID == 1:
+        LEGACY_OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(LEGACY_OUTPUT_PATH, "w") as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

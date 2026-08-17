@@ -20,7 +20,7 @@ const shipmentSyncLogPath = () => getOrganizationDataPath("shipment-sync.log");
 interface Check {
   id: string;
   name: string;
-  status: "ok" | "warn" | "error";
+  status: "ok" | "warn" | "error" | "disabled";
   value: string;
   detail?: string;
 }
@@ -78,19 +78,54 @@ function latestShipmentStockLogState(): { skipped: boolean | null; line: string 
 }
 
 async function tableExistsPg(tableName: string): Promise<boolean> {
-  const row = await pgGet<{ exists: boolean }>(`
-    SELECT EXISTS (
-      SELECT 1 FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_name = ?
-    ) AS exists
-  `, [tableName]);
-  return Boolean(row?.exists);
+  const row = await pgGet<{ table_name: string | null }>(
+    "SELECT to_regclass(?) AS table_name",
+    [tableName]
+  );
+  return Boolean(row?.table_name);
 }
 
 export async function GET(req: NextRequest) {
   const authError = await requireMonitorAdmin(req);
   if (authError) return authError;
   activateMonitorOrganizationContext(req);
+
+  // Production cron is the single source of truth for data health. It already
+  // runs every check in the selected organization context and records which
+  // modules are intentionally disabled for that legal entity.
+  try {
+    if (fs.existsSync(cronHealthPath())) {
+      const snapshot = JSON.parse(fs.readFileSync(cronHealthPath(), "utf-8")) as {
+        overall: "ok" | "warn" | "error";
+        message: string;
+        checks: Check[];
+        timestamp: string;
+      };
+      const snapshotAge = ageMinutes(snapshot.timestamp);
+      if (Array.isArray(snapshot.checks) && snapshotAge <= 150) {
+        return NextResponse.json(snapshot, { headers: { "Cache-Control": "no-store" } });
+      }
+      if (Array.isArray(snapshot.checks)) {
+        return NextResponse.json({
+          ...snapshot,
+          overall: "error",
+          message: "Снимок мониторинга устарел",
+          checks: [
+            {
+              id: "data_health_snapshot_stale",
+              name: "Обновление мониторинга",
+              status: "error",
+              value: `Последнее обновление ${formatAge(snapshotAge)}`,
+            },
+            ...snapshot.checks,
+          ],
+        }, { headers: { "Cache-Control": "no-store" } });
+      }
+    }
+  } catch {
+    // Fall through to the live diagnostic path when the snapshot is missing
+    // or damaged, so the monitor itself remains useful during recovery.
+  }
 
   const checks: Check[] = [];
   const yd = yesterday();

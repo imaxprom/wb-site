@@ -22,6 +22,20 @@ function usage() {
   console.error("Usage: node scripts/run-for-organizations.js -- <command> [args...]");
 }
 
+function jobName(command, args) {
+  return [path.basename(command), ...args.map((arg) => path.basename(String(arg)))].join(" ");
+}
+
+function shouldSkipJob(job, capabilities) {
+  if (!capabilities.fbo && (job.includes("paid-storage-sync.js") || job.includes("logistics-volume-sync.js"))) {
+    return "FBO не используется этим юрлицом";
+  }
+  if (!capabilities.reviews && (job.includes("reviews-sync.js") || job.includes("reviews-complaints.js"))) {
+    return "аккаунт отзывов не настроен";
+  }
+  return "";
+}
+
 async function main() {
   const separator = process.argv.indexOf("--");
   const command = separator >= 0 ? process.argv[separator + 1] : "";
@@ -43,19 +57,48 @@ async function main() {
   let organizations;
   try {
     const result = await pool.query(`
-      SELECT id, display_name
+      SELECT id, display_name, data_schema
       FROM public.organizations
       WHERE status = 'active'
       ORDER BY id
     `);
-    organizations = result.rows;
+    organizations = [];
+    for (const row of result.rows) {
+      const schema = String(row.data_schema || "");
+      if (schema !== "public" && !/^organization_[1-9][0-9]*$/.test(schema)) {
+        throw new Error(`Invalid organization schema: ${schema}`);
+      }
+      const quotedSchema = `"${schema.replace(/"/g, '""')}"`;
+      const [settingsResult, reviewsResult] = await Promise.all([
+        pool.query(`SELECT key, value FROM ${quotedSchema}.settings WHERE key IN ($1, $2)`, [
+          "monitor_fbo_enabled",
+          "monitor_reviews_enabled",
+        ]),
+        pool.query(`SELECT COUNT(*)::int AS cnt FROM ${quotedSchema}.review_accounts WHERE COALESCE(api_key, '') <> ''`),
+      ]);
+      const settings = new Map(settingsResult.rows.map((item) => [String(item.key), String(item.value).toLowerCase()]));
+      const flag = (key, fallback) => settings.has(key) ? settings.get(key) === "true" : fallback;
+      organizations.push({
+        ...row,
+        capabilities: {
+          fbo: flag("monitor_fbo_enabled", true),
+          reviews: flag("monitor_reviews_enabled", Number(reviewsResult.rows[0]?.cnt || 0) > 0),
+        },
+      });
+    }
   } finally {
     await pool.end();
   }
 
   let failed = 0;
+  const job = jobName(command, args);
   for (const organization of organizations) {
     const organizationId = Number(organization.id);
+    const skipReason = shouldSkipJob(job, organization.capabilities);
+    if (skipReason) {
+      console.log(`[organization-runner] skip org=${organizationId}: ${skipReason}`);
+      continue;
+    }
     const childEnv = {
       ...process.env,
       MPHUB_ORGANIZATION_ID: String(organizationId),

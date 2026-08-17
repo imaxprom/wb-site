@@ -91,12 +91,22 @@ function getAccountId(db) {
 }
 
 async function getApiKeyPg() {
-  const result = await getPgPool().query(`SELECT api_key FROM review_accounts WHERE supplier_id = $1`, ["1166225"]);
+  const result = await getPgPool().query(`
+    SELECT api_key FROM review_accounts
+    WHERE COALESCE(api_key, '') <> ''
+    ORDER BY id
+    LIMIT 1
+  `);
   return result.rows[0]?.api_key || null;
 }
 
 async function getAccountIdPg() {
-  const result = await getPgPool().query(`SELECT id FROM review_accounts WHERE supplier_id = $1`, ["1166225"]);
+  const result = await getPgPool().query(`
+    SELECT id FROM review_accounts
+    WHERE COALESCE(api_key, '') <> ''
+    ORDER BY id
+    LIMIT 1
+  `);
   return result.rows[0]?.id || null;
 }
 
@@ -477,21 +487,8 @@ async function countReviewsWithPrice(db) {
 
 async function ensureArchiveSyncState(db) {
   if (USE_PG) {
-    await getPgPool().query(`
-      CREATE TABLE IF NOT EXISTS reviews_archive_sync_state (
-        id INTEGER PRIMARY KEY,
-        archive_skip INTEGER NOT NULL DEFAULT 0,
-        retry_after_until TEXT,
-        last_request_at TEXT,
-        last_success_at TEXT,
-        last_status TEXT,
-        last_message TEXT,
-        fetched_count INTEGER NOT NULL DEFAULT 0,
-        upserted_count INTEGER NOT NULL DEFAULT 0,
-        inserted_count INTEGER NOT NULL DEFAULT 0,
-        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
+    const table = await getPgPool().query("SELECT to_regclass('reviews_archive_sync_state') AS table_name");
+    if (!table.rows[0]?.table_name) throw new Error("Database migration missing: reviews_archive_sync_state");
     await getPgPool().query(`
       INSERT INTO reviews_archive_sync_state (id)
       VALUES (1)

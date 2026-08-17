@@ -8,6 +8,7 @@ import { syncReport } from "./sync/realization";
 import { syncAdvertising } from "./sync/advertising";
 import { syncOrders, refreshRecentOrders } from "./sync/orders";
 import { syncPaidStorage } from "./sync/storage";
+import { getOrganizationCapabilities } from "@/lib/organization-capabilities";
 
 export type { SyncStatus, DaySyncStatus };
 
@@ -40,6 +41,7 @@ export async function syncAll(date?: string): Promise<DaySyncStatus> {
   saveStatus(status);
 
   console.log(`[daily-sync] Syncing ${targetDate}...`);
+  const capabilities = await getOrganizationCapabilities();
 
   // Каждый источник в отдельном try/catch — ошибка одного не блокирует остальные
   if (!day.report.ok) {
@@ -75,7 +77,10 @@ export async function syncAll(date?: string): Promise<DaySyncStatus> {
     }
   }
 
-  if (!day.storage?.ok) {
+  if (!capabilities.fbo) {
+    day.storage = { ...emptySource(), ok: true, stable: true, value: 0 };
+    console.log("[daily-sync] Paid storage: skipped (FBO disabled for organization)");
+  } else if (!day.storage?.ok) {
     try {
       console.log("[daily-sync] Syncing paid storage...");
       day.storage = await syncPaidStorage(targetDate);

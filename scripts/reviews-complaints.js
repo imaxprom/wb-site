@@ -221,16 +221,8 @@ async function getRecentComplaintStatusesPg(accountId) {
 }
 
 async function ensureComplaintPauseTablePg() {
-  await getPgPool().query(`
-    CREATE TABLE IF NOT EXISTS review_complaint_pauses (
-      account_id INTEGER PRIMARY KEY,
-      paused_until TIMESTAMPTZ NOT NULL,
-      reason TEXT,
-      stats_json JSONB,
-      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+  const result = await getPgPool().query("SELECT to_regclass('review_complaint_pauses') AS table_name");
+  if (!result.rows[0]?.table_name) throw new Error("Database migration missing: review_complaint_pauses");
 }
 
 async function getActiveComplaintPausePg(accountId) {

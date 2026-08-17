@@ -7,15 +7,8 @@ import { SourceStatus, emptySource, getApiKey } from "./types";
 import { pgGet, pgRows, withPgTransaction } from "@/lib/postgres";
 
 async function ensureCampaignNmTablePg(): Promise<void> {
-  await withPgTransaction(async (client) => {
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS campaign_nm_map (
-        campaign_id BIGINT PRIMARY KEY,
-        nm_id BIGINT NOT NULL,
-        updated_at TEXT NOT NULL
-      )
-    `);
-  });
+  const row = await pgGet<{ table_name: string | null }>("SELECT to_regclass('campaign_nm_map') AS table_name");
+  if (!row?.table_name) throw new Error("Database migration missing: campaign_nm_map");
 }
 
 async function fetchCampaignNmMap(apiKey: string): Promise<{ ok: boolean; map: Map<number, number> }> {

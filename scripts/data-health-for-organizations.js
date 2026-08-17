@@ -52,6 +52,20 @@ async function main() {
       const temporary = `${target}.${process.pid}.tmp`;
       fs.writeFileSync(temporary, JSON.stringify(payload, null, 2));
       fs.renameSync(temporary, target);
+
+      const collector = spawnSync("python3", [path.join(PROJECT_DIR, "scripts", "health-collector.py")], {
+        cwd: PROJECT_DIR,
+        env: {
+          ...process.env,
+          MPHUB_ORGANIZATION_ID: String(organizationId),
+          MPHUB_ORGANIZATION_NAME: String(organization.display_name || `Organization ${organizationId}`),
+        },
+        encoding: "utf8",
+        maxBuffer: 4 * 1024 * 1024,
+      });
+      if (collector.status !== 0) {
+        throw new Error(collector.stderr || `health-collector exited with ${collector.status}`);
+      }
     } catch (error) {
       failed += 1;
       console.error(`Data health failed for organization ${organizationId}: ${result.stderr || error}`);

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { activateMonitorOrganizationContext, requireMonitorAdmin } from "@/lib/monitor-auth";
+import { resolveMonitorLogPath, sanitizeMonitorLogLine } from "@/lib/monitor-paths";
 
 const REGISTRY_PATH = join(process.cwd(), "public/data/monitor/monitor-registry.json");
 
@@ -27,7 +28,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Service not found" }, { status: 404 });
     }
 
-    const logPath = service.logPath;
+    const logPath = resolveMonitorLogPath(service);
     if (!logPath || !existsSync(logPath)) {
       return NextResponse.json({ error: "Log file not available", lines: [] });
     }
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest) {
     const filtered = errorsOnly
       ? sourceLines.filter((line) => /ERROR|CRITICAL|Exception|WARNING/i.test(line))
       : sourceLines;
-    const outputLines = filtered.slice(-lines);
+    const outputLines = filtered.slice(-lines).map(sanitizeMonitorLogLine);
 
     return NextResponse.json({
       id,

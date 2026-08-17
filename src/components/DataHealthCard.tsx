@@ -5,7 +5,7 @@ import { useState, useEffect } from "react";
 interface Check {
   id: string;
   name: string;
-  status: "ok" | "warn" | "error";
+  status: "ok" | "warn" | "error" | "disabled";
   value: string;
   detail?: string;
 }
@@ -17,7 +17,7 @@ interface HealthData {
   timestamp: string;
 }
 
-const STATUS_ICON: Record<string, string> = { ok: "🟢", warn: "🟡", error: "🔴" };
+const STATUS_ICON: Record<string, string> = { ok: "🟢", warn: "🟡", error: "🔴", disabled: "⚪" };
 const OVERALL_BG: Record<string, string> = {
   ok: "border-[var(--success)]/30 bg-[var(--success)]/5",
   warn: "border-[var(--warning)]/30 bg-[var(--warning)]/5",
@@ -56,6 +56,7 @@ export function DataHealthCard() {
   const errors = data.checks.filter(c => c.status === "error");
   const warns = data.checks.filter(c => c.status === "warn");
   const oks = data.checks.filter(c => c.status === "ok");
+  const disabled = data.checks.filter(c => c.status === "disabled");
 
   return (
     <div className={`border rounded-xl p-5 ${OVERALL_BG[data.overall]}`}>
@@ -67,6 +68,7 @@ export function DataHealthCard() {
             <h3 className="font-bold text-base">{data.message}</h3>
             <p className="text-xs text-[var(--text-muted)]">
               {oks.length} ок · {warns.length} предупр. · {errors.length} ошибок
+              {disabled.length > 0 ? ` · ${disabled.length} не используются` : ""}
               <span className="ml-2">
                 {new Date(data.timestamp).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
               </span>
@@ -87,7 +89,7 @@ export function DataHealthCard() {
           {[...errors, ...warns].slice(0, 8).map(c => (
             <div key={c.id} className="flex items-center gap-2 text-sm">
               <span>{STATUS_ICON[c.status]}</span>
-              <span className={`${c.status === "error" ? "text-[var(--danger)]" : "text-[var(--warning)]"} font-medium`}>{c.name}</span>
+              <span className={`${c.status === "error" ? "text-[var(--danger)]" : c.status === "warn" ? "text-[var(--warning)]" : "text-[var(--text-muted)]"} font-medium`}>{c.name}</span>
               <span className="text-[var(--text-muted)]">{c.value}</span>
             </div>
           ))}

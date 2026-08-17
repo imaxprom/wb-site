@@ -124,32 +124,10 @@ const DOCUMENT_TYPE_LABELS = Object.fromEntries(
 
 export async function ensureSupplyReportTablesPg(): Promise<void> {
   if (isPostgresReadonlyConnection()) return;
-  await pgGet(`
-    CREATE TABLE IF NOT EXISTS wb_supply_report_documents (
-      supply_id BIGINT NOT NULL,
-      document_type TEXT NOT NULL,
-      status TEXT NOT NULL,
-      service_name TEXT,
-      document_name TEXT,
-      category TEXT,
-      extension TEXT,
-      content_type TEXT,
-      file_name TEXT,
-      file_path TEXT,
-      size_bytes BIGINT,
-      sha256 TEXT,
-      creation_time TEXT,
-      downloaded_at TEXT,
-      checked_at TEXT NOT NULL,
-      error TEXT,
-      source_json TEXT,
-      PRIMARY KEY(supply_id, document_type)
-    )
-  `);
-  await pgGet(`
-    CREATE INDEX IF NOT EXISTS idx_wb_supply_report_documents_checked
-    ON wb_supply_report_documents(checked_at DESC)
-  `);
+  const row = await pgGet<{ table_name: string | null }>(
+    "SELECT to_regclass('wb_supply_report_documents') AS table_name"
+  );
+  if (!row?.table_name) throw new Error("Database migration missing: wb_supply_report_documents");
 }
 
 export async function listSupplyReportsPg(limit = 100, offset = 0): Promise<{

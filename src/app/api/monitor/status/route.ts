@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFileSync } from "fs";
-import { join } from "path";
 import { activateMonitorOrganizationContext, requireMonitorAdmin } from "@/lib/monitor-auth";
-
-const STATUS_PATH = join(process.cwd(), "public/data/monitor/status.json");
+import { getMonitorStatusPath } from "@/lib/monitor-paths";
 
 export async function GET(req: NextRequest) {
   const authError = await requireMonitorAdmin(req);
@@ -11,7 +9,7 @@ export async function GET(req: NextRequest) {
   activateMonitorOrganizationContext(req);
 
   try {
-    const data = readFileSync(STATUS_PATH, "utf-8");
+    const data = readFileSync(getMonitorStatusPath(), "utf-8");
     return NextResponse.json(JSON.parse(data));
   } catch {
     return NextResponse.json(

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
-import path from "path";
 import { activateMonitorOrganizationContext, requireMonitorAdmin } from "@/lib/monitor-auth";
 import { isPostgresReadonlyConnection } from "@/lib/postgres";
+import { getMonitorSummaryPath, getWatchdogLogPath, sanitizeMonitorLogLine } from "@/lib/monitor-paths";
 
 /**
  * GET /api/monitor/summary — сводный статус всех sync-систем.
@@ -47,13 +47,13 @@ function hoursAgo(iso: string | null | undefined): number | null {
   return Math.round(ms / 36e5 * 10) / 10;
 }
 
-function tailLog(logPath: string, lines: number, grepRegex?: RegExp): string[] {
+function lastWatchdogCycleAlerts(logPath: string): string[] {
   try {
     if (!fs.existsSync(logPath)) return [];
-    const content = fs.readFileSync(logPath, "utf-8");
-    const arr = content.split("\n").filter(l => l.trim());
-    const filtered = grepRegex ? arr.filter(l => grepRegex.test(l)) : arr;
-    return filtered.slice(-lines);
+    const lines = fs.readFileSync(logPath, "utf-8").split("\n").filter(Boolean);
+    const startIndex = lines.findLastIndex((line) => line.includes("=== VPS Watchdog started ==="));
+    const cycle = startIndex >= 0 ? lines.slice(startIndex) : lines.slice(-100);
+    return cycle.filter((line) => /Telegram \[\w+\] sent/.test(line)).map(sanitizeMonitorLogLine);
   } catch {
     return [];
   }
@@ -86,15 +86,12 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const dataDir = path.join(process.cwd(), "data");
-  const monitorDir = path.join(process.cwd(), "public", "data", "monitor");
-
-  const sync = readJson<SyncStatus>(path.join(dataDir, "daily-sync-status.json"));
-  const auth = readJson<AuthStatus>(path.join(monitorDir, "auth-status.json"));
+  const sync = readJson<SyncStatus>(getMonitorSummaryPath("daily-sync-status.json"));
+  const auth = readJson<AuthStatus>(getMonitorSummaryPath("auth-status.json"));
 
   const today = sync?.today || null;
   const lastSyncIso = sync?.lastRun || null;
-  const lastAlerts = tailLog(path.join(dataDir, "watchdog.log"), 5, /Telegram \[\w+\] sent/);
+  const lastAlerts = lastWatchdogCycleAlerts(getWatchdogLogPath());
 
   // Data freshness: насколько свежая "вчерашняя" дата в БД
   let dataLagDays: number | null = null;

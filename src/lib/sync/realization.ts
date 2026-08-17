@@ -6,7 +6,7 @@ import fs from "fs";
 import path from "path";
 import { SourceStatus, emptySource, getSyncTokensPath } from "./types";
 import { readFirstSheetRows } from "@/lib/server/excel-rows";
-import { withPgTransaction } from "@/lib/postgres";
+import { pgGet, withPgTransaction } from "@/lib/postgres";
 import type { PoolClient } from "pg";
 import { getOrganizationDataDir } from "@/lib/organization-paths";
 
@@ -73,16 +73,12 @@ export async function syncReport(date: string): Promise<SourceStatus> {
       return s;
     }
 
-    await withPgTransaction(async (client) => {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS realization_report_meta (
-          report_id BIGINT PRIMARY KEY,
-          create_date TEXT,
-          details_count BIGINT,
-          imported_at TEXT NOT NULL
-        )
-      `);
-    });
+    const metadataTable = await pgGet<{ table_name: string | null }>(
+      "SELECT to_regclass('realization_report_meta') AS table_name"
+    );
+    if (!metadataTable?.table_name) {
+      throw new Error("Database migration missing: realization_report_meta");
+    }
     let totalRows = 0;
 
     const reportsDir = path.join(getOrganizationDataDir(), "reports");

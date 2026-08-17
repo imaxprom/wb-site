@@ -79,17 +79,8 @@ function getPgPool() {
 }
 
 async function initWeeklyImportStatus(db) {
-  await getPgPool().query(`
-    CREATE TABLE IF NOT EXISTS weekly_import_status (
-      id TEXT PRIMARY KEY,
-      status TEXT NOT NULL,
-      loaded INTEGER NOT NULL DEFAULT 0,
-      total INTEGER NOT NULL DEFAULT 0,
-      message TEXT NOT NULL DEFAULT '',
-      details_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+  const result = await getPgPool().query("SELECT to_regclass('weekly_import_status') AS table_name");
+  if (!result.rows[0]?.table_name) throw new Error("Database migration missing: weekly_import_status");
 }
 
 async function setWeeklyImportStatus(db, patch) {

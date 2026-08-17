@@ -102,6 +102,7 @@ function statusColor(status: string) {
 
 function statusLabel(status: string) {
   if (status === "idle") return "Ожидает";
+  if (status === "disabled") return "Не используется";
   return status;
 }
 
@@ -230,6 +231,7 @@ function ServiceCard({
   const isStale = service.lifecycle === "stale";
   const isDeleted = service.lifecycle === "deleted";
   const isArchived = service.lifecycle === "archived";
+  const isDisabled = service.status === "disabled";
 
   const wasModified = recentChanges.some(
     (c) => c.scriptId === service.id && c.type === "modified" &&
@@ -277,6 +279,11 @@ function ServiceCard({
                 Удалён
               </span>
             )}
+            {isDisabled && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-[var(--text-muted)]/10 text-[var(--text-muted)]">
+                {statusLabel(service.status)}
+              </span>
+            )}
             {wasModified && (
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-[var(--accent)]/10 text-[var(--accent)]">
                 Изменён
@@ -289,7 +296,7 @@ function ServiceCard({
             )}
           </div>
           {/* Menu */}
-          <div className="relative">
+          {!isDisabled && <div className="relative">
             <button
               onClick={() => setMenuOpen(!menuOpen)}
               className="text-[var(--text-muted)] hover:text-white p-1"
@@ -333,7 +340,7 @@ function ServiceCard({
                 </div>
               </>
             )}
-          </div>
+          </div>}
         </div>
 
         {/* Schedule & runs */}
@@ -380,7 +387,7 @@ function ServiceCard({
 
         {/* Actions */}
         <div className="flex gap-1.5 mt-2">
-          {!isDeleted && !isArchived && (
+          {!isDeleted && !isArchived && !isDisabled && (
             <button
               onClick={() => onRun(service.id)}
               className="text-xs px-3 py-1.5 rounded-lg border border-[var(--success)]/30 text-[var(--success)] hover:bg-[var(--success)]/10 transition-colors"

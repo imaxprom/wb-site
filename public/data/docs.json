@@ -1096,9 +1096,10 @@
             "   PM2 держит сайт mphub online, cron запускает фоновые скрипты.",
             "",
             "Уровень 2: health-collector.py / monitor API",
-            "   Читает PM2, crontab, логи, public/data/monitor/monitor-registry.json.",
-            "   data-health-cron.sh запускает scripts/data-health-snapshot.js: проверяет WB API, свежесть ключевых PostgreSQL-таблиц и последние успешные cron-логи.",
-            "   health-collector.py поднимает overall=error из data-health-cron.json в красный статус сервиса data-health-cron.",
+            "   Читает PM2, crontab, organization-scoped логи и public/data/monitor/monitor-registry.json.",
+            "   data-health-cron.sh запускает проверки отдельно для каждого активного юрлица и пишет data/organizations/<id>/data-health-cron.json.",
+            "   health-collector.py формирует отдельный data/organizations/<id>/monitor-status.json; summary/status/logs API всегда используют выбранное юрлицо.",
+            "   Для юрлица без FBO или аккаунта отзывов неприменимые проверки получают серый статус «Не используется», а не ложную ошибку.",
             "   Остатки отгрузки считаются здоровыми только когда shipment_stock свежий по MAX(updated_at), а последний shipment-sync завершился с stockSkipped:false; stockSkipped:true даёт красный статус за этот час.",
             "",
             "Уровень 3: сайт /monitor",
@@ -1135,7 +1136,7 @@
             "Работают — PM2 online или cron-сервис свежий по логам/расписанию",
             "Ожидают — сервис по расписанию сейчас не должен быть активным или нет свежего запуска",
             "Упали — PM2/скрипт/health-check в ошибке",
-            "Ошибок за 24ч — счётчик ERROR/CRITICAL по логам",
+            "Ошибок за 24ч — счётчик только timestamped ERROR/CRITICAL за фактические последние 24 часа; старые ошибки не переносятся в текущий статус",
             "Здоровье данных — отдельный снимок data-health-cron.json; проверяет не только факт запуска, но и наличие свежих данных в реализации, рекламе, воронке, хранении, отгрузке, логистике и отзывах",
             "Для reviews-sync data-health считает штатными end-state строками `Archive top tick OK`, `Archive top tick skipped` и `Archive top tick rate-limited`; свежесть самих отзывов проверяется отдельно через PostgreSQL sync_status",
             "Для reviews-complaints data-health считает штатным OK не только `Auto-complaints finished`, но и `No accounts with auto_complaints enabled`, если автожалобы не включены ни у одного аккаунта",
@@ -1146,11 +1147,11 @@
           "type": "list",
           "title": "Файлы мониторинга",
           "items": [
-            "public/data/monitor/monitor-registry.json — production-реестр 12 сервисов",
-            "public/data/monitor/status.json — текущий снимок статусов",
-            "public/data/monitor/data-health-cron.json — последний снимок здоровья данных",
+            "public/data/monitor/monitor-registry.json — production-реестр 13 сервисов",
+            "data/organizations/<id>/monitor-status.json — текущий снимок сервисов выбранного юрлица; status.json остаётся совместимым зеркалом основного кабинета",
+            "data/organizations/<id>/data-health-cron.json — последний снимок здоровья данных выбранного юрлица",
             "scripts/data-health-snapshot.js — production-проверки свежести данных и последних успешных cron-запусков",
-            "GET /api/monitor/status только читает status.json; обновление снимка выполняет cron/health-collector, не GET-запрос",
+            "GET /api/monitor/status читает organization-scoped monitor-status.json; обновление выполняет cron/health-collector, не GET-запрос",
             "public/data/monitor/repair-state.json — состояние watchdog/circuit breaker",
             "public/data/monitor/repair-log.json — история восстановлений",
             "src/app/api/monitor/status/route.ts — статус сервисов",
@@ -1168,7 +1169,8 @@
             "running — PM2 process online или скрипт сейчас выполняется",
             "stopped — процесс не запущен; нормально для cron-задач между запусками",
             "unknown — мониторинг не смог однозначно определить состояние",
-            "error — ошибка запуска, stale-лог или HTTP/PM2 проблема"
+            "error — ошибка запуска, stale-лог или HTTP/PM2 проблема",
+            "disabled — сервис осознанно не используется выбранным юрлицом"
           ]
         },
         {
@@ -1176,7 +1178,8 @@
           "title": "Нюансы",
           "items": [
             "На production нет launchd; старые инструкции launchctl относятся к MacBook-схеме и не применяются к VPS",
-            "PM2 error-log не чистим без отдельного решения: старые записи нужны для диагностики",
+            "PM2 error-log не чистим без отдельного решения: старые записи нужны для диагностики, но API логов маскирует токены/cookie/Authorization",
+            "Рабочие sync-процессы не выполняют CREATE/ALTER: структуру PostgreSQL меняют только миграции владельца БД",
             "Предупреждение Turbopack по /api/monitor/run связано с deprecated ручным запуском и принято как известный шум до удаления endpoint",
             "Rate-limit WB при отправке SMS-кода — внешнее ограничение WB, не ошибка мониторинга"
           ]
@@ -1947,11 +1950,11 @@
         },
         {
           "type": "list",
-          "title": "Мониторинг (public/data/monitor/)",
+          "title": "Мониторинг",
           "items": [
             "monitor-registry.json — shared production-реестр сервисов: PM2 mphub + cron-скрипты, включая auth-check и data-health-cron",
-            "status.json — текущий снимок статусов PM2/cron/логов",
-            "data-health-cron.json — ежечасный снимок здоровья данных",
+            "data/organizations/<id>/monitor-status.json — снимок PM2/cron/логов по юрлицу",
+            "data/organizations/<id>/data-health-cron.json — ежечасный снимок здоровья данных по юрлицу",
             "repair-state.json — состояние watchdog/circuit breaker",
             "repair-log.json — история восстановлений watchdog",
             "changes.json — журнал ручных действий/изменений мониторинга"
@@ -2035,8 +2038,8 @@
             "shipment-sync.sh → POST /api/data/sync → shipment_products/stock/orders",
             "reviews-sync.js → PostgreSQL reviews + reviews_archive_sync_state",
             "reviews-complaints.js → review_complaints + WB complaints API",
-            "data-health-cron.sh → public/data/monitor/data-health-cron.json",
-            "health-collector.py / monitor API → public/data/monitor/status.json",
+            "data-health-cron.sh → data/organizations/<id>/data-health-cron.json",
+            "health-collector.py / monitor API → data/organizations/<id>/monitor-status.json",
             "vps-watchdog.py → PM2/HTTP/cron checks + Telegram alerts"
           ]
         },
@@ -2119,7 +2122,7 @@
           "items": [
             "health-collector.py — собирает PM2/cron/log status для /monitor",
             "data-health-cron.sh — пишет public/data/monitor/data-health-cron.json",
-            "monitor-registry.json — production-реестр 12 сервисов",
+            "monitor-registry.json — production-реестр 13 сервисов",
             "Все /api/monitor/* закрыты requireMonitorAdmin"
           ]
         },
