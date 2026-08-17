@@ -103,6 +103,14 @@ try {
     $config | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $configPath -Encoding UTF8
   }
   $printer = Get-Printer -Name $printerName -ErrorAction Stop
+  # A retained document never disappears from Get-PrintJob and used to leave
+  # the server queue uncertain after an otherwise successful print. Disable
+  # Windows' "Keep printed documents" option permanently for the Zebra queue.
+  if ([bool]$printer.KeepPrintedJobs) {
+    Set-Printer -Name $printerName -KeepPrintedJobs $false -ErrorAction Stop
+    Write-RecoveryLog "Disabled KeepPrintedJobs for $printerName"
+    $printer = Get-Printer -Name $printerName -ErrorAction Stop
+  }
   Write-RecoveryLog "Printer found: $($printer.Name), status: $($printer.PrinterStatus)"
 
   # A jammed Windows spooler document can survive the browser, the print-agent
@@ -137,7 +145,34 @@ try {
       [string]$_.DocumentName -like "MpHub-*"
     })
     if ($remainingMpHubJobs.Count -gt 0) {
-      throw "PRN-012: Windows did not remove the stalled MpHub print job after Spooler restart"
+      # Last safe level: stop Spooler and remove only SPL/SHD files whose
+      # numeric file name matches the exact MpHub job IDs captured above.
+      # Never clear the whole PRINTERS folder: it may contain other programs'
+      # documents.
+      $stuckJobIds = @($remainingMpHubJobs | ForEach-Object { [int]$_.ID })
+      $spoolPath = Join-Path $env:SystemRoot "System32\spool\PRINTERS"
+      Write-RecoveryLog "Stopping Spooler for exact MpHub file cleanup: $($stuckJobIds -join ',')"
+      Stop-Service -Name Spooler -Force -ErrorAction Stop
+      (Get-Service -Name Spooler -ErrorAction Stop).WaitForStatus("Stopped", [TimeSpan]::FromSeconds(20))
+      try {
+        foreach ($spoolFile in @(Get-ChildItem -LiteralPath $spoolPath -File -ErrorAction Stop)) {
+          $spoolJobId = 0
+          if ([int]::TryParse([string]$spoolFile.BaseName, [ref]$spoolJobId) -and $stuckJobIds -contains $spoolJobId) {
+            Remove-Item -LiteralPath $spoolFile.FullName -Force -ErrorAction Stop
+            Write-RecoveryLog "Removed exact MpHub spool file $($spoolFile.Name)"
+          }
+        }
+      } finally {
+        Start-Service -Name Spooler -ErrorAction Stop
+        (Get-Service -Name Spooler -ErrorAction Stop).WaitForStatus("Running", [TimeSpan]::FromSeconds(20))
+      }
+      Start-Sleep -Seconds 3
+      $remainingMpHubJobs = @(Get-PrintJob -PrinterName $printerName -ErrorAction Stop | Where-Object {
+        [string]$_.DocumentName -like "MpHub-*"
+      })
+      if ($remainingMpHubJobs.Count -gt 0) {
+        throw "PRN-012: Windows retained the exact MpHub print job after protected spool cleanup"
+      }
     }
   }
 

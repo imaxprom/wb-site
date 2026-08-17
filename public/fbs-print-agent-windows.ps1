@@ -184,7 +184,10 @@ function Wait-PrintJob {
     }
     $missingPolls = 0
     $status = [string]$job.JobStatus
-    if ($status -match "Deleting|Deleted|Cancelled|Canceled") {
+    # "Deleting" is the normal transient state while Windows removes a
+    # successfully spooled document. Only an actually cancelled/deleted job is
+    # an error; otherwise wait for the job to disappear from the queue.
+    if ($status -match "Deleted|Cancelled|Canceled") {
       throw "The Windows print job was cancelled: $status"
     }
     if ($status -match "Error|Offline|PaperOut|UserIntervention|Blocked") {

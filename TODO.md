@@ -18,7 +18,7 @@ Last updated: 2026-08-17 16:10 MSK.
 - Monitor future partial WB add failures: actual live membership must be persisted, attached orders move to assembly, rejected orders stay in New, and sync must reconcile open supplies.
 - If the user approves remote Windows administration, configure Tailscale + Windows OpenSSH + dedicated key-only admin account on the warehouse computer, then test access after reboot. This is not installed yet.
 - For printer failures, inspect print-agent status/log, PostgreSQL print job, Windows spooler and Zebra state before resetting any queue. Never reprint blindly when physical output is unknown.
-- На текущем Windows нажать в `/printer` «Окно сразу выдаёт ошибку — обновить помощник», один раз запустить скачанный файл, затем повторить восстановление и подтвердить UAC кнопкой «Да». После этого рядом с сотрудником проверить текущий контролируемый сценарий: `queue_paused` → при Retained перезапуск Spooler и очистка только `MpHub-*` → `queue_ready` → точный выбор результата этикетки → продолжение очереди без дубля.
+- На текущем Windows ещё раз обновить helper из `/printer`, затем повторить восстановление и подтвердить UAC кнопкой «Да». Проверяем текущий контролируемый сценарий после выявленного `Deleting, Printing, Retained`: отключение `KeepPrintedJobs` → при необходимости остановка Spooler и удаление только SPL/SHD с точными ID `MpHub-*` → `queue_ready` → точный выбор результата этикетки → продолжение очереди без дубля. Статус `Deleting` больше не считается отменой печати.
 
 ## Production Checks
 
