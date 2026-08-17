@@ -9,6 +9,31 @@ import { readFirstSheetRows } from "@/lib/server/excel-rows";
 import { pgGet, withPgTransaction } from "@/lib/postgres";
 import type { PoolClient } from "pg";
 import { getOrganizationDataDir } from "@/lib/organization-paths";
+import financeHeaderAliasesJson from "../../../scripts/lib/wb-finance-header-aliases.json";
+
+const FINANCE_HEADER_ALIASES = financeHeaderAliasesJson as Record<string, string[]>;
+
+function normalizeFinanceHeader(value: unknown): string {
+  return String(value || "").replace(/[\s\u00A0]+/g, " ").trim();
+}
+
+function normalizeLocalizedFinanceValue(dbColumn: string, value: unknown): unknown {
+  if (value === undefined || value === null || value === "") return null;
+  const text = typeof value === "string" ? normalizeFinanceHeader(value) : value;
+  if (dbColumn === "supplier_oper_name") {
+    return ({
+      "销售": "Продажа",
+      "退货": "Возврат",
+      "物流": "Логистика",
+      "物流修正": "Коррекция логистики",
+      "物流校正": "Коррекция логистики",
+    } as Record<string, string>)[String(text)] || value;
+  }
+  if (dbColumn === "subject_name") {
+    return ({ "内裤": "Трусы", "背包": "Рюкзаки" } as Record<string, string>)[String(text)] || value;
+  }
+  return value;
+}
 
 async function withReportLock<T>(reportId: number, fn: (client: PoolClient) => Promise<T>): Promise<T> {
   return withPgTransaction(async (client) => {
@@ -91,12 +116,20 @@ export async function syncReport(date: string): Promise<SourceStatus> {
           "SELECT create_date, details_count FROM realization_report_meta WHERE report_id = $1",
           [report.id]
         )).rows[0];
-        const existingRows = (await client.query<{ cnt: number }>(
-          "SELECT COUNT(*)::int as cnt FROM realization WHERE realizationreport_id = $1",
+        const existingRows = (await client.query<{ cnt: number; mapped_cnt: number }>(
+          `SELECT COUNT(*)::int as cnt,
+             COUNT(*) FILTER (
+               WHERE nm_id > 0
+                 AND NULLIF(TRIM(supplier_oper_name), '') IS NOT NULL
+             )::int as mapped_cnt
+           FROM realization
+           WHERE realizationreport_id = $1`,
           [report.id]
-        )).rows[0] || { cnt: 0 };
+        )).rows[0] || { cnt: 0, mapped_cnt: 0 };
         const expectedRows = Number(report.detailsCount || existingMeta?.details_count || 0);
-        const existingRowsMatch = existingRows.cnt > 0 && (expectedRows <= 0 || existingRows.cnt === expectedRows);
+        const existingRowsMatch = existingRows.cnt > 0
+          && existingRows.mapped_cnt === existingRows.cnt
+          && (expectedRows <= 0 || existingRows.cnt === expectedRows);
 
         if (existingMeta
           && existingMeta.create_date === (report.createDate || "")
@@ -182,10 +215,32 @@ export async function syncReport(date: string): Promise<SourceStatus> {
         };
 
         const xlsxHeaders = Object.keys(rows[0]);
-        const mappedCols = Object.entries(COL_MAP).filter(([xlsx]) => xlsxHeaders.includes(xlsx));
+        const normalizedHeaders = new Map(xlsxHeaders.map((header) => [normalizeFinanceHeader(header), header]));
+        const mappedCols = Object.entries(COL_MAP).flatMap(([xlsx, db]) => {
+          const candidates = [xlsx, ...(FINANCE_HEADER_ALIASES[db] || [])];
+          const actualHeader = candidates
+            .map(normalizeFinanceHeader)
+            .map((candidate) => normalizedHeaders.get(candidate))
+            .find(Boolean);
+          return actualHeader ? [[actualHeader, db] as const] : [];
+        });
+        const mappedDbColumns = new Set(mappedCols.map(([, db]) => db));
+        const criticalColumns = [
+          "nm_id", "barcode", "supplier_oper_name", "sale_dt", "quantity",
+          "retail_amount", "retail_price_withdisc_rub", "acquiring_fee",
+          "ppvz_for_pay", "delivery_amount", "delivery_rub", "penalty",
+          "storage_fee", "acceptance",
+        ];
+        const missingCritical = criticalColumns.filter((column) => !mappedDbColumns.has(column));
+        if (missingCritical.length > 0) {
+          throw new Error(`Отчёт WB имеет неподдерживаемые колонки: ${missingCritical.join(", ")}; старые данные не удалены`);
+        }
         const insertCols = ["realizationreport_id", "date_from", "date_to", "rr_dt", ...mappedCols.map(([, db]) => db)];
 
-        const saleDates = rows.map(r => r["Дата продажи"]).filter(Boolean).sort() as string[];
+        const saleDateHeader = mappedCols.find(([, db]) => db === "sale_dt")?.[0];
+        const saleDates = saleDateHeader
+          ? rows.map(r => r[saleDateHeader]).filter(Boolean).map(String).sort()
+          : [];
         const dateFrom = saleDates[0] || date;
         const dateTo = saleDates[saleDates.length - 1] || date;
 
@@ -198,8 +253,8 @@ export async function syncReport(date: string): Promise<SourceStatus> {
 
           for (const row of rows) {
             const values: unknown[] = [report.id, dateFrom, dateTo, dateTo];
-            for (const [xlsx] of mappedCols) {
-              values.push(row[xlsx] ?? (typeof row[xlsx] === "number" ? 0 : ""));
+            for (const [xlsx, db] of mappedCols) {
+              values.push(normalizeLocalizedFinanceValue(db, row[xlsx]));
             }
             await client.query(`INSERT INTO realization (${insertCols.join(", ")}) VALUES (${placeholders})`, values);
           }

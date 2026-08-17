@@ -134,6 +134,7 @@ docs/            — ТЗ и документация
 
 ## Финансы и daily sync
 - `/finance` и forecast берут дневную сумму и количество заказов из `orders_funnel`. Tooltip метрики `Заказы` показывает сумму и `Кол-во`; динамика показателей не должна дублировать количество отдельно.
+- Финансовые Excel-отчёты иностранных кабинетов WB могут иметь китайские заголовки и значения операций. `scripts/lib/wb-finance-header-aliases.json`, `scripts/sync-weekly-report.js` и `src/lib/sync/realization.ts` должны сохранять единый русский формат `Продажа/Возврат/Логистика`; импорт без критичных колонок запрещён. Общий справочник тарифов WB читается прогнозом явно из `public.logistics_tariff_cache`, потому что tenant `search_path` намеренно не включает `public`.
 - `daily-sync` каждый запуск дополнительно сверяет последние 7 закрытых дней через WB Sales Funnel API (`seller-analytics-api ... /api/analytics/v3/sales-funnel/grouped/history`) независимо от `stable` и обновляет `order_sum`, `order_count`, `buyout_sum`, `buyout_count` в `orders_funnel`, если WB пересчитал прошлые дни.
 - Результат этой сверки хранится в `data/daily-sync-status.json` как `ordersRefresh` (`ok`, `checked`, `updated`, `windowDays`) и показывается в monitor/data-health как `orders7d✓ checked 7, upd N`.
 - На 2026-06-08 прямой WB API отклонил 30-дневный range для sales funnel с `invalid start day: excess limit on days`; не расширять окно переписывания заказов старше 7 дней без нового фактического подтверждения доступной глубины API.

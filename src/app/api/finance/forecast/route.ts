@@ -616,7 +616,7 @@ export async function GET(request: NextRequest) {
     // содержат коэффициент склада, поэтому повторно его не умножаем.
     const tariffCache = await get<{ date: string; payload_json: string }>(`
       SELECT date, payload_json
-      FROM logistics_tariff_cache
+      FROM public.logistics_tariff_cache
       WHERE cargo_type = 'box' AND date <= ?
       ORDER BY date DESC
       LIMIT 1

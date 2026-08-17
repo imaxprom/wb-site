@@ -16,6 +16,7 @@ const fs = require("fs");
 const AdmZip = require("adm-zip");
 const { Pool } = require("pg");
 const { readFirstSheetRows } = require("./lib/excel-rows");
+const FINANCE_HEADER_ALIASES = require("./lib/wb-finance-header-aliases.json");
 const { ensureOrganizationDataDir, organizationDataPath, organizationPoolOptions, requireOrganizationId } = require("./lib/organization-runtime");
 
 const PROJECT_DIR = path.join(__dirname, "..");
@@ -210,20 +211,45 @@ function normalizeExcelHeader(value) {
 }
 
 function getColumnNames(column) {
-  return [column.excel, ...(column.aliases || [])];
+  return [...new Set([
+    column.excel,
+    ...(column.aliases || []),
+    ...(FINANCE_HEADER_ALIASES[column.db] || []),
+  ])];
+}
+
+function normalizeLocalizedFinanceValue(dbColumn, value) {
+  if (value === undefined || value === null || value === "") return null;
+  const text = typeof value === "string" ? normalizeExcelHeader(value) : value;
+  if (dbColumn === "supplier_oper_name") {
+    return ({
+      "销售": "Продажа",
+      "退货": "Возврат",
+      "物流": "Логистика",
+      "物流修正": "Коррекция логистики",
+      "物流校正": "Коррекция логистики",
+    })[text] || value;
+  }
+  if (dbColumn === "doc_type") {
+    return ({ "销售": "Продажа", "退货": "Возврат" })[text] || value;
+  }
+  if (dbColumn === "subject") {
+    return ({ "内裤": "Трусы", "背包": "Рюкзаки" })[text] || value;
+  }
+  return value;
 }
 
 function getMappedValue(row, column) {
   for (const excelName of getColumnNames(column)) {
     if (Object.prototype.hasOwnProperty.call(row, excelName)) {
       const value = row[excelName];
-      return value === undefined || value === null || value === "" ? null : value;
+      return normalizeLocalizedFinanceValue(column.db, value);
     }
   }
   const normalizedNames = new Set(getColumnNames(column).map(normalizeExcelHeader));
   for (const [key, value] of Object.entries(row)) {
     if (normalizedNames.has(normalizeExcelHeader(key))) {
-      return value === undefined || value === null || value === "" ? null : value;
+      return normalizeLocalizedFinanceValue(column.db, value);
     }
   }
   return null;

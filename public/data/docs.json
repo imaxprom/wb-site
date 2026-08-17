@@ -400,7 +400,7 @@
           "title": "Источники данных WB",
           "items": [
             "reportDetailByPeriod — реализация (продажи, возвраты, комиссия, логистика, хранение) → PostgreSQL realization",
-            "sync-weekly-report.js — Excel-отчёты из ЛК WB (эталон) → PostgreSQL weekly_reports/weekly_rows",
+            "sync-weekly-report.js — Excel-отчёты из ЛК WB (эталон) → PostgreSQL reports/weekly_rows; русский и китайский форматы колонок импортируются одинаково, а отчёт без критичных полей не заменяет ранее сохранённые данные",
             "/adv/v1/upd — расход на рекламу по дням → PostgreSQL advertising",
             "/api/wb/adv читает/обновляет PostgreSQL advertising; PostgreSQL-only runtime",
             "/api/analytics/v3/sales-funnel/products — заказы → PostgreSQL orders_funnel"
@@ -1918,7 +1918,7 @@
           "title": "Excel-отчёты из ЛК",
           "items": [
             "reports — 7 колонок. Метаданные: report_id UNIQUE, период, количество строк, дата загрузки",
-            "weekly_rows — 86 колонок (5 мета + 81 данные). Полный Excel-отчёт реализации WB. 6 индексов. Маппинг: русские заголовки Excel → snake_case колонки"
+            "weekly_rows — 86 колонок (5 мета + 81 данные). Полный Excel-отчёт реализации WB. 6 индексов. Маппинг поддерживает русские и китайские заголовки иностранных кабинетов WB → единые snake_case колонки; операции приводятся к русским значениям Продажа/Возврат/Логистика"
           ]
         },
         {
