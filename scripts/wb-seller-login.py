@@ -11,6 +11,7 @@ from lib.wb_legal_entities import (
     has_legal_entity_marker,
     normalize_supplier_name,
     parse_legal_entity_text,
+    seller_identity_from_payload,
     supplier_matches_query,
     supplier_names_from_text,
 )
@@ -374,12 +375,11 @@ def refresh_seller_token(authorizev3, cookie_string):
         return None
 
     payload = decode_jwt_payload(token)
-    supplier_data = payload.get("data") or {}
+    identity = seller_identity_from_payload(payload)
     return {
         "wbSellerLk": token,
         "wbSellerLkExpires": payload.get("exp") or int(time.time()) + 300,
-        "supplierId": supplier_data.get("Z-Sfid") or supplier_data.get("Z-Soid") or "",
-        "supplierUuid": supplier_data.get("Z-Sid") or "",
+        **identity,
     }
 
 def read_browser_storage_token(page):
@@ -1078,7 +1078,7 @@ with sync_playwright() as p:
 
     if auth_token:
         refreshed = refresh_seller_token(auth_token, cookie_string) or {}
-        actual_supplier_id = str(refreshed.get("supplierId") or "")
+        actual_supplier_id = str(refreshed.get("supplierOwnerId") or refreshed.get("supplierId") or "")
         expected_supplier_id = str(selected_entity.get("supplierId") or "")
         if expected_supplier_id and actual_supplier_id and expected_supplier_id != actual_supplier_id:
             status(
@@ -1103,6 +1103,11 @@ with sync_playwright() as p:
             "wbSellerLk": refreshed.get("wbSellerLk", ""),
             "wbSellerLkExpires": refreshed.get("wbSellerLkExpires", 0),
             "supplierId": refreshed.get("supplierId") or previous_tokens.get("supplierId", ""),
+            "supplierOwnerId": (
+                refreshed.get("supplierOwnerId")
+                or selected_entity.get("supplierId", "")
+                or previous_tokens.get("supplierOwnerId", "")
+            ),
             "supplierUuid": refreshed.get("supplierUuid") or previous_tokens.get("supplierUuid", ""),
             "supplierName": selected_entity.get("name", ""),
             "storeName": selected_entity.get("storeName", ""),

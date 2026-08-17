@@ -7,7 +7,7 @@
 import puppeteer, { type Browser, type Page } from "puppeteer";
 import path from "path";
 import fs from "fs";
-import { saveAuthTokensCommon, checkApiSession } from "./wb-seller-api";
+import { saveAuthTokensCommon, checkApiSession, extractSellerTokenIdentity } from "./wb-seller-api";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const SELLER_AUTH_URL = "https://seller-auth.wildberries.ru/";
@@ -382,11 +382,13 @@ function checkSupplierMismatch(): string | null {
     const apiPayload = JSON.parse(Buffer.from(apiKey.split(".")[1], "base64").toString());
     const apiOid = String(apiPayload.oid || "");
 
-    // Read saved tokens → supplierId
+    // Compare API-key owner ID with the matching Z-Soid claim. Z-Sfid is a
+    // different internal supplier ID for some foreign legal entities.
     const tokensPath = path.join(DATA_DIR, "wb-tokens.json");
     if (!fs.existsSync(tokensPath)) return null;
     const tokens = JSON.parse(fs.readFileSync(tokensPath, "utf-8"));
-    const tokenSid = String(tokens.supplierId || "");
+    const identity = extractSellerTokenIdentity(String(tokens.wbSellerLk || ""));
+    const tokenSid = String(tokens.supplierOwnerId || identity.supplierOwnerId || tokens.supplierId || "");
 
     if (apiOid && tokenSid && apiOid !== tokenSid) {
       console.warn(`[wb-auth-cdp] SUPPLIER MISMATCH! API key: ${apiOid}, Token: ${tokenSid}`);

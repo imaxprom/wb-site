@@ -4,6 +4,7 @@ import { playwrightSendPhone, playwrightCheckSession, playwrightLogout } from "@
 import fs from "fs";
 import { localReadonlyGuard } from "@/lib/local-readonly-guard";
 import { getWbAuthPaths } from "@/lib/wb-auth-paths";
+import { extractSellerTokenIdentity } from "@/lib/wb-seller-api";
 
 /**
  * POST /api/wb/auth — Start auth: send phone number (Playwright on VPS)
@@ -53,8 +54,9 @@ export async function GET(req: NextRequest) {
           const tokens = JSON.parse(fs.readFileSync(paths.tokensPath, "utf-8"));
           supplier = String(tokens.supplierName || "").trim();
           storeName = String(tokens.storeName || "").trim();
-          inn = String(tokens.inn || "").replace(/\D/g, "");
-          supplierId = String(tokens.supplierId || "").trim();
+          inn = String(tokens.inn || "").trim();
+          const identity = extractSellerTokenIdentity(String(tokens.wbSellerLk || ""));
+          supplierId = String(tokens.supplierOwnerId || identity.supplierOwnerId || tokens.supplierId || "").trim();
           const savedPhone = String(tokens.phone || "").replace(/\D/g, "");
           if (savedPhone.length >= 10) {
             const d = savedPhone.slice(-10);
@@ -66,8 +68,8 @@ export async function GET(req: NextRequest) {
             try {
               const payload = JSON.parse(Buffer.from(tokens.wbSellerLk.split(".")[1], "base64").toString());
               const sd = payload.data || {};
-              const sfid = sd["Z-Sfid"] || sd["Z-Soid"] || "";
-              supplier = sfid ? `ИП (ID: ${sfid})` : "";
+              const ownerId = sd["Z-Soid"] || sd["Z-Sfid"] || "";
+              supplier = ownerId ? `Кабинет ${ownerId}` : "";
             } catch {}
           }
 

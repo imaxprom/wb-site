@@ -6,7 +6,7 @@ import { spawn, type ChildProcess } from "child_process";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import { checkApiSession } from "./wb-seller-api";
+import { checkApiSession, extractSellerTokenIdentity } from "./wb-seller-api";
 import { writeSecretFileSync } from "./secure-file";
 import { getWbAuthPaths, type WbAuthPaths } from "./wb-auth-paths";
 import { pgQuery } from "./postgres";
@@ -421,12 +421,13 @@ async function refreshSellerTokenFromAuth(paths: WbAuthPaths): Promise<void> {
 
             if (sellerToken) {
               const payload = JSON.parse(Buffer.from(sellerToken.split(".")[1], "base64").toString());
-              const sd = (payload.data || {}) as Record<string, string>;
+              const identity = extractSellerTokenIdentity(sellerToken);
               tokens.authorizev3 = accessToken;
               tokens.wbSellerLk = sellerToken;
               tokens.wbSellerLkExpires = payload.exp || 0;
-              tokens.supplierId = sd["Z-Sfid"] || sd["Z-Soid"] || tokens.supplierId || "";
-              tokens.supplierUuid = sd["Z-Sid"] || tokens.supplierUuid || "";
+              tokens.supplierId = identity.supplierId || tokens.supplierId || "";
+              tokens.supplierOwnerId = identity.supplierOwnerId || tokens.supplierOwnerId || "";
+              tokens.supplierUuid = identity.supplierUuid || tokens.supplierUuid || "";
               writeSecretFileSync(paths.tokensPath, JSON.stringify(tokens, null, 2));
               console.log("[wb-auth-pw] Seller token refreshed, supplierId:", tokens.supplierId);
             }
@@ -444,7 +445,7 @@ async function refreshSellerTokenFromAuth(paths: WbAuthPaths): Promise<void> {
           updated_at = CURRENT_TIMESTAMP
       WHERE id = $4
     `, [
-      String(tokens.supplierId || ""),
+      String(tokens.supplierOwnerId || tokens.supplierId || ""),
       String(tokens.storeName || ""),
       String(tokens.inn || ""),
       paths.organizationId,
@@ -466,9 +467,10 @@ function checkSupplierMismatch(paths: WbAuthPaths): string | null {
     const apiOid = String(apiPayload.oid || "");
     if (!fs.existsSync(paths.tokensPath)) return null;
     const tokens = JSON.parse(fs.readFileSync(paths.tokensPath, "utf-8"));
-    const tokenSid = String(tokens.supplierId || "");
-    if (apiOid && tokenSid && apiOid !== tokenSid) {
-      return `Внимание: API-ключ привязан к кабинету ${apiOid}, а авторизация — к кабинету ${tokenSid}.`;
+    const identity = extractSellerTokenIdentity(String(tokens.wbSellerLk || ""));
+    const tokenOwnerId = String(tokens.supplierOwnerId || identity.supplierOwnerId || tokens.supplierId || "");
+    if (apiOid && tokenOwnerId && apiOid !== tokenOwnerId) {
+      return `Внимание: API-ключ привязан к кабинету ${apiOid}, а авторизация — к кабинету ${tokenOwnerId}.`;
     }
     return null;
   } catch { return null; }

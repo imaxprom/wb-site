@@ -73,6 +73,17 @@ def has_legal_entity_marker(value):
     return bool(LEGAL_NAME_IN_TEXT_RE.search(clean) or SUPPLIER_ID_RE.search(clean))
 
 
+def seller_identity_from_payload(payload):
+    """Keep WB's owner ID and internal supplier ID as separate values."""
+    supplier_data = (payload or {}).get("data") or {}
+    supplier_owner_id = str(supplier_data.get("Z-Soid") or "")
+    return {
+        "supplierId": str(supplier_data.get("Z-Sfid") or supplier_owner_id),
+        "supplierOwnerId": supplier_owner_id,
+        "supplierUuid": str(supplier_data.get("Z-Sid") or ""),
+    }
+
+
 def _clean_display_line(value):
     line = normalize_supplier_name(value).strip(" ·•-")
     line = re.sub(r"^(?:Ваш\s+(?:аккаунт|кабинет)|Your\s+account)\s*", "", line, flags=re.IGNORECASE)

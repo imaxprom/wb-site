@@ -287,6 +287,7 @@ async function captureAuthTokens(page: Page): Promise<void> {
       wbSellerLk: "",
       wbSellerLkExpires: 0,
       supplierId: "",
+      supplierOwnerId: "",
       supplierUuid: "",
       cookies: cookieString,
       savedAt: new Date().toISOString(),
@@ -305,6 +306,7 @@ async function captureAuthTokens(page: Page): Promise<void> {
       wbSellerLk: refreshed.wbSellerLk,
       wbSellerLkExpires: refreshed.wbSellerLkExpires,
       supplierId: refreshed.supplierId,
+      supplierOwnerId: refreshed.supplierOwnerId,
       supplierUuid: refreshed.supplierUuid,
     });
 

@@ -25,7 +25,10 @@ export interface WbTokens {
   authorizev3: string;
   wbSellerLk: string;
   wbSellerLkExpires: number; // unix timestamp (seconds)
+  /** Internal supplier ID used by seller services (JWT Z-Sfid). */
   supplierId: string;
+  /** Cabinet owner/business ID used by API-key oid and WB UI (JWT Z-Soid). */
+  supplierOwnerId?: string;
   supplierUuid: string;
   /** Cookie string: "wbx-validation-key=...; x-supplier-id-external=..." */
   cookies: string;
@@ -56,6 +59,7 @@ export async function saveAuthTokensCommon(authToken: string, cookieString: stri
     wbSellerLk: "",
     wbSellerLkExpires: 0,
     supplierId: "",
+    supplierOwnerId: "",
     supplierUuid: "",
     cookies: cookieString,
     savedAt: new Date().toISOString(),
@@ -69,6 +73,7 @@ export async function saveAuthTokensCommon(authToken: string, cookieString: stri
       wbSellerLk: refreshed.wbSellerLk,
       wbSellerLkExpires: refreshed.wbSellerLkExpires,
       supplierId: refreshed.supplierId,
+      supplierOwnerId: refreshed.supplierOwnerId,
       supplierUuid: refreshed.supplierUuid,
     });
     console.log(`[${label}] Tokens saved. Supplier:`, refreshed.supplierId);
@@ -85,7 +90,11 @@ export function loadTokens(): WbTokens | null {
   try {
     for (const candidatePath of candidatePaths) {
       if (!fs.existsSync(candidatePath)) continue;
-      return JSON.parse(fs.readFileSync(candidatePath, "utf-8")) as WbTokens;
+      const tokens = JSON.parse(fs.readFileSync(candidatePath, "utf-8")) as WbTokens;
+      if (!tokens.supplierOwnerId && tokens.wbSellerLk) {
+        tokens.supplierOwnerId = extractSellerTokenIdentity(tokens.wbSellerLk).supplierOwnerId;
+      }
+      return tokens;
     }
     return null;
   } catch {
@@ -113,6 +122,21 @@ function decodeJwtPayload(jwt: string): Record<string, unknown> | null {
   }
 }
 
+export function extractSellerTokenIdentity(wbSellerLk: string): {
+  supplierId: string;
+  supplierOwnerId: string;
+  supplierUuid: string;
+} {
+  const payload = decodeJwtPayload(wbSellerLk);
+  const supplierData = payload?.data as Record<string, string> | undefined;
+  const supplierOwnerId = String(supplierData?.["Z-Soid"] || "");
+  return {
+    supplierId: String(supplierData?.["Z-Sfid"] || supplierOwnerId),
+    supplierOwnerId,
+    supplierUuid: String(supplierData?.["Z-Sid"] || ""),
+  };
+}
+
 // --- Token refresh ---
 
 /**
@@ -122,6 +146,7 @@ export async function refreshSellerToken(authorizev3: string): Promise<{
   wbSellerLk: string;
   wbSellerLkExpires: number;
   supplierId: string;
+  supplierOwnerId: string;
   supplierUuid: string;
 } | null> {
   try {
@@ -149,11 +174,9 @@ export async function refreshSellerToken(authorizev3: string): Promise<{
 
     const payload = decodeJwtPayload(token);
     const exp = (payload?.exp as number) || Math.floor(Date.now() / 1000) + 300;
-    const supplierData = payload?.data as Record<string, string> | undefined;
-    const supplierUuid = supplierData?.["Z-Sid"] || "";
-    const supplierId = supplierData?.["Z-Sfid"] || supplierData?.["Z-Soid"] || "";
+    const { supplierId, supplierOwnerId, supplierUuid } = extractSellerTokenIdentity(token);
 
-    return { wbSellerLk: token, wbSellerLkExpires: exp, supplierId, supplierUuid };
+    return { wbSellerLk: token, wbSellerLkExpires: exp, supplierId, supplierOwnerId, supplierUuid };
   } catch (err) {
     console.error("[wb-seller-api] refreshSellerToken error:", err);
     return null;
@@ -175,6 +198,7 @@ export async function getValidTokens(): Promise<WbTokens | null> {
     tokens.wbSellerLk = refreshed.wbSellerLk;
     tokens.wbSellerLkExpires = refreshed.wbSellerLkExpires;
     tokens.supplierId = refreshed.supplierId || tokens.supplierId;
+    tokens.supplierOwnerId = refreshed.supplierOwnerId || tokens.supplierOwnerId;
     tokens.supplierUuid = refreshed.supplierUuid || tokens.supplierUuid;
     saveTokens(tokens);
   }
